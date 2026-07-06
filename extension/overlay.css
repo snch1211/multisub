@@ -1,0 +1,84 @@
+#multisub-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--multisub-bottom, 10%);
+  z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+/* C6: #multisub-text and #multisub-original share one style block (both
+   fully styled by the user's settings, see below) and use flex-column +
+   per-line children instead of a single text node with CSS line-height.
+   Reason: line-height on a block whose content IS its background box
+   inflates that box with "half-leading" above/below the glyphs — visible
+   as the background not hugging the text once lineHeight is raised past
+   the default. Splitting each \n-separated line into its own child (see
+   content.js's setOverlayLines()) with a fixed tight line-height, and
+   turning the user's lineHeight into a `gap` between children instead,
+   keeps the padding box snug to the glyphs at any lineHeight value while
+   still spacing out multi-line cues (2026-07-05 bug, fixed as C6). */
+#multisub-text, #multisub-original {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  max-width: 84%;
+  padding: 0.08em 0.45em;
+  border-radius: 0.15em;
+  gap: calc((var(--multisub-line-height, 1.35) - 1) * 1em);
+  /* D1: overlay style is user-adjustable from the App (MultiSubConfig.styles);
+     content.js sets these variables in applySettingsToOverlay() on every
+     settings change. Fallbacks match the pre-D1 hardcoded values. C6: both
+     lines now share every style var — previously #multisub-original had
+     its own hardcoded plain look, which read as inconsistent once merged
+     display mode showed both lines stacked with the same background. */
+  background: var(--multisub-bg, rgba(0, 0, 0, 0.5));
+  color: var(--multisub-color, #fff);
+  font-family: var(--multisub-font, "Netflix Sans", "Helvetica Neue", "PingFang TC", "Noto Sans TC", sans-serif);
+  font-size: calc(2.4vw * var(--multisub-font-scale, 1));
+  font-weight: var(--multisub-font-weight, normal);
+  text-align: center;
+  text-shadow: var(--multisub-outline, 0 0 4px rgba(0, 0, 0, 0.9));
+}
+
+#multisub-text .ms-line, #multisub-original .ms-line {
+  line-height: 1.2;
+}
+
+#multisub-hint {
+  display: none;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  color: #ffd75e;
+  background: rgba(0, 0, 0, 0.65);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+/* D3: hides Netflix's own subtitle line when merged mode is on (popup's
+   "mergedMode" setting), toggled via a class on <html> in applySettingsToOverlay().
+   !important guards against Netflix's own higher-specificity rules. */
+html.multisub-native-hidden .player-timedtext {
+  display: none !important;
+}
+
+/* D2: drag-to-position mode, toggled by content.js only while the popup's
+   "dragMode" checkbox is on (see CLAUDE.md's set-drag-mode message). Scoped
+   to this modifier class rather than the base #multisub-text rule so
+   pointer-events stays 'none' (inherited from #multisub-overlay above,
+   click-through to the Netflix player) whenever drag mode is off — must not
+   touch #multisub-text's base `display` rule (CLAUDE.md 禁止事項 #9). */
+#multisub-overlay.multisub-drag-enabled #multisub-text {
+  pointer-events: auto;
+  cursor: grab;
+  outline: 1px dashed rgba(255, 255, 255, 0.6);
+  outline-offset: 2px;
+}
+
+#multisub-overlay.multisub-drag-enabled #multisub-text:active {
+  cursor: grabbing;
+}

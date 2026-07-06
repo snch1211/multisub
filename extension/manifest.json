@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "MultiSub for Netflix",
+  "version": "1.0.0",
+  "description": "Netflix 雙語字幕：以本地 AI 模型翻譯並顯示第二字幕。",
+  "permissions": ["storage", "nativeMessaging"],
+  "host_permissions": ["*://*.netflix.com/*"],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.netflix.com/*"],
+      "js": ["content.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["inject.js"],
+      "matches": ["*://*.netflix.com/*"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "MultiSub"
+  }
+}

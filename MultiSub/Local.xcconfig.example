@@ -1,0 +1,16 @@
+// Local.xcconfig.example — template for machine-local signing settings.
+//
+// Setup (one time, after cloning):
+//   1. Copy this file to `Local.xcconfig` (same folder, next to
+//      MultiSub.xcodeproj). `Local.xcconfig` is gitignored.
+//   2. Replace YOUR_TEAM_ID below with your own 10-character Apple Team ID.
+//      Find it in Xcode ▸ Settings ▸ Accounts (select your Apple ID ▸ the
+//      team row shows the ID in parentheses), or at
+//      developer.apple.com/account ▸ Membership details. A free Personal
+//      Team is sufficient — see README's build instructions.
+//
+// Xcode uses DEVELOPMENT_TEAM to code-sign the app and its Safari extension.
+// The App Group container the app and extension share is keyed off this team
+// ID at run time, so signing with your own team just works — no source edits.
+
+DEVELOPMENT_TEAM = YOUR_TEAM_ID

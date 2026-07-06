@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+        <rect x="6" y="24" width="52" height="14" rx="5" fill="currentColor" class="logo-bar-a"/>
+        <rect x="14" y="40" width="36" height="12" rx="5" fill="currentColor" class="logo-bar-b"/>
+      </svg>
+      <h1>MultiSub</h1>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="enabled">
+      <span class="slider"></span>
+    </label>
+  </header>
+
+  <section class="card">
+    <label for="targetLang">翻譯成</label>
+    <select id="targetLang">
+      <option value="zh-TW">繁體中文</option>
+      <option value="zh-CN">简体中文</option>
+      <option value="en">English</option>
+      <option value="ja">日本語</option>
+      <option value="ko">한국어</option>
+      <option value="es">Español</option>
+      <option value="fr">Français</option>
+      <option value="de">Deutsch</option>
+      <option value="pt">Português</option>
+      <option value="vi">Tiếng Việt</option>
+      <option value="th">ไทย</option>
+      <option value="id">Bahasa Indonesia</option>
+    </select>
+    <div id="trackSection" class="control-group" hidden>
+      <label for="sourceTrack">來源字幕軌</label>
+      <select id="sourceTrack"></select>
+    </div>
+  </section>
+
+  <section class="card">
+    <label for="fontScale">第二字幕大小 <span id="fontScaleValue"></span></label>
+    <input type="range" id="fontScale" min="0.5" max="2" step="0.05">
+    <div class="control-group">
+      <label for="bottomOffset">垂直位置（距底部）<span id="bottomOffsetValue"></span></label>
+      <input type="range" id="bottomOffset" min="0" max="40" step="1">
+    </div>
+    <label class="drag-toggle"><input type="checkbox" id="dragMode"> 在 Netflix 影片上拖曳定位</label>
+    <label class="drag-toggle"><input type="checkbox" id="mergedMode"> 隱藏原生字幕，顯示雙語合併</label>
+  </section>
+
+  <section class="card">
+    <button type="button" id="openStyles" class="secondary-button">進階樣式設定…</button>
+    <div id="openStylesHint"></div>
+    <button type="button" id="organizeVocab" class="secondary-button control-group" disabled>整理本集單字</button>
+    <div id="organizeVocabHint"></div>
+  </section>
+
+  <section class="status">
+    <div id="episodeStatus">—</div>
+    <div id="nativeStatus">檢查主程式中…</div>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>

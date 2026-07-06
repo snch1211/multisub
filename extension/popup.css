@@ -1,0 +1,206 @@
+:root {
+  color-scheme: light dark;
+  --accent: #e5232f;
+  --accent-dark: #b91c26;
+  --bg: #f6f6f7;
+  --card-bg: rgba(255, 255, 255, 0.72);
+  --text: #1c1c1e;
+  --text-dim: #6b6b70;
+  --border: rgba(0, 0, 0, 0.06);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 300px;
+  margin: 0;
+  padding: 16px;
+  font-family: -apple-system, "PingFang TC", system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e;
+    --card-bg: rgba(58, 58, 61, 0.6);
+    --text: #f2f2f2;
+    --text-dim: #a0a0a5;
+    --border: rgba(255, 255, 255, 0.08);
+  }
+  select, input[type="range"] { color-scheme: dark; }
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding: 0 2px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.logo-bar-a { color: var(--text); opacity: 0.85; }
+.logo-bar-b { color: var(--accent); }
+
+h1 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.card {
+  background: var(--card-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+/* Spacing between grouped controls stacked inside one card (2026-07-05
+   popup consolidation — several cards now hold multiple label+input pairs
+   instead of one each, to fit the popup without scrolling). */
+.control-group {
+  margin-top: 10px;
+}
+
+label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+label span {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+input[type="range"] {
+  width: 100%;
+  box-sizing: border-box;
+  accent-color: var(--accent);
+  margin: 2px 0;
+}
+
+.drag-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.drag-toggle input {
+  accent-color: var(--accent);
+}
+
+.secondary-button {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.secondary-button:hover { background: var(--border); }
+.secondary-button:active { opacity: 0.8; }
+.secondary-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  background: var(--bg);
+}
+
+#openStylesHint, #organizeVocabHint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+/* Both hints are empty <div>s most of the time (popup.js only fills them in
+   on error) — without this, an empty hint's margin-top still counts, so the
+   gap above the *next* button ends up bigger than the gap below the button
+   before it. :empty collapses that phantom space so the rhythm around
+   #openStyles/#organizeVocab stays even whether or not a hint is showing. */
+#openStylesHint:empty, #organizeVocabHint:empty {
+  margin-top: 0;
+}
+#openStylesHint.err, #organizeVocabHint.err { color: #d1382f; }
+
+.status {
+  background: var(--card-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  margin-bottom: 0;
+}
+
+#nativeStatus.ok { color: #1a9247; font-weight: 500; }
+#nativeStatus.err { color: #d1382f; font-weight: 500; }
+
+/* Toggle switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  margin: 0;
+  flex-shrink: 0;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .slider {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  background: #bfbfc4;
+  border-radius: 22px;
+  transition: background 0.15s ease;
+}
+.switch .slider::before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 2px;
+  top: 2px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s ease;
+}
+.switch input:checked + .slider { background: var(--accent); }
+.switch input:checked + .slider::before { transform: translateX(18px); }

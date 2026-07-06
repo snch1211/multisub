@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# Xcode
+MultiSub/MultiSub.xcodeproj/xcuserdata/
+MultiSub/MultiSub.xcodeproj/project.xcworkspace/xcuserdata/
+DerivedData/
+build/
+*.xcuserstate
+
+# Swift Package Manager
+.swiftpm/
+.build/
+
+# Machine-local signing (R2c: keeps a literal Team ID out of the public repo).
+# The tracked template is MultiSub/Local.xcconfig.example.
+MultiSub/Local.xcconfig
+
+# Generated DMG window background — rebuilt on demand by scripts/make-dmg.sh
+# from scripts/dmg-assets/make-dmg-background.swift (only the generator is
+# tracked; the ~5MB TIFF is not committed).
+scripts/dmg-assets/dmg-background.tiff
+scripts/dmg-assets/dmg-background.png
+
+# Models / large artifacts (never commit)
+*.safetensors
+*.gguf
+
+# Node (only used for `node --check`, no deps expected)
+node_modules/

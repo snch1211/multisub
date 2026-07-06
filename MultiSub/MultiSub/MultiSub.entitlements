@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<!-- R2c: $(TeamIdentifierPrefix) expands at build time to the signing
+		     team's ID plus a trailing dot (e.g. "ABCDE12345."), keeping a
+		     literal Team ID out of the public repo. The value it produces is
+		     byte-for-byte the same App Group string as before. -->
+		<string>$(TeamIdentifierPrefix)com.seanhuang.multisub</string>
+		<string>group.com.seanhuang.multisub</string>
+	</array>
+	<!-- C7: UpdateDownloadManager saves the new-version DMG straight into
+	     "下載項目" — without this the sandbox silently denies the write,
+	     surfacing as a mystifying NSURLErrorCancelled ("cancelled") on the
+	     download task instead of a file-permission error. -->
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+</dict>
+</plist>

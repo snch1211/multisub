@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<!-- R2c: $(TeamIdentifierPrefix) expands at build time to the signing
+		     team's ID plus a trailing dot, keeping a literal Team ID out of the
+		     public repo. Must stay identical to the host app's group string. -->
+		<string>$(TeamIdentifierPrefix)com.seanhuang.multisub</string>
+		<string>group.com.seanhuang.multisub</string>
+	</array>
+</dict>
+</plist>
