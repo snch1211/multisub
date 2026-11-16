@@ -1,12 +1,13 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-Hant-TW">
 <head>
   <meta charset="utf-8">
   <meta name="color-scheme" content="light dark">
+  <title>MultiSub</title>
   <link rel="stylesheet" href="popup.css">
 </head>
-<body>
-  <header>
+<body class="loading">
+  <header class="header">
     <div class="brand">
       <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
         <rect x="6" y="24" width="52" height="14" rx="5" fill="currentColor" class="logo-bar-a"/>
@@ -15,56 +16,133 @@
       <h1>MultiSub</h1>
     </div>
     <label class="switch">
-      <input type="checkbox" id="enabled">
-      <span class="slider"></span>
+      <input type="checkbox" id="enabled" role="switch" aria-label="啟用 MultiSub">
+      <span class="slider" aria-hidden="true"></span>
     </label>
   </header>
+  <p id="loadingNote" class="loading-note" role="status">載入中…</p>
 
-  <section class="card">
-    <label for="targetLang">翻譯成</label>
-    <select id="targetLang">
-      <option value="zh-TW">繁體中文</option>
-      <option value="zh-CN">简体中文</option>
-      <option value="en">English</option>
-      <option value="ja">日本語</option>
-      <option value="ko">한국어</option>
-      <option value="es">Español</option>
-      <option value="fr">Français</option>
-      <option value="de">Deutsch</option>
-      <option value="pt">Português</option>
-      <option value="vi">Tiếng Việt</option>
-      <option value="th">ไทย</option>
-      <option value="id">Bahasa Indonesia</option>
-    </select>
-    <div id="trackSection" class="control-group" hidden>
-      <label for="sourceTrack">來源字幕軌</label>
-      <select id="sourceTrack"></select>
+  <div id="banner" class="banner" role="status" hidden>
+    <p id="bannerText" class="banner-text"></p>
+    <button type="button" id="bannerAction" class="banner-button" hidden></button>
+  </div>
+
+  <!-- First run: pick a mode -->
+  <section id="chooser" class="chooser" hidden aria-labelledby="chooserTitle">
+    <h2 id="chooserTitle" class="chooser-title">選擇字幕模式</h2>
+    <div id="modeCards" class="mode-cards" role="radiogroup" aria-labelledby="chooserTitle"></div>
+    <div class="field-row">
+      <label for="chooserTargetLang">第二語言</label>
+      <select id="chooserTargetLang"></select>
+    </div>
+    <div class="field-row" id="chooserLevelField" hidden>
+      <label for="chooserLevel">程度</label>
+      <select id="chooserLevel"></select>
+    </div>
+    <button type="button" id="startButton" class="primary-button">開始使用</button>
+  </section>
+
+  <!-- Everyday view -->
+  <section id="main" class="card" hidden>
+    <div id="modeSwitch" class="segmented" role="radiogroup" aria-label="字幕模式"></div>
+    <p id="modeDesc" class="mode-desc"></p>
+    <div class="field-row">
+      <label for="targetLang">第二語言</label>
+      <select id="targetLang"></select>
+    </div>
+    <div class="field-row" id="levelField" hidden>
+      <label for="annotateLevel">程度</label>
+      <select id="annotateLevel"></select>
+    </div>
+    <div class="status-line" role="status" aria-live="polite">
+      <span id="statusText" class="status-text">—</span>
+      <button type="button" id="statusAction" class="link-button" hidden></button>
     </div>
   </section>
 
-  <section class="card">
-    <label for="fontScale">第二字幕大小 <span id="fontScaleValue"></span></label>
-    <input type="range" id="fontScale" min="0.5" max="2" step="0.05">
-    <div class="control-group">
-      <label for="bottomOffset">垂直位置（距底部）<span id="bottomOffsetValue"></span></label>
-      <input type="range" id="bottomOffset" min="0" max="40" step="1">
+  <!-- AI engine (translate / annotate only) -->
+  <section id="engineCard" class="card" hidden aria-labelledby="engineTitle">
+    <h2 id="engineTitle" class="card-title">AI 引擎</h2>
+    <div id="engineSummary" class="engine-summary" hidden>
+      <span id="engineSummaryText" class="engine-summary-text"></span>
+      <button type="button" id="engineChange" class="link-button">變更</button>
     </div>
-    <label class="drag-toggle"><input type="checkbox" id="dragMode"> 在 Netflix 影片上拖曳定位</label>
-    <label class="drag-toggle"><input type="checkbox" id="mergedMode"> 隱藏原生字幕，顯示雙語合併</label>
+    <p id="engineNotice" class="engine-notice" role="status" aria-live="polite" hidden></p>
+    <form id="engineForm" class="engine-form" hidden novalidate>
+      <div class="field">
+        <label for="provider">AI 服務</label>
+        <select id="provider"></select>
+      </div>
+      <div class="field" id="apiKeyField">
+        <div class="label-row">
+          <label for="apiKey">API Key</label>
+          <button type="button" id="keyLink" class="link-button small">取得 API Key</button>
+        </div>
+        <input type="password" id="apiKey" autocomplete="off" spellcheck="false" autocapitalize="off">
+      </div>
+      <div class="field" id="baseURLField" hidden>
+        <label for="baseURL">API 網址</label>
+        <input type="url" id="baseURL" placeholder="http://localhost:1234/v1" spellcheck="false" autocapitalize="off">
+      </div>
+      <div class="field">
+        <div class="label-row">
+          <label for="model">模型</label>
+          <button type="button" id="loadModels" class="link-button small">載入完整清單</button>
+        </div>
+        <select id="model"></select>
+        <input type="text" id="modelCustom" class="model-custom" placeholder="輸入模型 ID" spellcheck="false" autocapitalize="off" aria-label="模型 ID" hidden>
+      </div>
+      <p id="engineDisclosure" class="hint"></p>
+      <button type="submit" id="saveEngine" class="primary-button">儲存並測試</button>
+      <!-- Shown after a successful test, before anything is saved. -->
+      <div id="consentStep" class="consent-step" role="group" aria-labelledby="consentTitle" aria-describedby="consentText" hidden>
+        <p id="consentTitle" class="consent-title"></p>
+        <p id="consentText" class="consent-text"></p>
+        <div class="consent-actions">
+          <button type="button" id="consentCancel" class="secondary-button">取消</button>
+          <button type="button" id="consentAccept" class="primary-button">同意並使用</button>
+        </div>
+      </div>
+      <p id="engineResult" class="engine-result" role="status" aria-live="polite"></p>
+      <div class="engine-links">
+        <button type="button" id="useLocal" class="link-button small">改用本機模型</button>
+        <button type="button" id="engineCancel" class="link-button small" hidden>取消</button>
+      </div>
+    </form>
   </section>
 
-  <section class="card">
-    <button type="button" id="openStyles" class="secondary-button">進階樣式設定…</button>
-    <div id="openStylesHint"></div>
-    <button type="button" id="organizeVocab" class="secondary-button control-group" disabled>整理本集單字</button>
-    <div id="organizeVocabHint"></div>
+  <details id="displaySettings" class="card details">
+    <summary>顯示設定</summary>
+    <div class="details-body">
+      <div class="field">
+        <label for="fontScale">字幕大小 <span id="fontScaleValue" class="value"></span></label>
+        <input type="range" id="fontScale" min="0.5" max="2" step="0.05">
+      </div>
+      <div class="field">
+        <label for="bottomOffset">垂直位置（距底部）<span id="bottomOffsetValue" class="value"></span></label>
+        <input type="range" id="bottomOffset" min="0" max="40" step="1">
+      </div>
+      <label class="check-row"><input type="checkbox" id="mergedMode"> 雙語合併顯示</label>
+      <label class="check-row"><input type="checkbox" id="dragMode"> 在影片上拖曳字幕定位</label>
+      <div class="field" id="trackField" hidden>
+        <label for="sourceTrack">原文字幕</label>
+        <select id="sourceTrack"></select>
+      </div>
+      <button type="button" id="openStyles" class="secondary-button">進階樣式設定…</button>
+      <p id="openStylesHint" class="hint"></p>
+    </div>
+  </details>
+
+  <section id="vocabSection" class="vocab">
+    <button type="button" id="organizeVocab" class="secondary-button" disabled>整理本集單字</button>
+    <p id="organizeVocabHint" class="hint"></p>
   </section>
 
-  <section class="status">
-    <div id="episodeStatus">—</div>
-    <div id="nativeStatus">檢查主程式中…</div>
-  </section>
+  <footer class="footer">
+    <button type="button" id="openNetflix" class="link-button small" hidden>開啟 Netflix</button>
+  </footer>
 
+  <script src="shared.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -1,69 +1,38 @@
-// Runs in the page's main world (injected by content.js at document_start).
+// Runs in the page's main world. Declared as a `world: "MAIN"` content script
+// at document_start so the hooks below are in place before Netflix's player
+// boots; content.js also injects it with a <script> tag as a fallback, and the
+// page-world flag below keeps the two from both running.
 //
 // Responsibilities:
 //  1. Hook JSON.stringify so Netflix's manifest request also asks for the
 //     WebVTT subtitle profile (much easier to parse than TTML).
-//  2. Hook JSON.parse to capture the manifest response, which contains the
-//     full list of timed-text tracks (with download URLs) for the episode.
-//  3. On request from the content script, fetch a track, parse it into
-//     cues [{start, end, text}], and post them back via window.postMessage.
+//  2. Hook JSON.parse and Response.prototype.json to capture the manifest
+//     response, which lists every timed-text track (with download URLs) for
+//     the episode. Netflix has used both paths over time.
+//  3. Report the subtitle and audio tracks selected in Netflix's player.
+//  4. On request from the content script, fetch a track, parse it into cues
+//     [{start, end, text}], and post them back via window.postMessage.
 (() => {
   'use strict';
+  // An engine that ignores `world: "MAIN"` would run this in the isolated
+  // world, where hooking JSON/fetch does nothing for the page and the flag
+  // below would land on the wrong window, blocking nothing. Bail out there and
+  // let content.js's <script> injection do the job.
+  try {
+    if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.id) return;
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) return;
+  } catch (e) { /* page world: no extension APIs, carry on */ }
   if (window.__multisubInjected) return;
   window.__multisubInjected = true;
 
   const WEBVTT_PROFILE = 'webvtt-lssdh-ios8';
 
-  // Debug logging for A3 interception diagnosis. Set to false once resolved.
   const DEBUG = false;
   function dbg() {
     if (!DEBUG) return;
     try { console.log.apply(console, ['[MultiSub][inject]'].concat([].slice.call(arguments))); } catch (e) { /* ignore */ }
   }
-  function safeJson(x, n) {
-    try { const s = JSON.stringify(x); return (s === undefined ? String(x) : s).slice(0, n || 400); }
-    catch (e) { return '<unstringifiable>'; }
-  }
   dbg('page-world script loaded at', location.pathname);
-
-  // Depth-limited walk to report where movieId / timedtexttracks live in a
-  // parsed payload, so we can fix scanForManifest() against the real shape.
-  function debugDescribeManifest(root) {
-    try {
-      const seen = new Set();
-      const stack = [{ v: root, path: '$' }];
-      let steps = 0;
-      while (stack.length && steps < 5000) {
-        steps++;
-        const item = stack.pop();
-        const v = item.v;
-        if (!v || typeof v !== 'object' || seen.has(v)) continue;
-        seen.add(v);
-        if (v.movieId != null) {
-          dbg('  node@', item.path, 'movieId=', v.movieId, 'ALLKEYS=', Object.keys(v).join(','));
-          // Dump the structure of any key that might hold subtitle / text tracks.
-          for (const k of Object.keys(v)) {
-            if (!/text|subtitle|caption|timed|\bcc\b|track/i.test(k)) continue;
-            const val = v[k];
-            if (Array.isArray(val)) {
-              const e0 = val[0];
-              dbg('    KEY', k, '= Array(' + val.length + ') elem0keys=',
-                  (e0 && typeof e0 === 'object') ? Object.keys(e0).join(',') : typeof e0,
-                  ' elem0=', safeJson(e0, 600));
-            } else if (val && typeof val === 'object') {
-              dbg('    KEY', k, '= Object keys=', Object.keys(val).join(','),
-                  ' sample=', safeJson(val, 400));
-            }
-          }
-        }
-        if (Array.isArray(v)) {
-          for (let i = 0; i < v.length && i < 60; i++) stack.push({ v: v[i], path: item.path + '[' + i + ']' });
-        } else {
-          for (const k of Object.keys(v)) if (k.length < 40) stack.push({ v: v[k], path: item.path + '.' + k });
-        }
-      }
-    } catch (e) { dbg('describe error', e && e.message); }
-  }
 
   function post(msg) {
     window.postMessage(Object.assign({ __multisub: true }, msg), '*');
@@ -94,25 +63,33 @@
   };
 
   // ---------------------------------------------------------------------------
-  // Hook JSON.parse: capture manifest responses (movieId + timedtexttracks).
+  // Capture manifest responses (movieId + text tracks). Netflix has parsed
+  // them with JSON.parse at some times and with Response.json() at others, so
+  // both are hooked. Neither hook may ever change what the page gets back.
   // ---------------------------------------------------------------------------
   const origParse = JSON.parse;
   JSON.parse = function () {
     const value = origParse.apply(this, arguments);
-    try {
-      if (DEBUG) {
-        const raw = arguments[0];
-        if (typeof raw === 'string' &&
-            (raw.indexOf('timedtexttracks') !== -1 || raw.indexOf('"movieId"') !== -1)) {
-          dbg('parse: manifest-ish payload len=', raw.length,
-              'hasTimedText=', raw.indexOf('timedtexttracks') !== -1);
-          debugDescribeManifest(value);
-        }
-      }
-      scanForManifest(value);
-    } catch (e) { /* ignore */ }
+    try { scanForManifest(value); } catch (e) { /* never break the page */ }
     return value;
   };
+
+  try {
+    const origJson = Response.prototype.json;
+    if (typeof origJson === 'function') {
+      Response.prototype.json = function () {
+        const promise = origJson.apply(this, arguments);
+        try {
+          // Observe on a side branch so the page keeps the very same promise
+          // (same resolution, same rejection) it would have had without us.
+          promise.then((value) => {
+            try { scanForManifest(value); } catch (e) { /* ignore */ }
+          }, () => {});
+        } catch (e) { /* ignore */ }
+        return promise;
+      };
+    }
+  } catch (e) { dbg('Response.json hook not installed:', e && e.message); }
 
   function scanForManifest(value) {
     if (!value || typeof value !== 'object') return;
@@ -148,17 +125,25 @@
     return null;
   }
 
+  // Public (URL-free) view of a track list, as content.js sees it.
+  function publicTracks(tracks) {
+    return tracks.map((t) => ({
+      id: t.id, language: t.language, label: t.label,
+      forced: t.forced, trackType: t.trackType, format: t.format
+    }));
+  }
+
+  // movieId -> signature of the last track list posted, so the same manifest
+  // seen through both hooks (or re-fetched by the player) doesn't make
+  // content.js re-run its track selection.
+  const lastPostedTracks = new Map();
+
   function handleManifest(manifest) {
     const list = Array.isArray(manifest.textTracks) ? manifest.textTracks
                : (manifest.timedtexttracks || []);
-    if (DEBUG && list.length) {
-      const t0 = list[0] || {};
-      dbg('handleManifest: track list len=', list.length, 'track0 keys=', Object.keys(t0).join(','),
-          'downloadables?', safeJson(t0.ttDownloadables || t0.downloadables, 500));
-    }
     const tracks = [];
     for (const t of list) {
-      if (t.isNoneTrack || t.isNone) continue;
+      if (!t || t.isNoneTrack || t.isNone) continue;
       const downloadables = t.ttDownloadables || t.downloadables || {};
       let profile = null;
       let format = null;
@@ -184,39 +169,47 @@
         url: url
       });
     }
-    dbg('handleManifest: movieId=', manifest.movieId, 'usable tracks=', tracks.length,
-        'formats=', tracks.map((t) => t.format));
+    dbg('handleManifest: movieId=', manifest.movieId, 'usable tracks=', tracks.length);
     if (!tracks.length) return;
     const movieId = String(manifest.movieId);
+    // Always keep the newest URLs (they expire), but only tell content.js
+    // when the list itself changed.
     trackCache.set(movieId, tracks);
+    const sig = tracks.map((t) => t.id + '|' + t.format).join(',');
+    if (lastPostedTracks.get(movieId) === sig) return;
+    lastPostedTracks.set(movieId, sig);
     // Don't leak URLs to the content script; it asks back by trackId.
-    post({
-      type: 'tracks',
-      movieId: movieId,
-      tracks: tracks.map((t) => ({
-        id: t.id, language: t.language, label: t.label,
-        forced: t.forced, trackType: t.trackType, format: t.format
-      }))
-    });
+    post({ type: 'tracks', movieId: movieId, tracks: publicTracks(tracks) });
   }
 
   // ---------------------------------------------------------------------------
-  // T1: detect the subtitle track currently selected in the Netflix player UI
-  // (method a from PLAN.md — private player API), so content.js can auto-
-  // follow it instead of guessing. This is reverse-engineered, undocumented
-  // API: every access is inside the try/catch below, and any failure just
-  // stops this feature from reporting (content.js keeps its existing
-  // heuristic track pick as the de-facto fallback — method b, a full DOM/cue
-  // diff comparator, is not implemented; not worth the complexity unless
-  // method a is observed to actually break).
+  // Selected tracks in Netflix's player, so content.js can follow the
+  // subtitle the viewer picked and knows the audio language. This is the
+  // undocumented private player API: every access sits inside the try/catch
+  // below, and any failure only stops these reports (content.js then falls
+  // back to its own track choice).
   // ---------------------------------------------------------------------------
-  const lastActiveTrackSig = new Map(); // movieId -> "bcp47|displayName" signature
+  const lastActiveTrackSig = new Map(); // movieId -> "subtitle|name|forced|audio" signature
+
+  function getPlayerApi() {
+    const playerApp = window.netflix && window.netflix.appContext &&
+      window.netflix.appContext.state && window.netflix.appContext.state.playerApp;
+    return playerApp && playerApp.getAPI && playerApp.getAPI();
+  }
+
+  function audioLanguageOf(player) {
+    try {
+      const audio = typeof player.getAudioTrack === 'function' ? player.getAudioTrack() : null;
+      if (!audio) return null;
+      return audio.bcp47 || audio.bcp47Code || audio.language || null;
+    } catch (e) {
+      return null;
+    }
+  }
 
   function pollActiveTrack() {
     try {
-      const playerApp = window.netflix && window.netflix.appContext &&
-        window.netflix.appContext.state && window.netflix.appContext.state.playerApp;
-      const api = playerApp && playerApp.getAPI && playerApp.getAPI();
+      const api = getPlayerApi();
       const videoPlayer = api && api.videoPlayer;
       if (!videoPlayer || typeof videoPlayer.getAllPlayerSessionIds !== 'function') return;
       const sessionIds = videoPlayer.getAllPlayerSessionIds();
@@ -228,17 +221,22 @@
         const track = player.getTimedTextTrack();
         let bcp47 = null;
         let displayName = null;
+        // With subtitles "off", Netflix may still show a forced-narrative
+        // track (signs, foreign-language bits); content.js must not take that
+        // for the full subtitle being on screen.
+        let forced = false;
         if (track && !track.isNoneTrack) {
           bcp47 = track.bcp47Code || track.bcp47 || track.language || null;
           displayName = track.displayName || track.trackDisplayName || null;
+          forced = !!(track.isForcedNarrative || track.isForced);
         }
-        if (DEBUG) dbg('pollActiveTrack: session=', sessionId, 'movieId=', movieId, 'rawTrack=', safeJson(track, 300));
+        const audioBcp47 = audioLanguageOf(player);
         const movieIdStr = String(movieId);
-        const sig = bcp47 + '|' + displayName;
+        const sig = bcp47 + '|' + displayName + '|' + forced + '|' + audioBcp47;
         if (lastActiveTrackSig.get(movieIdStr) === sig) continue;
         lastActiveTrackSig.set(movieIdStr, sig);
-        dbg('active-track changed:', movieIdStr, bcp47, displayName);
-        post({ type: 'active-track', movieId: movieIdStr, bcp47: bcp47, displayName: displayName });
+        dbg('active-track changed:', movieIdStr, bcp47, displayName, 'audio=', audioBcp47);
+        post({ type: 'active-track', movieId: movieIdStr, bcp47: bcp47, displayName: displayName, forced: forced, audioBcp47: audioBcp47 });
       }
     } catch (e) {
       dbg('pollActiveTrack error (Netflix player API likely changed):', e && e.message);
@@ -255,17 +253,12 @@
     if (!msg || msg.__multisub_cmd !== true) return;
     if (msg.type === 'fetch-track') fetchTrack(String(msg.movieId), msg.trackId, msg.purpose);
     else if (msg.type === 'get-tracks') {
-      const tracks = trackCache.get(String(msg.movieId));
-      if (tracks) {
-        post({
-          type: 'tracks',
-          movieId: String(msg.movieId),
-          tracks: tracks.map((t) => ({
-            id: t.id, language: t.language, label: t.label,
-            forced: t.forced, trackType: t.trackType, format: t.format
-          }))
-        });
-      }
+      const movieId = String(msg.movieId);
+      // content.js asks after every navigation and has forgotten what it was
+      // told before, so report the selected tracks again on the next poll.
+      lastActiveTrackSig.delete(movieId);
+      const tracks = trackCache.get(movieId);
+      if (tracks) post({ type: 'tracks', movieId: movieId, tracks: publicTracks(tracks) });
     } else if (msg.type === 'get-title') {
       const info = getVideoTitle(msg.movieId) ||
         { seriesTitle: null, episodeTitle: null, seasonNumber: null, episodeNumber: null };
@@ -273,36 +266,25 @@
     }
   });
 
-  // V4/cache-grouping: show/episode/season metadata, used both for the
-  // "生詞本" feature's `save-transcript` payload and (2026-07-06) for
-  // grouping cache-management entries by series. Uses the same private
-  // player API surface pollActiveTrack() above already relies on
-  // (`netflix.appContext.state.playerApp.getAPI()`), just different methods
-  // on it — verified against the real-world Subadub extension's
-  // (github.com/rsimmons/subadub) SRT-download filename logic, which solves
-  // the exact same problem the same way: `api.getVideoMetadataByVideoId(movieId)
-  // .getCurrentVideo()`, then `.getTitle()`, `.isEpisodic()`,
-  // `.getEpisodeTitle()`, `.getSeason()._season.seq`, `.getEpisodeNumber()`.
-  // Notably, Subadub falls back straight to movieId — not `document.title`
-  // — when this API is unavailable, which matches this project's own
-  // experience: `document.title` isn't a reliable source of the show/
-  // episode title during Netflix playback. Wrapped in try/catch per this
-  // project's Netflix-interception rule (must never throw into the host
-  // page); returns null on any failure, which content.js treats as "fall
-  // back to document.title, then to the raw movieId."
+  // Show/episode/season metadata, used for the vocabulary feature's
+  // `save-transcript` payload and for grouping cache entries by series in the
+  // app. Same private player API surface as pollActiveTrack(), different
+  // methods on it. The approach follows the Subadub extension
+  // (github.com/rsimmons/subadub), which names its SRT downloads the same way:
+  // `api.getVideoMetadataByVideoId(movieId).getCurrentVideo()`, then
+  // `.getTitle()`, `.isEpisodic()`, `.getEpisodeTitle()`,
+  // `.getSeason()._season.seq`, `.getEpisodeNumber()`. Like Subadub, content.js
+  // falls back to the movieId rather than `document.title`, which isn't a
+  // reliable source of the title during playback. Returns null on any failure
+  // and never throws into the page.
   //
-  // `getSeason()._season.seq` reaches into an internal (`_`-prefixed)
-  // field, same as Subadub does — there's no known public accessor for the
-  // season number. This is a *second, independent* best-effort layer beyond
-  // the rest of this function (which is itself unverified against a live
-  // Netflix page — see PLAN.md V4): if this specific piece breaks, the
-  // surrounding try/catch means it only costs season-grouping, not the
-  // series title or episode title.
+  // `getSeason()._season.seq` reaches into an internal (`_`-prefixed) field,
+  // as Subadub does; there's no known public accessor for the season number.
+  // It has its own try/catch so that if it breaks, only season grouping is
+  // lost, not the series or episode title.
   function getVideoTitle(movieId) {
     try {
-      const playerApp = window.netflix && window.netflix.appContext &&
-        window.netflix.appContext.state && window.netflix.appContext.state.playerApp;
-      const api = playerApp && playerApp.getAPI && playerApp.getAPI();
+      const api = getPlayerApi();
       const videoMeta = api && typeof api.getVideoMetadataByVideoId === 'function' &&
         api.getVideoMetadataByVideoId(String(movieId));
       const current = videoMeta && typeof videoMeta.getCurrentVideo === 'function' && videoMeta.getCurrentVideo();
@@ -346,10 +328,14 @@
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const text = await res.text();
       const cues = track.format === 'webvtt' ? parseWebVTT(text) : parseTTML(text);
-      dbg('fetchTrack: format=', track.format, 'bytes=', text.length, 'cues=', cues.length, 'purpose=', purpose);
+      dbg('fetchTrack:', track.format, text.length, 'bytes,', cues.length, 'cues, purpose=', purpose);
       post({ type: 'cues', movieId: movieId, trackId: trackId, purpose: purpose, cues: cues });
     } catch (e) {
       dbg('fetchTrack error:', e && e.message);
+      // The URL may have expired. Forget what was posted, so the next
+      // manifest Netflix fetches (with fresh URLs) reaches content.js even
+      // though the track list itself is the same, and it can try again.
+      if (purpose === 'source') lastPostedTracks.delete(movieId);
       post({ type: 'track-error', movieId: movieId, trackId: trackId, purpose: purpose, error: String(e && e.message || e) });
     }
   }
