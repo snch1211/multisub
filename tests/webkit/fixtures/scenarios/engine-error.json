@@ -1,0 +1,12 @@
+{
+  "name": "translate without a working engine: the original line and the hint from shared.js",
+  "nativeErrors": { "translate": "engine-not-ready" },
+  "settings": { "enabled": true, "mode": "translate", "targetLang": "zh-TW", "annotateLevel": "B1",
+                "fontScale": 1, "bottomOffset": 10, "mergedMode": true, "prefsUpdatedAt": 1 },
+  "checkpoints": [
+    { "time": 2, "expect": { "original": "Welcome back to the laboratory.", "text": "",
+                             "hint": "MultiSub：還沒設定 AI 引擎，點 Safari 工具列的 MultiSub 圖示設定" } }
+  ],
+  "status": { "mode": "translate", "status": "error", "errorCode": "engine-not-ready" },
+  "native": { "translate": 1, "annotate": 0 }
+}

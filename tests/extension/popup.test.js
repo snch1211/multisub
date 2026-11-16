@@ -2,33 +2,13 @@
 // Drives the real popup (extension/popup.html + popup.js + shared.js) in
 // headless Chrome with a scripted browser API (popup/mock.js) and one
 // scenario per page load (popup/driver.js).
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
 const assert = require('assert/strict');
 const EXT = process.env.EXT || require('path').resolve(__dirname, '../../extension');
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const HERE = path.join(__dirname, 'popup');
+const runner = require('./popup/runner');
 
+// One scenario per page load, in WebKit or headless Chrome (popup/runner.js).
 function run(cfg) {
-  const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'mspopup-'));
-  for (const f of ['popup.css', 'popup.js', 'shared.js']) fs.copyFileSync(path.join(EXT, f), path.join(dir, f));
-  fs.copyFileSync(path.join(HERE, 'mock.js'), path.join(dir, 'mock.js'));
-  fs.copyFileSync(path.join(HERE, 'driver.js'), path.join(dir, 'driver.js'));
-  const html = fs.readFileSync(path.join(EXT, 'popup.html'), 'utf8')
-    .replace('<script src="shared.js"></script>', '<script src="mock.js"></script><script src="shared.js"></script>')
-    .replace('<script src="popup.js"></script>', '<script src="popup.js"></script><script src="driver.js"></script>');
-  fs.writeFileSync(path.join(dir, 'popup.html'), html);
-  const url = 'file://' + dir + '/popup.html#' + encodeURIComponent(JSON.stringify(cfg));
-  const out = execFileSync(CHROME, ['--headless=new', '--disable-gpu', '--user-data-dir=' + path.join(dir, 'prof'),
-    '--virtual-time-budget=20000', '--dump-dom', url], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60000 });
-  fs.rmSync(dir, { recursive: true, force: true });
-  const m = out.match(/@@OUT@@([\s\S]*?)@@END@@/);
-  if (!m) throw new Error('no result in dumped DOM');
-  const res = JSON.parse(m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"'));
-  if (!res.ok) throw new Error(res.error + ' log=' + JSON.stringify(res.log));
-  return res.result;
+  return runner.run(cfg, { ext: EXT });
 }
 
 const providers = (extra = {}) => [
