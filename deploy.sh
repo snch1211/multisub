@@ -21,6 +21,16 @@ REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$REPO_DIR/MultiSub"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
+# Every build gets a build number (CFBundleVersion) of its own, so Safari
+# always sees an update and reloads the extension's files instead of going on
+# with the ones it has from the previous build of the same version. The
+# version (CFBundleShortVersionString, and the extension's manifest version)
+# stays as set in the project. Same scheme as scripts/archive-appstore.sh
+# (YYYYMMDDHHMM), plus the seconds as a second component, so two builds in one
+# minute still differ and the numbers keep sorting with the App Store ones.
+# Override with BUILD_NUMBER=… if needed.
+BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M.%-S)}"
+
 # ── Release build for DMG packaging ──────────────────────────────────────────
 # Uses the same mandatory flags as the Debug path below, only with
 # -configuration Release. Free signing — no hardened runtime / no
@@ -30,10 +40,11 @@ if [ "${1:-}" = "--release" ]; then
   echo "▶︎ (1/3) 建置 App（Release，第一次或大改動可能要幾分鐘）…"
   cd "$PROJECT_DIR"
   xcodebuild -project MultiSub.xcodeproj -scheme MultiSub -configuration Release \
-    ENABLE_DEBUG_DYLIB=NO -skipPackagePluginValidation -skipMacroValidation \
+    ENABLE_DEBUG_DYLIB=NO CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+    -skipPackagePluginValidation -skipMacroValidation \
     -allowProvisioningUpdates build >/tmp/multisub-build.log 2>&1 \
     || { echo "✗ 建置失敗，詳見 /tmp/multisub-build.log"; tail -20 /tmp/multisub-build.log; exit 1; }
-  echo "  ✓ BUILD SUCCEEDED"
+  echo "  ✓ BUILD SUCCEEDED (build $BUILD_NUMBER)"
 
   BUILT_APP="$(ls -td ~/Library/Developer/Xcode/DerivedData/MultiSub-*/Build/Products/Release/MultiSub.app 2>/dev/null | head -1)"
   if [ -z "$BUILT_APP" ] || [ ! -d "$BUILT_APP" ]; then
@@ -62,10 +73,11 @@ fi
 echo "▶︎ (1/5) 建置 App（第一次或大改動可能要幾分鐘）…"
 cd "$PROJECT_DIR"
 xcodebuild -project MultiSub.xcodeproj -scheme MultiSub -configuration Debug \
-  ENABLE_DEBUG_DYLIB=NO -skipPackagePluginValidation -skipMacroValidation \
+  ENABLE_DEBUG_DYLIB=NO CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+  -skipPackagePluginValidation -skipMacroValidation \
   -allowProvisioningUpdates build >/tmp/multisub-build.log 2>&1 \
   || { echo "✗ 建置失敗，詳見 /tmp/multisub-build.log"; tail -20 /tmp/multisub-build.log; exit 1; }
-echo "  ✓ BUILD SUCCEEDED"
+echo "  ✓ BUILD SUCCEEDED (build $BUILD_NUMBER)"
 
 # Find the freshly built app inside Xcode's hidden build folder (DerivedData).
 BUILT_APP="$(ls -td ~/Library/Developer/Xcode/DerivedData/MultiSub-*/Build/Products/Debug/MultiSub.app 2>/dev/null | head -1)"
