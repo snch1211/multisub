@@ -363,9 +363,11 @@
 
   // Fills in defaults and drops invalid values. A missing, null or unknown
   // mode becomes DEFAULT_MODE, without touching prefsUpdatedAt. An install
-  // from before modes existed has a stored object without a `mode` key: it
-  // starts in DEFAULT_MODE like a new install, and keeps its own mergedMode,
-  // which back then defaulted to off, so upgrading doesn't change its layout.
+  // from before modes existed (v1.0) has a stored object with neither a
+  // `mode` nor a `prefsUpdatedAt` key: it starts in DEFAULT_MODE like a new
+  // install, and keeps its own mergedMode, which back then defaulted to off,
+  // so upgrading doesn't change its layout. (Objects written through
+  // storedSettings may lack `mode` too, but always carry prefsUpdatedAt.)
   function mergeSettings(stored) {
     const s = stored && typeof stored === 'object' ? stored : null;
     const out = Object.assign({}, DEFAULT_SETTINGS, s || {});
@@ -377,9 +379,33 @@
     out.fontScale = Number(out.fontScale) > 0 ? Number(out.fontScale) : DEFAULT_SETTINGS.fontScale;
     out.bottomOffset = Number.isFinite(Number(out.bottomOffset)) ? Number(out.bottomOffset) : DEFAULT_SETTINGS.bottomOffset;
     out.prefsUpdatedAt = Number(out.prefsUpdatedAt) || 0;
-    const legacy = !!s && !Object.prototype.hasOwnProperty.call(s, 'mode');
+    const has = (key) => Object.prototype.hasOwnProperty.call(s, key);
+    const legacy = !!s && !has('mode') && !has('prefsUpdatedAt');
     if (legacy) out.mergedMode = s.mergedMode === true;
     else out.mergedMode = out.mergedMode !== false;
+    return out;
+  }
+
+  // The object to write to storage.local for `settings` (a mergeSettings
+  // result): everything except the shared preferences nobody has chosen.
+  // While prefsUpdatedAt is 0, mode and annotateLevel are always defaults,
+  // and so is targetLang unless it was read from a v1.0 object, where it
+  // was the user's pick from before preferences were synced (a v1.0 value
+  // equal to today's default is indistinguishable from it and goes too).
+  // Left out, they are filled in again by mergeSettings on every read, so
+  // the second language keeps following the system language, as it does
+  // in the app (SharedPrefs.effectiveTargetLang). Saved as they are, a drag
+  // of the subtitles or a display change would freeze today's default into
+  // storage, and the extension would then disagree with the app as soon as
+  // the system language changed, with nothing stamped for the sync to
+  // repair. Every write of `settings` goes through here.
+  function storedSettings(settings) {
+    const out = Object.assign({}, settings);
+    if (Number(out.prefsUpdatedAt) > 0) return out;
+    delete out.mode;
+    delete out.annotateLevel;
+    if (out.targetLang === DEFAULT_SETTINGS.targetLang) delete out.targetLang;
+    out.prefsUpdatedAt = 0;
     return out;
   }
 
@@ -551,6 +577,7 @@
     glossaryKey: glossaryKey,
     annotateKey: annotateKey,
     mergeSettings: mergeSettings,
+    storedSettings: storedSettings,
     prefsOf: prefsOf,
     reconcilePrefs: reconcilePrefs,
     errorText: errorText,

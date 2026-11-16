@@ -73,8 +73,10 @@ function option(value, label) {
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
+// Unchosen preferences stay out of storage (see MS.storedSettings), so a
+// display change doesn't freeze today's default second language.
 function saveSettingsNow() {
-  return api.storage.local.set({ settings: settings }).catch(() => {});
+  return api.storage.local.set({ settings: MS.storedSettings(settings) }).catch(() => {});
 }
 
 let saveTimer = null;

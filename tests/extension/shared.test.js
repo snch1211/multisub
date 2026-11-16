@@ -19,7 +19,7 @@ test('MS is frozen and has the documented surface', () => {
   assert.ok(Object.isFrozen(MS));
   for (const k of ['DEFAULT_STYLES', 'DEFAULT_SETTINGS', 'LANGUAGES', 'MODES', 'LEVELS', 'normalizeBcp47',
     'alignCues', 'chunkCues', 'translateKey', 'glossaryKey', 'annotateKey', 'mergeSettings', 'ERROR_TEXT', 'matchAnnotations',
-    'DEFAULT_MODE', 'FALLBACK_TARGET_LANG', 'supportedLanguageFor', 'defaultTargetLang']) {
+    'DEFAULT_MODE', 'FALLBACK_TARGET_LANG', 'supportedLanguageFor', 'defaultTargetLang', 'storedSettings']) {
     assert.ok(k in MS, k);
   }
   assert.equal(MS.LANGUAGES.length, 12);
@@ -282,12 +282,16 @@ test('defaultTargetLang: the first preferred language decides, else zh-TW', () =
   assert.equal(MS.defaultTargetLang(undefined), 'zh-TW');
 });
 
+// A fresh copy of shared.js under the given navigator (none when undefined),
+// as a page or the popup would load it.
+function loadShared(navigator) {
+  const c = vm.createContext(navigator === undefined ? {} : { navigator });
+  vm.runInContext(fs.readFileSync(EXT + '/shared.js', 'utf8'), c, { filename: 'shared.js' });
+  return c.MS;
+}
+
 test('DEFAULT_SETTINGS.targetLang comes from navigator.languages', () => {
-  const load = (navigator) => {
-    const c = vm.createContext(navigator === undefined ? {} : { navigator });
-    vm.runInContext(fs.readFileSync(EXT + '/shared.js', 'utf8'), c, { filename: 'shared.js' });
-    return c.MS;
-  };
+  const load = loadShared;
   assert.equal(load({ languages: ['ja-JP', 'en-US'], language: 'ja-JP' }).DEFAULT_SETTINGS.targetLang, 'ja');
   assert.equal(load({ languages: ['zh-HK'] }).DEFAULT_SETTINGS.targetLang, 'zh-TW');
   assert.equal(load({ languages: ['zh-CN'] }).DEFAULT_SETTINGS.targetLang, 'zh-CN');
@@ -303,6 +307,44 @@ test('DEFAULT_SETTINGS.targetLang comes from navigator.languages', () => {
   Object.defineProperty(c, 'navigator', { get() { throw new Error('nope'); } });
   vm.runInContext(fs.readFileSync(EXT + '/shared.js', 'utf8'), c);
   assert.equal(c.MS.DEFAULT_SETTINGS.targetLang, 'zh-TW');
+});
+
+test('storedSettings: unchosen preferences stay out of storage, so the default keeps following the system', () => {
+  const ja = loadShared({ languages: ['ja'] });
+  const fresh = ja.mergeSettings(null);
+  assert.equal(fresh.targetLang, 'ja');
+  // A drag of the subtitles (or any display change) saves the whole object.
+  const saved = j(ja.storedSettings(Object.assign({}, fresh, { bottomOffset: 22 })));
+  for (const k of ['mode', 'targetLang', 'annotateLevel']) assert.ok(!(k in saved), k);
+  assert.equal(saved.bottomOffset, 22);
+  assert.equal(saved.prefsUpdatedAt, 0);
+  assert.equal(saved.mergedMode, true);
+  assert.equal(fresh.targetLang, 'ja'); // the argument is left alone
+  // The system language changes to Traditional Chinese: so does the default.
+  const tw = loadShared({ languages: ['zh-TW'] });
+  const reread = tw.mergeSettings(saved);
+  assert.equal(reread.targetLang, 'zh-TW');
+  assert.equal(reread.mode, 'netflix');
+  assert.equal(reread.bottomOffset, 22);
+  assert.equal(reread.mergedMode, true); // a current object, not mistaken for a v1.0 one
+  assert.equal(reread.prefsUpdatedAt, 0);
+  // Stamped preferences are choices: stored as they are, whatever the system says later.
+  const chosen = j(ja.storedSettings(Object.assign({}, fresh, { mode: 'translate', prefsUpdatedAt: 7 })));
+  assert.deepEqual(j(MS.prefsOf(chosen)), { mode: 'translate', targetLang: 'ja', annotateLevel: 'B1', updatedAt: 7 });
+  assert.equal(tw.mergeSettings(chosen).targetLang, 'ja');
+  // A v1.0 object (no modes, no sync yet): its targetLang was the user's pick,
+  // and stays through any number of saves, still unstamped, with its own mergedMode.
+  const v1 = { enabled: true, targetLang: 'ko', fontScale: 1.2, bottomOffset: 10, styles: {}, mergedMode: false };
+  let s = tw.mergeSettings(v1);
+  for (let i = 0; i < 2; i++) {
+    const stored = j(tw.storedSettings(Object.assign({}, s, { fontScale: 1 + i })));
+    assert.equal(stored.targetLang, 'ko');
+    assert.ok(!('mode' in stored));
+    s = tw.mergeSettings(stored);
+    assert.equal(s.targetLang, 'ko');
+    assert.equal(s.mergedMode, false);
+    assert.equal(s.prefsUpdatedAt, 0);
+  }
 });
 
 const segs = (line, ann) => j(MS.matchAnnotations(line, ann));

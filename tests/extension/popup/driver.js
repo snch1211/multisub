@@ -136,6 +136,13 @@
         vocabShown: visible('vocabSection'), chooser: !!document.getElementById('chooser'),
         sentPrefs: window.__log.filter((m) => m.type === 'set-prefs'), stored: window.__store.settings || null };
     },
+    async 'display-change'() {
+      await waitFor(() => !document.body.classList.contains('loading'), 6000);
+      $('mergedMode').checked = false;
+      fire($('mergedMode'), 'change');
+      await sleep(100);
+      return { stored: window.__store.settings || null, sentPrefs: window.__log.filter((m) => m.type === 'set-prefs') };
+    },
     async 'pick-mode'() {
       await waitFor(() => !document.body.classList.contains('loading'), 6000);
       $('modeSwitch').querySelector('[data-mode="translate"]').click();

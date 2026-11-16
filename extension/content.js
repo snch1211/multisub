@@ -201,7 +201,7 @@
   // so local and remote (popup) changes take the same path. The explicit
   // apply afterwards is a no-op when the listener already ran.
   function saveSettings(next) {
-    return api.storage.local.set({ settings: next })
+    return api.storage.local.set({ settings: MS.storedSettings(next) })
       .catch(() => {})
       .then(() => applySettingsChange(next));
   }
@@ -1228,7 +1228,7 @@
     // Write storage once, on release, not on every pointermove.
     if (finalValue !== settings.bottomOffset) {
       settings = Object.assign({}, settings, { bottomOffset: finalValue });
-      api.storage.local.set({ settings: settings }).catch(() => {});
+      api.storage.local.set({ settings: MS.storedSettings(settings) }).catch(() => {});
     }
   }
 

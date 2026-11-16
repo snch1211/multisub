@@ -353,6 +353,28 @@ async function test(name, fn) {
     t2.stop();
   });
 
+  await test('saving with nothing chosen leaves mode, language and level out of storage', async () => {
+    const t = boot({ stored: undefined, navigator: { languages: ['ja-JP'] },
+      ping: () => ({ ok: true, engine: null, prefs: { updatedAt: 0 }, styles: { textColor: '#ffff00' } }) });
+    await sleep(150);
+    const keys = () => Object.keys(t.store.settings || {});
+    // adopting the app's styles wrote the settings
+    assert.equal(t.store.settings.styles.textColor, '#ffff00');
+    for (const k of ['mode', 'targetLang', 'annotateLevel']) assert.ok(!keys().includes(k), k);
+    // so does dragging the subtitles
+    await t.tabMessage({ type: 'set-drag-mode', enabled: true });
+    const text = t.overlayText();
+    text.dispatch('pointerdown', { pointerId: 1, clientY: 300 });
+    text.dispatch('pointermove', { pointerId: 1, clientY: 250 });
+    text.dispatch('pointerup', { pointerId: 1, clientY: 250 });
+    await sleep(20);
+    assert.equal(t.store.settings.bottomOffset, 20);
+    for (const k of ['mode', 'targetLang', 'annotateLevel']) assert.ok(!keys().includes(k), k);
+    assert.equal(t.store.settings.prefsUpdatedAt, 0);
+    assert.equal((await t.status()).mode, 'netflix');
+    t.stop();
+  });
+
   await test('an AI mode without an engine still points to engine setup', async () => {
     const t = boot({ stored: settingsWith({ mode: 'translate' }), ping: () => ({ ok: true, engine: { active: null } }) });
     await toFetch(t);

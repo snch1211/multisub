@@ -183,6 +183,14 @@ test('no settings yet: everyday view in Netflix mode with the system language, n
   assert.equal(app.stored.prefsUpdatedAt, 3);
 });
 
+test('a display change with nothing chosen stores neither mode, language nor level', () => {
+  const r = run(base('display-change', { store: {}, languages: ['ja-JP'] }));
+  assert.equal(r.stored.mergedMode, false);
+  assert.equal(r.stored.prefsUpdatedAt, 0);
+  for (const k of ['mode', 'targetLang', 'annotateLevel']) assert.ok(!(k in r.stored), k);
+  assert.deepEqual(r.sentPrefs, []);
+});
+
 test('picking a mode in the switch is an explicit choice: stamped and sent to the app', () => {
   const r = run(base('pick-mode', { store: {}, languages: ['ko-KR'] }));
   assert.equal(r.sentPrefs.length, 1);
