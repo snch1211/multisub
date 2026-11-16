@@ -13,9 +13,11 @@
 //  file we own (resumed via `Range` headers), then hands off to `HubCache`'s
 //  own public `storeFile` API to place it under the exact
 //  `blobs/<etag>` + `snapshots/<commit>/<filename>` layout `HubClient`
-//  expects. `Translator.loadModel` then finds the snapshot complete on disk
-//  (`MultiSubPaths.modelSnapshotDirectory`) and loads it from there with no
-//  network I/O at all.
+//  expects. The files it sets out to fetch are recorded first
+//  (`MultiSubPaths.recordExpectedFiles`), and the snapshot counts as complete
+//  only once all of them are there. `Translator.loadModel` then finds it
+//  complete on disk (`MultiSubPaths.modelSnapshotDirectory`) and loads it
+//  from there with no network I/O at all.
 //
 //  App target only — the extension never downloads (every `Translator`
 //  request loads the model with `allowDownload: false`). Besides this
@@ -95,6 +97,12 @@ enum ModelDownloader {
         guard let commitHash else {
             throw DownloadError(message: "無法解析 \(modelID) 的版本")
         }
+
+        // Before the first file is stored: the model counts as downloaded
+        // only once every file listed here is in the snapshot, so a
+        // download cut short on any file (the small tokenizer_config.json
+        // listed last included) can't pass for a finished one.
+        try MultiSubPaths.recordExpectedFiles(files.map(\.entry.path), modelID: modelID, commit: commitHash)
 
         // Unique per call (not a shared ".download-tmp"): with concurrent
         // downloads of different models now possible (ModelDownloadManager),

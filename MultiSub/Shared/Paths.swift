@@ -36,10 +36,17 @@ enum MultiSubPaths {
 // MARK: - Downloaded models
 
 extension MultiSubPaths {
+    /// `<root>/models--<org>--<name>`, the Hugging Face cache folder that
+    /// `HubCache` writes and `ModelDownloader` fills for `modelID`.
+    static func modelRepoDirectory(for modelID: String,
+                                   in root: URL = MultiSubPaths.modelsRoot) -> URL {
+        root.appendingPathComponent(
+            "models--" + modelID.replacingOccurrences(of: "/", with: "--"), isDirectory: true)
+    }
+
     /// The folder holding a complete copy of `modelID` on this Mac, or nil.
     ///
-    /// Models are stored in the Hugging Face cache layout that `HubCache`
-    /// writes and `ModelDownloader` fills:
+    /// Models are stored in the Hugging Face cache layout:
     /// `<modelsRoot>/models--<org>--<name>/snapshots/<commit>/…`. Only the
     /// disk is read, which is what lets a model load without asking
     /// huggingface.co anything (see `LocalModelFolder`). The snapshot
@@ -47,8 +54,7 @@ extension MultiSubPaths {
     /// older download, or one the user put there by hand) also counts.
     static func modelSnapshotDirectory(for modelID: String,
                                        in root: URL = MultiSubPaths.modelsRoot) -> URL? {
-        let repoDir = root.appendingPathComponent(
-            "models--" + modelID.replacingOccurrences(of: "/", with: "--"), isDirectory: true)
+        let repoDir = modelRepoDirectory(for: modelID, in: root)
         let fm = FileManager.default
         guard let snapshots = try? fm.contentsOfDirectory(
             at: repoDir.appendingPathComponent("snapshots", isDirectory: true),
@@ -61,16 +67,27 @@ extension MultiSubPaths {
             if aMain != bMain { return aMain }
             return a.lastPathComponent < b.lastPathComponent
         }
-        return ordered.first(where: isCompleteModelSnapshot)
+        return ordered.first { snapshot in
+            switch expectedFiles(repoDirectory: repoDir, commit: snapshot.lastPathComponent) {
+            case .notRecorded: return isCompleteModelSnapshot(snapshot, expectedFiles: nil)
+            case .files(let files): return isCompleteModelSnapshot(snapshot, expectedFiles: files)
+            case .unreadable: return false
+            }
+        }
     }
 
     /// Whether `directory` has what loading a model reads: `config.json`,
     /// `tokenizer.json` and the weights, with every shard of a
-    /// `model-00001-of-00004.safetensors` style set. A download cut short
-    /// leaves some of these out (or a link to a blob that isn't there); such
-    /// a model counts as not downloaded instead of being completed from the
-    /// network when it's loaded.
-    static func isCompleteModelSnapshot(_ directory: URL) -> Bool {
+    /// `model-00001-of-00004.safetensors` style set, plus every file in
+    /// `expectedFiles` (what `ModelDownloader` set out to fetch, see
+    /// `recordExpectedFiles`). Without such a list (a download by an older
+    /// build, or files put there by hand) `tokenizer_config.json` is needed
+    /// too: it carries the special tokens, so a Gemma prompt built without
+    /// it has no `<bos>`. A download cut short leaves some of these out (or
+    /// a link to a blob that isn't there); such a model counts as not
+    /// downloaded instead of being completed from the network, or loaded
+    /// with a file missing, when it's used.
+    static func isCompleteModelSnapshot(_ directory: URL, expectedFiles: [String]?) -> Bool {
         let fm = FileManager.default
         // Follows the snapshot's links into `blobs/`.
         func exists(_ name: String) -> Bool {
@@ -79,6 +96,11 @@ extension MultiSubPaths {
         guard exists("config.json"), exists("tokenizer.json"),
               let names = try? fm.contentsOfDirectory(atPath: directory.path)
         else { return false }
+        if let expectedFiles {
+            guard expectedFiles.allSatisfy(exists) else { return false }
+        } else {
+            guard exists("tokenizer_config.json") else { return false }
+        }
         let weights = names.filter { $0.hasSuffix(".safetensors") && exists($0) }
         guard !weights.isEmpty else { return false }
         var checkedSets: Set<String> = []
@@ -87,6 +109,56 @@ extension MultiSubPaths {
             for index in 1...set.count where !exists(set.fileName(index)) { return false }
         }
         return true
+    }
+
+    /// Records the files a download of `modelID` at `commit` is about to
+    /// fetch. `ModelDownloader` writes this before it stores the first
+    /// file, so until the last one is in the snapshot the model doesn't
+    /// count as downloaded, whichever file a download cut short is missing.
+    /// Kept beside `snapshots/` rather than in it, so the snapshot folder
+    /// mlx-swift-lm reads holds only the repo's own files; deleting the
+    /// model's folder deletes it too.
+    static func recordExpectedFiles(_ files: [String], modelID: String, commit: String,
+                                    in root: URL = MultiSubPaths.modelsRoot) throws {
+        let url = try expectedFilesURL(repoDirectory: modelRepoDirectory(for: modelID, in: root), commit: commit)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try JSONEncoder().encode(ExpectedFiles(files: files.sorted())).write(to: url, options: .atomic)
+    }
+
+    private struct ExpectedFiles: Codable {
+        var files: [String]
+    }
+
+    private static let expectedFilesFolder = ".multisub-expected-files"
+
+    private static func expectedFilesURL(repoDirectory: URL, commit: String) throws -> URL {
+        // `commit` names a file; HubCache refuses the same names for snapshots.
+        guard !commit.isEmpty, commit != ".", commit != "..",
+              !commit.contains("/"), !commit.contains("\\")
+        else { throw CocoaError(.fileWriteInvalidFileName) }
+        return repoDirectory.appendingPathComponent(expectedFilesFolder, isDirectory: true)
+            .appendingPathComponent(commit + ".json")
+    }
+
+    private enum ExpectedFilesRecord {
+        /// Not downloaded by `ModelDownloader` (or by a build before it kept
+        /// the list).
+        case notRecorded
+        case files([String])
+        /// Says nothing about which files are needed, so the snapshot
+        /// doesn't count.
+        case unreadable
+    }
+
+    private static func expectedFiles(repoDirectory: URL, commit: String) -> ExpectedFilesRecord {
+        guard let url = try? expectedFilesURL(repoDirectory: repoDirectory, commit: commit),
+              FileManager.default.fileExists(atPath: url.path)
+        else { return .notRecorded }
+        guard let data = try? Data(contentsOf: url),
+              let list = try? JSONDecoder().decode(ExpectedFiles.self, from: data)
+        else { return .unreadable }
+        return .files(list.files)
     }
 
     /// `<prefix>-<index>-of-<count>.safetensors`, the names Hugging Face

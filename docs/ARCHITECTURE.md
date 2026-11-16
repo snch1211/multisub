@@ -128,7 +128,12 @@ glosses from drifting away from what the scene means.
   not downloaded) contacts Hugging Face. Loading reads the snapshot folder
   `MultiSubPaths.modelSnapshotDirectory` finds complete on disk
   (`LocalModelFolder`), with no network request in either process; a missing
-  or incomplete model is `model-not-ready`, never a download.
+  or incomplete model is `model-not-ready`, never a download. Complete means
+  every file `ModelDownloader` listed before it stored the first one
+  (`models--<org>--<name>/.multisub-expected-files/<commit>.json`); a
+  snapshot without that list (an older build's download, or files put there
+  by hand) needs `config.json`, `tokenizer.json`, `tokenizer_config.json`
+  and every weight shard.
 * `cloud` — the user's own API key (BYOK); "not ready" without consent.
 
 Cloud providers (`CloudProvider`): `anthropic`, `openai`, `openrouter`,
