@@ -14,16 +14,26 @@ import SwiftUI
 @MainActor
 struct MultiSubApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var router = AppRouter()
+    @State private var router: AppRouter
     @State private var configStore = ConfigStore()
     @State private var modelDownloadManager = ModelDownloadManager()
-    @State private var vocabExtractionManager = VocabExtractionManager()
+    @State private var vocabExtractionManager: VocabExtractionManager
     #if !APP_STORE
     // Direct (DMG) builds only: the App Store build updates through the
     // App Store and must not contain a self-updater.
     @State private var updateChecker = UpdateChecker()
     @State private var updateDownloadManager = UpdateDownloadManager()
     #endif
+
+    init() {
+        // The router hands `multisub://vocab` straight to the extraction
+        // queue, so both exist before the first URL can be routed (the
+        // router drains `AppDelegate.pendingOpenURL` in its init).
+        let vocab = VocabExtractionManager()
+        _vocabExtractionManager = State(initialValue: vocab)
+        _router = State(initialValue: AppRouter(vocab: vocab))
+        AppDelegate.vocabExtraction = vocab
+    }
 
     var body: some Scene {
         Window("MultiSub", id: "main") {
