@@ -112,9 +112,10 @@ for (const [lang, encoding] of Object.entries(LANGUAGES)) {
 }
 
 // The manifest form that broke in Safari: "background.scripts" makes WebKit
-// generate the background page without a charset.
-function oldManifestCopy() {
-  const dir = path.join(tmp, 'old-manifest');
+// generate the background page without a charset. `edit(dir)`, if given,
+// changes the copy further.
+function oldManifestCopy(tag, edit) {
+  const dir = path.join(tmp, tag);
   fs.cpSync(EXT, dir, { recursive: true });
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
   const page = manifest.background && manifest.background.page;
@@ -125,11 +126,22 @@ function oldManifestCopy() {
   manifest.background = { scripts, persistent: manifest.background.persistent };
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2));
   fs.rmSync(path.join(dir, page));
+  if (edit) edit(dir);
   return dir;
 }
 
-test('old manifest (background.scripts) fails in zh-Hant: shared.js decoded as Big5, ping never reaches native', () => {
-  const dir = oldManifestCopy();
+// shared.js as it was then: its curly apostrophes written as they are in a
+// regular expression, where Big5 makes the second one swallow the "]".
+function literalApostrophes(dir) {
+  const file = path.join(dir, 'shared.js');
+  const src = fs.readFileSync(file, 'utf8');
+  const patched = src.replace('/[\\u2018\\u2019]/g', '/[\u2018\u2019]/g');
+  assert.notEqual(patched, src, 'shared.js has no /[\\u2018\\u2019]/g any more; update this test');
+  fs.writeFileSync(file, patched);
+}
+
+test('old manifest (background.scripts) with shared.js as it was fails in zh-Hant: decoded as Big5, ping never reaches native', () => {
+  const dir = oldManifestCopy('old-manifest', literalApostrophes);
   const res = harness(['smoke', dir, '-AppleLanguages', '(zh-Hant)']);
   assert.ok(res.result, 'no RESULT line\n' + res.stderr.slice(-800));
   assert.equal(res.status, 1, 'expected the checks to fail\n' + res.stderr.slice(-800));
@@ -142,6 +154,23 @@ test('old manifest (background.scripts) fails in zh-Hant: shared.js decoded as B
   for (const lang of ['ja', 'en']) {
     const other = harness(['smoke', dir, '-AppleLanguages', `(${lang})`]);
     console.log(`     (${lang}: ${other.status === 0 ? 'passes' : 'fails: ' + failedChecks(other).map((c) => c.name).join(', ')})`);
+  }
+});
+
+// The \u escapes in shared.js's regular expressions are the second line of
+// defence: with the old manifest the background page is still not UTF-8
+// (Chinese text comes out garbled), but the scripts parse and the ping gets
+// through.
+test('old manifest in zh-Hant with shared.js as it is now: still not UTF-8, but the ping gets through', () => {
+  const dir = oldManifestCopy('old-manifest-escaped');
+  const res = harness(['smoke', dir, '-AppleLanguages', '(zh-Hant)']);
+  assert.ok(res.result, 'no RESULT line\n' + res.stderr.slice(-800));
+  const failed = failedChecks(res).map((c) => c.name);
+  assert.ok(!failed.includes('ping-native round trip (popup -> background -> native)'), describe(res));
+  assert.equal(res.result.popup.ping.ok, true);
+  if (res.result.background && typeof res.result.background === 'object') {
+    assert.ok(failed.includes('background page is decoded as UTF-8'), 'failed: ' + failed.join(', '));
+    assert.equal(res.result.background.ms, 'object', 'shared.js did not load in the background page');
   }
 });
 

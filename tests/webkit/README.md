@@ -49,10 +49,16 @@ or background page not decoded as UTF-8, and when the ping doesn't come back
 (`zh-Hant`, `ja`, `en`, `zh-Hans`, `ko`), which changes the legacy encoding
 WebKit falls back to (Big5, Shift_JIS, windows-1252, GBK, EUC-KR).
 `webkit.test.js` runs it in zh-Hant, ja and en, and checks that a copy of the
-extension with the old `"background": {"scripts": [...]}` manifest fails in
-zh-Hant: WebKit then generates the background page without a charset,
-`shared.js` is decoded as Big5 and stops parsing, and the ping comes back as
-`native-unavailable` with "shared.js did not load".
+extension with the old `"background": {"scripts": [...]}` manifest and the
+old `shared.js` (curly apostrophes written as they are in a regular
+expression) fails in zh-Hant: WebKit then generates the background page
+without a charset, `shared.js` is decoded as Big5 and stops parsing, and the
+ping comes back as `native-unavailable` with "shared.js did not load". With
+today's `shared.js`, whose regular expressions write non-ASCII characters as
+`\u` escapes, the same manifest still gives a page that isn't UTF-8, but
+the ping gets through. `tests/extension/layout.test.js` checks the escapes'
+effect without WebKit: every script the background page and the popup load
+must parse when decoded as Big5, GBK or Shift_JIS.
 
 `page <file.html>` loads a local page in a plain `WKWebView` and prints what
 the page writes between `@@OUT@@` and `@@END@@`. The popup runner uses it.

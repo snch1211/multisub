@@ -454,11 +454,15 @@
   const WORD_CHAR = /[\p{L}\p{M}\p{N}]/u;
   const ALPHABETIC = /\p{Alphabetic}/u;
 
-  // Same as normalizeForMatch: curly apostrophes become ', line breaks become
-  // spaces. Every replacement is one UTF-16 unit for one, so offsets into
-  // the normalized line are offsets into the original line too.
+  // Same as normalizeForMatch: curly apostrophes (U+2018, U+2019) become ',
+  // line breaks become spaces. Every replacement is one UTF-16 unit for one,
+  // so offsets into the normalized line are offsets into the original line
+  // too. Non-ASCII characters in a regular expression are written as \u
+  // escapes: decoded in a legacy encoding (Big5, GBK, Shift_JIS), the
+  // character itself can swallow the "]" after it and stop this file from
+  // parsing (see background.html and tests/extension/layout.test.js).
   function normalizeForMatch(s) {
-    return String(s).replace(/[‘’]/g, "'").replace(/\n/g, ' ');
+    return String(s).replace(/[\u2018\u2019]/g, "'").replace(/\n/g, ' ');
   }
 
   // Same as usesSpacedScript: every alphabetic character is Latin, Greek or
