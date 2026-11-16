@@ -12,7 +12,7 @@ import AppKit
 import SafariServices
 import os.log
 
-let logger = Logger(subsystem: "com.seanhuang.multisub.Extension", category: "native")
+let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "MultiSub.Extension", category: "native")
 
 class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
 

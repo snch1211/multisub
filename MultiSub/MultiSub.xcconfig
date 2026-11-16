@@ -1,0 +1,30 @@
+// MultiSub.xcconfig — build settings shared by the app and the Safari extension.
+//
+// Everything that identifies *who* is building lives here as a variable, so a
+// fresh clone builds under any Apple developer team without touching the
+// project file. Override the values for your machine in Local.xcconfig
+// (gitignored; copy Local.xcconfig.example to start).
+
+// Bundle ID of the host app. The Safari extension is "<this>.Extension".
+// Bundle IDs are globally unique per Apple team, so anyone who is not the
+// original author must pick their own (e.g. com.yourname.multisub).
+MULTISUB_BUNDLE_ID = com.seanhuang.multisub
+
+// Your 10-character Apple Team ID (Xcode ▸ Settings ▸ Accounts). Empty here on
+// purpose: set it in Local.xcconfig.
+DEVELOPMENT_TEAM =
+
+// MLX only runs on Apple silicon, so there is no Intel slice to build.
+ARCHS = arm64
+
+// Distribution channel. "direct" (DMG from GitHub Releases) keeps the in-app
+// update checker; scripts/archive-appstore.sh switches this to "appstore",
+// which compiles the updater out and uses the App Store entitlements.
+MULTISUB_DISTRIBUTION = direct
+MULTISUB_APP_ENTITLEMENTS_direct = MultiSub/MultiSub.entitlements
+MULTISUB_APP_ENTITLEMENTS_appstore = MultiSub/MultiSub-AppStore.entitlements
+MULTISUB_SWIFT_FLAGS_direct =
+MULTISUB_SWIFT_FLAGS_appstore = APP_STORE
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(MULTISUB_SWIFT_FLAGS_$(MULTISUB_DISTRIBUTION))
+
+#include? "Local.xcconfig"

@@ -11,7 +11,8 @@ import AppKit
 import SafariServices
 import SwiftUI
 
-let extensionBundleIdentifier = "com.seanhuang.multisub.Extension"
+/// The Safari extension is always "<app bundle id>.Extension" (see MultiSub.xcconfig).
+let extensionBundleIdentifier = (Bundle.main.bundleIdentifier ?? "") + ".Extension"
 
 @MainActor
 struct GeneralSettingsView: View {

@@ -9,7 +9,6 @@
 import Foundation
 import HuggingFace
 import MLX
-import MLXHuggingFace
 import MLXLLM
 import MLXLMCommon
 import Security
@@ -44,16 +43,9 @@ enum MultiSubPaths {
         return groups.first { !$0.hasPrefix("group.") }
     }
 
-    /// Pre-S0 group ID. Kept in both `.entitlements` files (not just here) so
-    /// `migrateLegacyContainerOnce` below retains sandbox read access to the
-    /// old container long enough to move existing users' model cache across.
-    /// Not used for anything else.
-    static let legacyAppGroupID = "group.com.seanhuang.multisub"
-
     /// Both targets are sandboxed, so the model and config live in the shared
     /// App Group container, visible to the app and the Safari extension alike.
     static var sharedRoot: URL {
-        _ = migrateLegacyContainerOnce
         let fm = FileManager.default
         let base: URL
         if let groupID = appGroupID,
@@ -66,28 +58,6 @@ enum MultiSubPaths {
         try? fm.createDirectory(at: base, withIntermediateDirectories: true)
         return base
     }
-
-    /// One-time move from the legacy `group.*` container into the new
-    /// Team-ID-prefixed one, so existing users don't lose their ~5GB model
-    /// cache. Runs at most once per process via `static let` laziness. Safe
-    /// if both the app and the extension process race to migrate at launch:
-    /// whichever loses finds the source already gone and `moveItem` throws,
-    /// which is silently ignored since the data already landed in the new
-    /// container via the winner.
-    private static let migrateLegacyContainerOnce: Void = {
-        let fm = FileManager.default
-        guard let legacyGroup = fm.containerURL(forSecurityApplicationGroupIdentifier: legacyAppGroupID) else { return }
-        let legacyBase = legacyGroup.appendingPathComponent("MultiSub", isDirectory: true)
-        guard fm.fileExists(atPath: legacyBase.path) else { return }
-
-        guard let newAppGroupID = appGroupID,
-              let newGroup = fm.containerURL(forSecurityApplicationGroupIdentifier: newAppGroupID) else { return }
-        let newBase = newGroup.appendingPathComponent("MultiSub", isDirectory: true)
-        guard !fm.fileExists(atPath: newBase.path) else { return }
-
-        try? fm.createDirectory(at: newGroup, withIntermediateDirectories: true)
-        try? fm.moveItem(at: legacyBase, to: newBase)
-    }()
 
     static var modelsRoot: URL { sharedRoot.appendingPathComponent("models", isDirectory: true) }
     static var configFile: URL { sharedRoot.appendingPathComponent("config.json") }
@@ -505,8 +475,8 @@ actor Translator {
         MLX.GPU.set(cacheLimit: 512 * 1024 * 1024)
 
         let loaded = try await LLMModelFactory.shared.loadContainer(
-            from: #hubDownloader(hubClient()),
-            using: #huggingFaceTokenizerLoader(),
+            from: HubDownloader(hubClient()),
+            using: TransformersTokenizerLoader(),
             configuration: ModelConfiguration(id: modelID)
         ) { prog in
             progress?(prog.fractionCompleted)

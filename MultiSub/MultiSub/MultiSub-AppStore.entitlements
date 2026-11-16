@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Mac App Store build: same as MultiSub.entitlements minus the
+	     Downloads access the self-updater needs (no self-updating on the store). -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<!-- Team-ID-prefixed group: authorized by code signature alone on
+		     macOS, so no portal registration is needed. Must be identical in
+		     the app and the extension (shared models, config, vocab). -->
+		<string>$(TeamIdentifierPrefix)$(MULTISUB_BUNDLE_ID)</string>
+	</array>
+	<!-- Shared keychain group so the app and the extension both read the
+	     user's own API keys (BYOK). -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)$(MULTISUB_BUNDLE_ID).shared</string>
+	</array>
+</dict>
+</plist>
