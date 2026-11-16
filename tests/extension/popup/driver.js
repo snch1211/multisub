@@ -105,6 +105,25 @@
       await sleep(50);
       return { text, sent: log(), stepHidden: !visible('consentStep'), result: $('engineResult').textContent, formShown: visible('engineForm') };
     },
+    // Custom endpoint: agreed to A before. B brings up the step naming B
+    // (取消); back to A saves with no step.
+    async 'custom-url-consent'() {
+      await waitFor(() => visible('engineForm') && $('provider').options.length);
+      choose('provider', 'custom');
+      type('baseURL', cfg.urlB);
+      type('modelCustom', 'qwen3');
+      $('engineForm').requestSubmit();
+      await waitFor(() => visible('consentStep'));
+      const toB = { text: $('consentText').textContent, sent: log() };
+      $('consentCancel').click();
+      await sleep(50);
+      const mark = log().length;
+      type('baseURL', cfg.urlA);
+      $('engineForm').requestSubmit();
+      await waitFor(() => visible('engineSummary') || visible('consentStep'));
+      const backToA = { stepShown: visible('consentStep'), sent: log().slice(mark) };
+      return { toB, backToA };
+    },
     async 'save-test-fails'() {
       await waitFor(() => visible('engineForm') && $('provider').options.length);
       choose('provider', 'openai');

@@ -130,10 +130,10 @@ actor Translator {
     /// else the local model if it's downloaded, else not ready.
     /// local / cloud: that engine or an error saying what's missing.
     ///
-    /// Cloud also needs the user's recorded consent for that provider
-    /// (`MultiSubConfig.cloudConsent`): without it no subtitle text may
-    /// leave the Mac, so the provider counts as not ready, and auto falls
-    /// through to the local model.
+    /// Cloud also needs the user's recorded consent for that provider, and
+    /// for a custom server for its address (`MultiSubConfig.cloudConsent`):
+    /// without it no subtitle text may leave the Mac, so the provider counts
+    /// as not ready, and auto falls through to the local model.
     static func resolveEngine(config: MultiSubConfig) throws -> ResolvedEngine {
         switch config.engine {
         case .local:
@@ -150,7 +150,7 @@ actor Translator {
     }
 
     private static func consentedCloudClient(config: MultiSubConfig) -> CloudLLMClient? {
-        guard config.hasCloudConsent(for: config.cloud.provider) else { return nil }
+        guard config.hasCloudConsent(for: config.cloud) else { return nil }
         return cloudClient(for: config.cloud)
     }
 

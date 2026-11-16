@@ -15,6 +15,18 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const copy = (x) => JSON.parse(JSON.stringify(x));
   const cloud = { configured: 'cloud', active: 'cloud', provider: 'openai', providerName: 'OpenAI', model: 'gpt-6-luna', hasKey: true };
+  // cfg.consentedBaseURLs: the custom addresses native has consent for
+  // (normalized the way native does), which get-engine-options reports and
+  // set-engine enforces per address, like the native side.
+  const consented = Array.isArray(cfg.consentedBaseURLs) ? cfg.consentedBaseURLs.slice() : null;
+  const normalize = (raw) => {
+    try { const u = new URL(String(raw || '').trim()); return u.protocol + '//' + u.host + u.pathname.replace(/\/+$/, ''); } catch (e) { return null; }
+  };
+  function engineOptions() {
+    const providers = copy(cfg.providers || []);
+    if (consented) for (const p of providers) if (p.id === 'custom') p.consentedBaseURLs = consented.slice();
+    return { ok: true, providers, engine: cfg.engine };
+  }
   // vocab-status: cfg.vocabInitial until 整理本集單字 is pressed, then the
   // replies in cfg.vocabAfter one per call (the last one repeats).
   let organized = false;
@@ -31,10 +43,15 @@
         window.__log.push(copy(m));
         const r = (cfg.replies || {})[m.type];
         if (m.type === 'ping-native') { await sleep(cfg.pingDelay || 0); return { ok: true, engine: cfg.engine, prefs: cfg.prefs || { updatedAt: 0 } }; }
-        if (m.type === 'get-engine-options') return { ok: true, providers: cfg.providers, engine: cfg.engine };
+        if (m.type === 'get-engine-options') return engineOptions();
         if (m.type === 'test-engine') { await sleep(20); return r || { ok: true, latencyMs: 912, sample: '你好' }; }
         if (m.type === 'set-engine') {
           if (m.engine === 'cloud' && cfg.requireConsent && !m.consent) return { ok: false, error: 'consent-required' };
+          if (m.engine === 'cloud' && m.provider === 'custom' && consented) {
+            const url = normalize(m.baseURL);
+            if (m.consent) { if (!consented.includes(url)) consented.push(url); }
+            else if (!consented.includes(url)) return { ok: false, error: 'consent-required' };
+          }
           return r || { ok: true, engine: m.engine === 'local' ? Object.assign({}, cfg.engine, { configured: 'local', active: 'local' }) : cloud };
         }
         if (m.type === 'list-models') return r || { ok: true, models: ['gpt-x', 'gpt-y'] };

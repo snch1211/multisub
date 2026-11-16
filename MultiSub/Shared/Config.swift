@@ -98,6 +98,26 @@ struct CloudSettings: Codable, Equatable, Sendable {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? provider.defaultModel : trimmed
     }
+
+    /// A custom server's address the way consent compares it: scheme and
+    /// host lowercased, the port only when it isn't the scheme's default,
+    /// the path without trailing slashes, no credentials, query or
+    /// fragment. Nil unless it's an http(s) URL with a host. popup.js's
+    /// `normalizedBaseURL` does the same with the WHATWG URL parser.
+    static func normalizedBaseURL(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = components.encodedHost?.lowercased(), !host.isEmpty
+        else { return nil }
+        var normalized = scheme + "://" + host
+        if let port = components.port, port != (scheme == "https" ? 443 : 80) {
+            normalized += ":\(port)"
+        }
+        var path = components.percentEncodedPath
+        while path.hasSuffix("/") { path.removeLast() }
+        return normalized + path
+    }
 }
 
 /// Preferences both the extension (`storage.local.settings`) and the app
@@ -177,13 +197,16 @@ struct MultiSubConfig: Codable, Equatable {
     /// Nil until either side has set a mode / language / level.
     var prefs: SharedPrefs?
     var onboardingCompleted: Bool = false
-    /// Cloud provider rawValue → when (ms since epoch) the user confirmed
-    /// that subtitle text may be sent there directly from this Mac. App
-    /// Review 5.1.2(i) wants that consent, naming the recipient, before the
-    /// first request, so `Translator.resolveEngine` treats a provider with
-    /// no entry as not ready. Recorded by the app's confirmation alert or by
-    /// `set-engine` with `consent: true`; never removed by switching away,
-    /// so switching back doesn't ask again.
+    /// Who the user agreed may receive subtitle text directly from this
+    /// Mac → when (ms since epoch). App Review 5.1.2(i) wants that consent,
+    /// naming the recipient, before the first request, so
+    /// `Translator.resolveEngine` treats settings with no entry as not
+    /// ready. Keyed by `consentKey(for:baseURL:)`: a provider's rawValue,
+    /// except that a custom server's consent belongs to its address, so
+    /// agreeing to one server says nothing about the next one typed in.
+    /// Recorded by the app's confirmation alert or by `set-engine` with
+    /// `consent: true`; never removed by switching away, so switching back
+    /// doesn't ask again.
     var cloudConsent: [String: Double] = [:]
 
     static let defaultModelID = "mlx-community/gemma-4-e4b-it-4bit"
@@ -191,12 +214,39 @@ struct MultiSubConfig: Codable, Equatable {
 
     init() {}
 
-    func hasCloudConsent(for provider: CloudProvider) -> Bool {
-        cloudConsent[provider.rawValue] != nil
+    /// What `cloudConsent` keys a custom server's address with.
+    static let customConsentPrefix = "custom:"
+
+    /// The `cloudConsent` key for sending to `provider`: its rawValue, or
+    /// for `.custom` the prefix plus `CloudSettings.normalizedBaseURL`.
+    /// `baseURL` only matters for `.custom`, and a custom server without a
+    /// usable address has no key, so it can't be agreed to.
+    static func consentKey(for provider: CloudProvider, baseURL: String) -> String? {
+        guard provider == .custom else { return provider.rawValue }
+        return CloudSettings.normalizedBaseURL(baseURL).map { customConsentPrefix + $0 }
     }
 
-    mutating func recordCloudConsent(for provider: CloudProvider, at timestamp: Double = SharedPrefs.nowMs) {
-        cloudConsent[provider.rawValue] = timestamp
+    func hasCloudConsent(for provider: CloudProvider, baseURL: String) -> Bool {
+        guard let key = Self.consentKey(for: provider, baseURL: baseURL) else { return false }
+        return cloudConsent[key] != nil
+    }
+
+    func hasCloudConsent(for settings: CloudSettings) -> Bool {
+        hasCloudConsent(for: settings.provider, baseURL: settings.baseURL)
+    }
+
+    mutating func recordCloudConsent(for provider: CloudProvider, baseURL: String,
+                                     at timestamp: Double = SharedPrefs.nowMs) {
+        guard let key = Self.consentKey(for: provider, baseURL: baseURL) else { return }
+        cloudConsent[key] = timestamp
+    }
+
+    /// The custom server addresses the user has agreed to, normalized.
+    var consentedCustomBaseURLs: [String] {
+        cloudConsent.keys
+            .filter { $0.hasPrefix(Self.customConsentPrefix) }
+            .map { String($0.dropFirst(Self.customConsentPrefix.count)) }
+            .sorted()
     }
 
     // Custom decode so config.json files written before a key existed still
@@ -218,6 +268,15 @@ struct MultiSubConfig: Codable, Equatable {
         prefs = try? container.decodeIfPresent(SharedPrefs.self, forKey: .prefs)
         onboardingCompleted = (try? container.decodeIfPresent(Bool.self, forKey: .onboardingCompleted)) ?? false
         cloudConsent = (try? container.decodeIfPresent([String: Double].self, forKey: .cloudConsent)) ?? [:]
+        // Builds before per-address consent kept a custom server's consent
+        // under plain "custom". It moves to the address saved in this same
+        // file (the one the user has been using), or is dropped when there
+        // is none; the next write stores the result, after which there is
+        // nothing left to move.
+        if let legacy = cloudConsent.removeValue(forKey: CloudProvider.custom.rawValue),
+           let key = Self.consentKey(for: .custom, baseURL: cloud.baseURL), cloudConsent[key] == nil {
+            cloudConsent[key] = legacy
+        }
     }
 
     static func load() -> MultiSubConfig {

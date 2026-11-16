@@ -144,7 +144,12 @@ one request only.
 
 **Consent (App Review 5.1.2(i)).** `config.cloudConsent` maps a provider id to
 when (ms) the user agreed that subtitle text may be sent there directly from
-this Mac. `Translator.resolveEngine` treats a provider without an entry as not
+this Mac. For `custom` the consent belongs to the address: the key is
+`custom:` plus the normalized base URL (`CloudSettings.normalizedBaseURL`:
+scheme and host lowercased, no default port, no trailing slash), so agreeing
+to one server never covers another. A consent saved under plain `custom` by
+an older build moves to the base URL saved in the same config when it's read.
+`Translator.resolveEngine` treats settings without an entry as not
 ready (`engine-not-ready`; `auto` falls through to the local model), so no
 subtitle text leaves the Mac before the user has agreed. Consent is recorded
 by the app's confirmation alert or by `set-engine` with `consent: true` (the
@@ -203,7 +208,7 @@ works. Recommended picks shown in the UI: fastest (default above), balanced
 | fontScale, bottomOffset, mergedMode, enabled | extension `storage.local.settings`          | —                                             |
 | subtitle styles                        | app → `config.styles`                             | delivered in every `ping` reply               |
 | engine, cloud provider/model/base URL  | `config.json` (written by app or `set-engine`)    | read fresh by `Translator` on every request   |
-| cloud consent per provider             | `config.cloudConsent` (app alert or `set-engine` `consent: true`) | read fresh by `Translator` on every request |
+| cloud consent per provider (custom: per base URL) | `config.cloudConsent` (app alert or `set-engine` `consent: true`) | read fresh by `Translator` on every request |
 | popup engine form draft (provider, model, base URL; never the key) | extension `storage.local.engineDraft`, kept 1 h | — (cleared on save or 取消) |
 | API keys                               | shared keychain                                   | —                                             |
 | translation / annotation caches        | extension `storage.local` (`ms:` keys)            | index mirrored to the app on `ping`           |
@@ -280,9 +285,9 @@ Error codes shown to the user: `native-unavailable`, `engine-not-ready`,
 | `extract-glossary` | `pairs[{source, reference}]`, `targetLang`                              | `glossary{}`                                           |
 | `annotate`         | `lines[]`, `context[]`, `reference[]`, `sourceLang`, `targetLang`, `level` | `annotations[[{term, gloss}]]`                      |
 | `set-prefs`        | `prefs{mode, targetLang, annotateLevel, updatedAt}`                     | —                                                      |
-| `set-engine`       | every field optional: `engine`, `provider`, `model`, `baseURL`, `apiKey` (empty string deletes), `consent` (`true` records consent for the provider this write leaves selected) | `engine`                    |
+| `set-engine`       | every field optional: `engine`, `provider`, `model`, `baseURL`, `apiKey` (empty string deletes), `consent` (`true` records consent for the provider, or custom base URL, this write leaves selected) | `engine`                    |
 | `test-engine`      | — (tests the saved engine), or a candidate: `provider`, `model?`, `baseURL?`, `apiKey?` | `latencyMs`, `sample`                  |
-| `get-engine-options` | —                                                                     | `providers[{id, name, defaultModel, recommended[{id, label}], keyPlaceholder, keyURL?, needsBaseURL, keyRequired, hasKey, hasConsent}]`, `engine` |
+| `get-engine-options` | —                                                                     | `providers[{id, name, defaultModel, recommended[{id, label}], keyPlaceholder, keyURL?, needsBaseURL, keyRequired, hasKey, hasConsent, consentedBaseURLs? (custom only)}]`, `engine` |
 | `list-models`      | `provider`, `baseURL?`, `apiKey?`                                       | `models[]`                                             |
 | `unload`, `open-app` | unchanged                                                             |                                                        |
 | `save-transcript`  | `movieId`, `seriesTitle`, `episodeTitle?`, `seasonNumber?`, `sourceLang`, `targetLang`, `lines[]` | — (stages the transcript, marks the episode handed off; §5.3) |
@@ -294,7 +299,8 @@ Error codes shown to the user: `native-unavailable`, `engine-not-ready`,
 provider has a key but no recorded consent.
 
 `set-engine` replies `consent-required` and writes nothing, the key included,
-when the resulting engine is `cloud`, its provider has no recorded consent,
+when the resulting engine is `cloud`, its provider (for `custom`, the
+resulting base URL) has no recorded consent,
 the request has no `consent: true`, and it sets the engine, provider, model,
 base URL or a non-empty key (a request that only deletes the key goes
 through). `auto` is never refused here: `resolveEngine` just skips an

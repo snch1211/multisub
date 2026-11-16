@@ -483,14 +483,30 @@ function hasSavedKey(p) {
   return p.hasKey === true || !!(e && e.provider === p.id && e.hasKey);
 }
 
-// Whether native has recorded the user's consent to send subtitles to `p`:
-// true or false when the reply says so, null when it doesn't (then
-// set-engine answering consent-required is what brings up the step).
-function knownConsent(p) {
+// Whether native has recorded the user's consent to send subtitles to `p`
+// (for a custom endpoint, to the address `baseURL`): true or false when the
+// reply says so, null when it doesn't (then set-engine answering
+// consent-required is what brings up the step).
+function knownConsent(p, baseURL) {
+  if (p.needsBaseURL) {
+    if (Array.isArray(p.consentedBaseURLs)) return p.consentedBaseURLs.includes(normalizedBaseURL(baseURL));
+    // hasConsent is for the saved address only: true says nothing here.
+    return p.hasConsent === false ? false : null;
+  }
   if (typeof p.hasConsent === 'boolean') return p.hasConsent;
   const e = view.engine;
   if (e && e.provider === p.id && typeof e.hasConsent === 'boolean') return e.hasConsent;
   return null;
+}
+
+// A custom endpoint's address the way native compares it for consent
+// (CloudSettings.normalizedBaseURL): scheme and host lowercased, no default
+// port, no trailing slash, no credentials, query or fragment.
+function normalizedBaseURL(raw) {
+  let u;
+  try { u = new URL(String(raw || '').trim()); } catch (e) { return null; }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || !u.hostname) return null;
+  return u.protocol + '//' + u.host + u.pathname.replace(/\/+$/, '');
 }
 
 // Where subtitle text goes, named the way the privacy policy promises: the
@@ -773,7 +789,7 @@ async function onSaveEngine(e) {
     const test = await send(Object.assign({ type: 'test-engine' }, candidate));
     if (!test || !test.ok) { setEngineResult(testErrorText(test), 'err'); return; }
     view.pendingEngine = { provider: p, candidate: candidate, latencyMs: Number(test.latencyMs) || 0 };
-    if (knownConsent(p) === false) showConsentStep();
+    if (knownConsent(p, baseURL) === false) showConsentStep();
     else await commitEngine(false);
   } finally {
     button.disabled = false;
@@ -809,6 +825,10 @@ async function commitEngine(consent) {
   }
   // view.engineOptions isn't fetched again; keep what it says current.
   pending.provider.hasConsent = true;
+  const url = pending.provider.needsBaseURL ? normalizedBaseURL(c.baseURL) : null;
+  if (url && Array.isArray(pending.provider.consentedBaseURLs) && !pending.provider.consentedBaseURLs.includes(url)) {
+    pending.provider.consentedBaseURLs.push(url);
+  }
   if (c.apiKey) pending.provider.hasKey = true;
   $('apiKey').value = '';
   clearDraft();

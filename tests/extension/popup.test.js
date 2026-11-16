@@ -73,6 +73,30 @@ test('consent step for a custom endpoint names the address; 取消 saves nothing
   assert.equal(r.formShown, true);
 });
 
+test('custom endpoint: consent is per address; agreed to A, B asks naming B, back to A saves without asking', () => {
+  const urlA = 'http://localhost:1234/v1';
+  const urlB = 'https://llm.example.com:8443/v1';
+  // hasConsent (for the saved address A) must not stand in for B.
+  const r = run(base('custom-url-consent', { urlA, urlB, consentedBaseURLs: [urlA],
+    providers: providers({ custom: { hasConsent: true } }),
+    engine: Object.assign({}, engineNone, { provider: 'custom', providerName: '自訂（OpenAI 相容）', model: 'qwen3', baseURL: urlA }) }));
+  assert.equal(r.toB.text, '按「同意並使用」後，翻譯、標註和整理生詞本時，字幕文字會從這台 Mac 直接送到 你填的 API 網址（llm.example.com:8443），不經過 MultiSub。');
+  assert.deepEqual(r.toB.sent, [{ type: 'test-engine', provider: 'custom', model: 'qwen3', baseURL: urlB }]);
+  assert.equal(r.backToA.stepShown, false);
+  assert.deepEqual(r.backToA.sent, [
+    { type: 'test-engine', provider: 'custom', model: 'qwen3', baseURL: urlA },
+    { type: 'set-engine', engine: 'cloud', provider: 'custom', model: 'qwen3', baseURL: urlA }
+  ]);
+});
+
+test('custom endpoint: the same address typed differently counts as agreed', () => {
+  const r = run(base('custom-url-consent', { urlA: 'HTTP://LocalHost:80/v1/', urlB: 'http://localhost:1234/v2',
+    consentedBaseURLs: ['http://localhost/v1'], providers: providers({ custom: { hasConsent: false } }) }));
+  assert.match(r.toB.text, /你填的 API 網址（localhost:1234）/);
+  assert.equal(r.backToA.stepShown, false);
+  assert.deepEqual(r.backToA.sent.map((m) => [m.type, 'consent' in m]), [['test-engine', false], ['set-engine', false]]);
+});
+
 test('a failed candidate test saves nothing', () => {
   const r = run(base('save-test-fails', { replies: { 'test-engine': { ok: false, error: 'auth-failed', detail: '401' } } }));
   assert.deepEqual(types(r.sent), ['test-engine']);

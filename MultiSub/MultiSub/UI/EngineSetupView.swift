@@ -14,10 +14,10 @@
 //  leaves whatever engine worked before in place, and the user finds out
 //  right away instead of on their first episode.
 //
-//  The first save for a provider also asks, by name, whether subtitle text
-//  may be sent there from this Mac (App Review 5.1.2(i)); the answer is
-//  recorded in `config.cloudConsent`, without which `Translator` won't use
-//  that provider at all.
+//  The first save for a provider (for a custom server, for each address)
+//  also asks, by name, whether subtitle text may be sent there from this Mac
+//  (App Review 5.1.2(i)); the answer is recorded in `config.cloudConsent`,
+//  without which `Translator` won't use that provider at all.
 //
 
 import SwiftUI
@@ -37,6 +37,8 @@ private struct CloudCandidate: Equatable {
     let typedKey: String
 
     var settings: CloudSettings { CloudSettings(provider: provider, model: model, baseURL: baseURL) }
+    /// What the consent alert agrees to (`MultiSubConfig.consentKey`).
+    var consentKey: String? { MultiSubConfig.consentKey(for: provider, baseURL: baseURL) }
 }
 
 /// The line under the engine controls.
@@ -82,11 +84,12 @@ struct EngineSetupView: View {
     @State private var showRemoveKeyConfirm = false
     /// Waiting on the consent alert.
     @State private var pendingConsent: CloudCandidate?
-    /// Providers the user agreed to in this view whose save hasn't gone
-    /// through yet (the test failed), so fixing a typo and retrying doesn't
-    /// ask again. The lasting record is `config.cloudConsent`, written only
-    /// together with a successful save.
-    @State private var consentGiven: Set<CloudProvider> = []
+    /// Consent keys (a provider, or a custom server's address) the user
+    /// agreed to in this view whose save hasn't gone through yet (the test
+    /// failed), so fixing a typo and retrying doesn't ask again. The lasting
+    /// record is `config.cloudConsent`, written only together with a
+    /// successful save.
+    @State private var consentGiven: Set<String> = []
     /// The saved provider has a key (or a custom server) but no recorded
     /// consent, which is why nothing is active. Read from the keychain in
     /// `refreshStatus`, not on every render.
@@ -197,7 +200,7 @@ struct EngineSetupView: View {
         // older popup) sees why it isn't used instead of "not set up".
         let saved = config.cloud
         savedProviderAwaitingConsent = fresh.active == nil
-            && !config.hasCloudConsent(for: saved.provider)
+            && !config.hasCloudConsent(for: saved)
             && Translator.cloudClient(for: saved) != nil
             ? saved.provider : nil
         onStatusChange?(fresh)
@@ -287,7 +290,7 @@ struct EngineSetupView: View {
         }
         .alert(consentTitle, isPresented: consentAlertShown, presenting: pendingConsent) { candidate in
             Button("同意並測試") {
-                consentGiven.insert(candidate.provider)
+                if let key = candidate.consentKey { consentGiven.insert(key) }
                 testThenSave(candidate)
             }
             Button("取消", role: .cancel) {}
@@ -437,7 +440,8 @@ struct EngineSetupView: View {
         let candidate = CloudCandidate(provider: provider, model: model,
                                        baseURL: provider.needsBaseURL ? trimmedBaseURL : "",
                                        typedKey: key)
-        if configStore.config.hasCloudConsent(for: provider) || consentGiven.contains(provider) {
+        if configStore.config.hasCloudConsent(for: candidate.provider, baseURL: candidate.baseURL)
+            || candidate.consentKey.map(consentGiven.contains) == true {
             testThenSave(candidate)
         } else {
             pendingConsent = candidate
@@ -479,11 +483,11 @@ struct EngineSetupView: View {
             configStore.update {
                 $0.engine = .cloud
                 $0.cloud = candidate.settings
-                if !$0.hasCloudConsent(for: candidate.provider) {
-                    $0.recordCloudConsent(for: candidate.provider)
+                if !$0.hasCloudConsent(for: candidate.provider, baseURL: candidate.baseURL) {
+                    $0.recordCloudConsent(for: candidate.provider, baseURL: candidate.baseURL)
                 }
             }
-            consentGiven.remove(candidate.provider)
+            if let key = candidate.consentKey { consentGiven.remove(key) }
             let seconds = String(format: "%.1f", Double(result.latencyMs) / 1000)
             feedback = .success("已儲存，可以用了，回應時間 \(seconds) 秒", detail: "「\(result.sample)」")
             await refreshStatus()
