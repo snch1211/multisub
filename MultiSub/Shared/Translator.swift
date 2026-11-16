@@ -130,10 +130,10 @@ actor Translator {
     /// else the local model if it's downloaded, else not ready.
     /// local / cloud: that engine or an error saying what's missing.
     ///
-    /// Cloud also needs the user's recorded consent for that provider
-    /// (`MultiSubConfig.cloudConsent`): without it no subtitle text may
-    /// leave the Mac, so the provider counts as not ready, and auto falls
-    /// through to the local model.
+    /// Cloud also needs the user's recorded consent for that provider, and
+    /// for a custom server for its address (`MultiSubConfig.cloudConsent`):
+    /// without it no subtitle text may leave the Mac, so the provider counts
+    /// as not ready, and auto falls through to the local model.
     static func resolveEngine(config: MultiSubConfig) throws -> ResolvedEngine {
         switch config.engine {
         case .local:
@@ -150,7 +150,7 @@ actor Translator {
     }
 
     private static func consentedCloudClient(config: MultiSubConfig) -> CloudLLMClient? {
-        guard config.hasCloudConsent(for: config.cloud.provider) else { return nil }
+        guard config.hasCloudConsent(for: config.cloud) else { return nil }
         return cloudClient(for: config.cloud)
     }
 
@@ -190,32 +190,24 @@ actor Translator {
 
     // MARK: - Model presence / download
 
-    /// Mirrors the Hugging Face cache layout used by `HubCache`:
-    /// `<modelsRoot>/models--<org>--<name>/snapshots/<commit>/…`
+    /// A complete copy is on this Mac (`MultiSubPaths.modelSnapshotDirectory`),
+    /// so `loadModel` can load it without the network.
     nonisolated static func isModelDownloaded(_ modelID: String) -> Bool {
-        let repoDir = "models--" + modelID.replacingOccurrences(of: "/", with: "--")
-        let snapshots = MultiSubPaths.modelsRoot
-            .appendingPathComponent(repoDir, isDirectory: true)
-            .appendingPathComponent("snapshots", isDirectory: true)
-        let fm = FileManager.default
-        guard let dirs = try? fm.contentsOfDirectory(at: snapshots, includingPropertiesForKeys: nil) else {
-            return false
-        }
-        for snapshot in dirs {
-            let files = (try? fm.contentsOfDirectory(atPath: snapshot.path)) ?? []
-            if files.contains("config.json"),
-               files.contains(where: { $0.hasSuffix(".safetensors") }) {
-                return true
-            }
-        }
-        return false
+        MultiSubPaths.modelSnapshotDirectory(for: modelID) != nil
     }
 
     private nonisolated func hubClient() -> HubClient {
         HubClient(cache: HubCache(cacheDirectory: MultiSubPaths.modelsRoot))
     }
 
-    /// Downloads (if needed) and loads the local model. Progress is reported in [0, 1].
+    /// Loads the local model from the files on this Mac. Progress is reported in [0, 1].
+    ///
+    /// A model that's complete on disk loads from its snapshot folder and
+    /// nothing contacts Hugging Face. Otherwise a call with
+    /// `allowDownload: false` (every translation, test and vocabulary
+    /// request) fails with `modelNotDownloaded`; only the app's own download
+    /// (`ModelDownloadManager`, `allowDownload: true`) may fetch what's
+    /// missing.
     ///
     /// A call for the model that's already loading joins that load (its
     /// `progress` isn't reported; only the caller that started the load
@@ -244,8 +236,20 @@ actor Translator {
             loadedModelID = nil
             Memory.cacheLimit = 512 * 1024 * 1024
             task = Task {
-                try await LLMModelFactory.shared.loadContainer(
-                    from: HubDownloader(self.hubClient()),
+                let source: any MLXLMCommon.Downloader
+                if let directory = MultiSubPaths.modelSnapshotDirectory(for: modelID) {
+                    source = LocalModelFolder(directory: directory)
+                } else if allowDownload {
+                    source = HubDownloader(self.hubClient())
+                } else {
+                    // Removed or left incomplete since the check above.
+                    throw TranslatorError.modelNotDownloaded
+                }
+                // The configuration keeps the repo id (not a directory) so
+                // the model is still named by it, e.g. for mlx-swift-lm's
+                // per-model conventions.
+                return try await LLMModelFactory.shared.loadContainer(
+                    from: source,
                     using: TransformersTokenizerLoader(),
                     configuration: ModelConfiguration(id: modelID)
                 ) { prog in

@@ -239,6 +239,11 @@ struct CloudLLMClient: Sendable {
     // MARK: - Requests
 
     private func endpoint(_ path: String) throws -> URL {
+        // Also a custom address saved before `baseURLProblem` existed: one
+        // the popup may have named as another server when the user agreed.
+        if provider.needsBaseURL, CloudSettings.baseURLProblem(baseURL) != nil {
+            throw CloudLLMError.network("API 網址格式不正確，請檢查設定。")
+        }
         guard let url = URL(string: baseURL + "/" + path),
               let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
               url.host != nil

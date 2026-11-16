@@ -220,9 +220,10 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     /// the request names none).
     ///
     /// `consent: true` records the user's consent to send subtitle text to
-    /// that provider (the popup's confirmation step). A request that would
-    /// leave `engine` on `cloud` for a provider with no recorded consent,
-    /// and doesn't carry `consent: true`, is refused with
+    /// that provider, or for `custom` to the base URL this write leaves
+    /// saved (the popup's confirmation step). A request that would leave
+    /// `engine` on `cloud` for a provider (or custom address) with no
+    /// recorded consent, and doesn't carry `consent: true`, is refused with
     /// `consent-required` before anything (key included) is written, so the
     /// caller can ask and send the same request again. `auto` needs no
     /// consent here because `Translator.resolveEngine` skips an unconsented
@@ -249,13 +250,17 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         let savesKey = !(apiKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         let current = MultiSubConfig.load()
         let keyProvider = provider ?? current.cloud.provider
-        if keyProvider.needsBaseURL, let baseURL, !baseURL.isEmpty, !Self.isValidBaseURL(baseURL) {
-            return ["ok": false, "error": "bad-request", "detail": "API 網址格式不正確，請以 http:// 或 https:// 開頭。"]
+        if keyProvider.needsBaseURL, let baseURL, !baseURL.isEmpty,
+           let problem = CloudSettings.baseURLProblem(baseURL) {
+            return ["ok": false, "error": "bad-request", "detail": problem]
         }
 
         let configuresCloud = engine != nil || provider != nil || model != nil || baseURL != nil || savesKey
+        // The base URL is kept across provider changes, so this is the
+        // address the write below leaves saved.
+        let resultingBaseURL = baseURL ?? current.cloud.baseURL
         if configuresCloud, (engine ?? current.engine) == .cloud, !consent,
-           !current.hasCloudConsent(for: keyProvider) {
+           !current.hasCloudConsent(for: keyProvider, baseURL: resultingBaseURL) {
             // A Latin provider name gets a space after 傳給; the custom
             // recipient is Chinese and doesn't.
             let recipient = keyProvider == .custom ? keyProvider.consentRecipient : " " + keyProvider.consentRecipient
@@ -286,9 +291,9 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             }
             if let model { config.cloud.model = model }
             if let baseURL { config.cloud.baseURL = baseURL }
-            // After the provider change above, so consent goes to the
-            // provider this write leaves selected.
-            if consent { config.recordCloudConsent(for: config.cloud.provider) }
+            // After the provider and base URL changes above, so consent goes
+            // to what this write leaves selected.
+            if consent { config.recordCloudConsent(for: config.cloud.provider, baseURL: config.cloud.baseURL) }
         }
         return ["ok": true, "engine": await Translator.engineStatus(config: config).dictionary]
     }
@@ -331,6 +336,9 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         if provider.needsBaseURL, baseURL.isEmpty {
             return ["ok": false, "error": "bad-request", "detail": "請先填寫 API 網址。"]
         }
+        if provider.needsBaseURL, let problem = CloudSettings.baseURLProblem(baseURL) {
+            return ["ok": false, "error": "bad-request", "detail": problem]
+        }
         let key = Self.requestKey(message, provider: provider)
         if provider.keyRequired, key == nil {
             return ["ok": false, "error": "engine-not-ready", "detail": "還沒儲存這個 AI 服務的 API Key。"]
@@ -366,9 +374,8 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             if baseURL.isEmpty {
                 return .invalid(["ok": false, "error": "bad-request", "detail": "請先填寫 API 網址。"])
             }
-            if !isValidBaseURL(baseURL) {
-                return .invalid(["ok": false, "error": "bad-request",
-                                 "detail": "API 網址格式不正確，請以 http:// 或 https:// 開頭。"])
+            if let problem = CloudSettings.baseURLProblem(baseURL) {
+                return .invalid(["ok": false, "error": "bad-request", "detail": problem])
             }
         }
         if model.isEmpty, provider.defaultModel.isEmpty {
@@ -393,7 +400,10 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     }
 
     /// `hasConsent` lets the popup go straight from a passing test to its
-    /// confirmation step; `set-engine` still checks consent on its own.
+    /// confirmation step; `set-engine` still checks consent on its own. For
+    /// `custom`, consent belongs to an address: `hasConsent` is for the
+    /// saved base URL, and `consentedBaseURLs` lists every address agreed
+    /// to (normalized), so the popup can tell for the one in its form.
     private func handleGetEngineOptions() async -> [String: Any] {
         let config = MultiSubConfig.load()
         let providers: [[String: Any]] = CloudProvider.allCases.map { p in
@@ -406,9 +416,10 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
                 "needsBaseURL": p.needsBaseURL,
                 "keyRequired": p.keyRequired,
                 "hasKey": SecretStore.hasAPIKey(for: p),
-                "hasConsent": config.hasCloudConsent(for: p),
+                "hasConsent": config.hasCloudConsent(for: p, baseURL: config.cloud.baseURL),
             ]
             if let url = p.keyURL { d["keyURL"] = url.absoluteString }
+            if p == .custom { d["consentedBaseURLs"] = config.consentedCustomBaseURLs }
             return d
         }
         return ["ok": true, "providers": providers, "engine": await Translator.engineStatus(config: config).dictionary]
@@ -560,13 +571,6 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         }
         logger.error("\(action, privacy: .public) failed: \(String(describing: error))")
         return ["ok": false, "error": "\(action)-failed", "detail": error.localizedDescription]
-    }
-
-    private static func isValidBaseURL(_ string: String) -> Bool {
-        guard let url = URL(string: string), let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https", url.host != nil
-        else { return false }
-        return true
     }
 
     private static func prefsDict(_ prefs: SharedPrefs) -> [String: Any] {

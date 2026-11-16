@@ -13,12 +13,22 @@
 //  file we own (resumed via `Range` headers), then hands off to `HubCache`'s
 //  own public `storeFile` API to place it under the exact
 //  `blobs/<etag>` + `snapshots/<commit>/<filename>` layout `HubClient`
-//  expects. `Translator.loadModel` (unchanged) then finds every matching file
-//  already cached via `HubClient+Files.swift`'s per-file fast path and does
-//  zero network I/O for the weights.
+//  expects. The files it sets out to fetch are recorded first
+//  (`MultiSubPaths.recordExpectedFiles`), and the snapshot counts as complete
+//  only once all of them are there. `Translator.loadModel` then finds it
+//  complete on disk (`MultiSubPaths.modelSnapshotDirectory`) and loads it
+//  from there with no network I/O at all.
+//
+//  A download that stops (an error, or the app quitting) resumes on the next
+//  attempt, in this run or a later one: files already in the snapshot are
+//  skipped, and the file that was in flight waits as a `.partial` in the
+//  model's own folder under `models/.download-tmp/`, which is removed only
+//  once every file is stored.
 //
 //  App target only — the extension never downloads (every `Translator`
-//  request loads the model with `allowDownload: false`).
+//  request loads the model with `allowDownload: false`). Besides this
+//  download, only `estimatedSize` (a row showing a model that isn't
+//  downloaded yet) contacts Hugging Face.
 //
 
 import CryptoKit
@@ -94,15 +104,23 @@ enum ModelDownloader {
             throw DownloadError(message: "無法解析 \(modelID) 的版本")
         }
 
+        // Before the first file is stored: the model counts as downloaded
+        // only once every file listed here is in the snapshot, so a
+        // download cut short on any file (the small tokenizer_config.json
+        // listed last included) can't pass for a finished one. Every attempt
+        // writes it again; the same commit lists the same files.
+        try MultiSubPaths.recordExpectedFiles(files.map(\.entry.path), modelID: modelID, commit: commitHash)
+
         // One folder per model, kept from one attempt (and one app run) to
         // the next: a download that failed, or an app that quit halfway,
-        // picks up where it stopped, since `downloadResumable` resumes
-        // whatever `.partial` file is already there. It goes once every
-        // file is in the cache. Per model, not shared: one model finishing
-        // must not delete another's files still in flight, and two models
-        // with an identical small file (the same tokenizer config) must not
-        // write the same etag-named partial. ModelDownloadManager never runs
-        // two downloads of the same model at once.
+        // picks up where it stopped. Files already in the snapshot are
+        // skipped below, and `downloadResumable` resumes whatever `.partial`
+        // file is already here. It goes once every file is in the cache.
+        // Per model, not shared: one model finishing must not delete
+        // another's files still in flight, and two models with an identical
+        // small file (the same tokenizer config) must not write the same
+        // etag-named partial. ModelDownloadManager never runs two downloads
+        // of the same model at once.
         removeAbandonedTempDirs()
         let tempDir = partialDirectory(for: modelID)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)

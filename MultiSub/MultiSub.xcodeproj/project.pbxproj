@@ -414,10 +414,10 @@
 				};
 			};
 			buildConfigurationList = 22F5F64C2FF6D34D00A10F74 /* Build configuration list for PBXProject "MultiSub" */;
-			developmentRegion = en;
+			developmentRegion = "zh-Hant";
 			hasScannedForEncodings = 0;
 			knownRegions = (
-				en,
+				"zh-Hant",
 				Base,
 			);
 			mainGroup = 22F5F6482FF6D34D00A10F74;

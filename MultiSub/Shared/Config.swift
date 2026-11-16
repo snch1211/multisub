@@ -98,6 +98,117 @@ struct CloudSettings: Codable, Equatable, Sendable {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? provider.defaultModel : trimmed
     }
+
+    /// A custom server's address the way consent compares it: scheme and
+    /// host lowercased, the port only when it isn't the scheme's default,
+    /// the path without trailing slashes, no credentials, query or
+    /// fragment. Nil unless it's an http(s) URL with a host. popup.js's
+    /// `normalizedBaseURL` does the same with the WHATWG URL parser; for an
+    /// address `baseURLProblem` accepts, both find the same server.
+    static func normalizedBaseURL(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = components.encodedHost?.lowercased(), !host.isEmpty
+        else { return nil }
+        var normalized = scheme + "://" + host
+        if let port = components.port, port != (scheme == "https" ? 443 : 80) {
+            normalized += ":\(port)"
+        }
+        var path = components.percentEncodedPath
+        while path.hasSuffix("/") { path.removeLast() }
+        return normalized + path
+    }
+
+    /// Why `raw` can't be a custom server's address, as the message to
+    /// show, or nil when it can.
+    ///
+    /// Besides being an http(s) URL with a host, the address must be one
+    /// the popup's WHATWG URL parser, which names the server in the consent
+    /// step, and Foundation, which records the consent and sends the
+    /// requests, can't read as two different servers. WHATWG reads a
+    /// backslash as "/" and drops tabs and line breaks, where Foundation
+    /// escapes them: `http://localhost:1234\@evil.example/v1` is localhost
+    /// in the popup and evil.example here. So the host is ASCII letters,
+    /// digits, ".", "-" and "_" or a bracketed IPv6 address, with an
+    /// optional port (no credentials, percent escapes or international
+    /// names), and the whole address has no backslash, whitespace or
+    /// control character. A host WHATWG reads as an IPv4 address (its last
+    /// label a number) must be written the plain way, 192.168.1.20: WHATWG
+    /// turns 0x7f.1 or 2130706433 into 127.0.0.1, while Foundation asks DNS
+    /// for that name.
+    static func baseURLProblem(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let schemeEnd = trimmed.range(of: "://"),
+              ["http", "https"].contains(trimmed[..<schemeEnd.lowerBound].lowercased())
+        else { return "API 網址格式不正確，請以 http:// 或 https:// 開頭。" }
+        let authority = trimmed[schemeEnd.upperBound...].prefix { !"/?#".contains($0) }
+        let unsafe = CharacterSet.whitespacesAndNewlines.union(.controlCharacters)
+        guard !trimmed.contains("\\"),
+              !trimmed.unicodeScalars.contains(where: unsafe.contains),
+              isPlainAuthority(authority),
+              let url = URL(string: trimmed), url.host?.isEmpty == false,
+              normalizedBaseURL(trimmed) != nil
+        else {
+            return "API 網址格式不正確。主機名稱請用英文字母、數字、點或連字號，網址裡不要有帳號密碼（@）、反斜線或空白。"
+        }
+        return nil
+    }
+
+    /// `host` or `host:port`, the host ASCII letters, digits, ".", "-" and
+    /// "_" or a bracketed IPv6 address, the port at most 65535.
+    private static func isPlainAuthority(_ authority: Substring) -> Bool {
+        let host: Substring
+        var port: Substring = ""
+        if authority.hasPrefix("[") {
+            guard let close = authority.firstIndex(of: "]") else { return false }
+            host = authority[authority.index(after: authority.startIndex)..<close]
+            let rest = authority[authority.index(after: close)...]
+            if !rest.isEmpty {
+                guard rest.first == ":" else { return false }
+                port = rest.dropFirst()
+            }
+            guard !host.isEmpty,
+                  host.allSatisfy({ $0.isASCII && ($0.isHexDigit || $0 == ":" || $0 == ".") })
+            else { return false }
+        } else {
+            if let colon = authority.firstIndex(of: ":") {
+                host = authority[..<colon]
+                port = authority[authority.index(after: colon)...]
+            } else {
+                host = authority
+            }
+            guard !host.isEmpty,
+                  host.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-._".contains($0)) }),
+                  !endsInNumber(host) || isDottedDecimalIPv4(host)
+            else { return false }
+        }
+        guard port.allSatisfy({ $0.isASCII && $0.isNumber }) else { return false }
+        return port.isEmpty || (Int(port).map { $0 <= 65535 } ?? false)
+    }
+
+    /// WHATWG's "ends in a number": the last label (before a trailing dot)
+    /// is decimal digits or "0x" and hex digits, which sends the host
+    /// through its IPv4 parser.
+    private static func endsInNumber(_ host: Substring) -> Bool {
+        var labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        if labels.count > 1, labels.last?.isEmpty == true { labels.removeLast() }
+        guard let last = labels.last?.lowercased(), !last.isEmpty else { return false }
+        if last.allSatisfy({ $0.isASCII && $0.isNumber }) { return true }
+        return last.hasPrefix("0x") && last.dropFirst(2).allSatisfy { $0.isASCII && $0.isHexDigit }
+    }
+
+    /// Four decimal numbers up to 255, no leading zeros: what both parsers
+    /// read as the same IPv4 address.
+    private static func isDottedDecimalIPv4(_ host: Substring) -> Bool {
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 4 && parts.allSatisfy { part in
+            guard (1...3).contains(part.count), part.allSatisfy({ $0.isASCII && $0.isNumber }),
+                  part == "0" || !part.hasPrefix("0"), let value = Int(part)
+            else { return false }
+            return value <= 255
+        }
+    }
 }
 
 /// Preferences both the extension (`storage.local.settings`) and the app
@@ -177,13 +288,16 @@ struct MultiSubConfig: Codable, Equatable {
     /// Nil until either side has set a mode / language / level.
     var prefs: SharedPrefs?
     var onboardingCompleted: Bool = false
-    /// Cloud provider rawValue → when (ms since epoch) the user confirmed
-    /// that subtitle text may be sent there directly from this Mac. App
-    /// Review 5.1.2(i) wants that consent, naming the recipient, before the
-    /// first request, so `Translator.resolveEngine` treats a provider with
-    /// no entry as not ready. Recorded by the app's confirmation alert or by
-    /// `set-engine` with `consent: true`; never removed by switching away,
-    /// so switching back doesn't ask again.
+    /// Who the user agreed may receive subtitle text directly from this
+    /// Mac → when (ms since epoch). App Review 5.1.2(i) wants that consent,
+    /// naming the recipient, before the first request, so
+    /// `Translator.resolveEngine` treats settings with no entry as not
+    /// ready. Keyed by `consentKey(for:baseURL:)`: a provider's rawValue,
+    /// except that a custom server's consent belongs to its address, so
+    /// agreeing to one server says nothing about the next one typed in.
+    /// Recorded by the app's confirmation alert or by `set-engine` with
+    /// `consent: true`; never removed by switching away, so switching back
+    /// doesn't ask again.
     var cloudConsent: [String: Double] = [:]
 
     static let defaultModelID = "mlx-community/gemma-4-e4b-it-4bit"
@@ -191,12 +305,39 @@ struct MultiSubConfig: Codable, Equatable {
 
     init() {}
 
-    func hasCloudConsent(for provider: CloudProvider) -> Bool {
-        cloudConsent[provider.rawValue] != nil
+    /// What `cloudConsent` keys a custom server's address with.
+    static let customConsentPrefix = "custom:"
+
+    /// The `cloudConsent` key for sending to `provider`: its rawValue, or
+    /// for `.custom` the prefix plus `CloudSettings.normalizedBaseURL`.
+    /// `baseURL` only matters for `.custom`, and a custom server without a
+    /// usable address has no key, so it can't be agreed to.
+    static func consentKey(for provider: CloudProvider, baseURL: String) -> String? {
+        guard provider == .custom else { return provider.rawValue }
+        return CloudSettings.normalizedBaseURL(baseURL).map { customConsentPrefix + $0 }
     }
 
-    mutating func recordCloudConsent(for provider: CloudProvider, at timestamp: Double = SharedPrefs.nowMs) {
-        cloudConsent[provider.rawValue] = timestamp
+    func hasCloudConsent(for provider: CloudProvider, baseURL: String) -> Bool {
+        guard let key = Self.consentKey(for: provider, baseURL: baseURL) else { return false }
+        return cloudConsent[key] != nil
+    }
+
+    func hasCloudConsent(for settings: CloudSettings) -> Bool {
+        hasCloudConsent(for: settings.provider, baseURL: settings.baseURL)
+    }
+
+    mutating func recordCloudConsent(for provider: CloudProvider, baseURL: String,
+                                     at timestamp: Double = SharedPrefs.nowMs) {
+        guard let key = Self.consentKey(for: provider, baseURL: baseURL) else { return }
+        cloudConsent[key] = timestamp
+    }
+
+    /// The custom server addresses the user has agreed to, normalized.
+    var consentedCustomBaseURLs: [String] {
+        cloudConsent.keys
+            .filter { $0.hasPrefix(Self.customConsentPrefix) }
+            .map { String($0.dropFirst(Self.customConsentPrefix.count)) }
+            .sorted()
     }
 
     // Custom decode so config.json files written before a key existed still
@@ -218,6 +359,15 @@ struct MultiSubConfig: Codable, Equatable {
         prefs = try? container.decodeIfPresent(SharedPrefs.self, forKey: .prefs)
         onboardingCompleted = (try? container.decodeIfPresent(Bool.self, forKey: .onboardingCompleted)) ?? false
         cloudConsent = (try? container.decodeIfPresent([String: Double].self, forKey: .cloudConsent)) ?? [:]
+        // Builds before per-address consent kept a custom server's consent
+        // under plain "custom". It moves to the address saved in this same
+        // file (the one the user has been using), or is dropped when there
+        // is none; the next write stores the result, after which there is
+        // nothing left to move.
+        if let legacy = cloudConsent.removeValue(forKey: CloudProvider.custom.rawValue),
+           let key = Self.consentKey(for: .custom, baseURL: cloud.baseURL), cloudConsent[key] == nil {
+            cloudConsent[key] = legacy
+        }
     }
 
     static func load() -> MultiSubConfig {
