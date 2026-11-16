@@ -14,10 +14,10 @@ import SwiftUI
 @MainActor
 struct MultiSubApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var router = AppRouter()
+    @State private var router: AppRouter
     @State private var configStore = ConfigStore()
     @State private var modelDownloadManager = ModelDownloadManager()
-    @State private var vocabExtractionManager = VocabExtractionManager()
+    @State private var vocabExtractionManager: VocabExtractionManager
     #if !APP_STORE
     // Direct (DMG) builds only: the App Store build updates through the
     // App Store and must not contain a self-updater.
@@ -25,9 +25,20 @@ struct MultiSubApp: App {
     @State private var updateDownloadManager = UpdateDownloadManager()
     #endif
 
+    init() {
+        // The router hands `multisub://vocab` straight to the extraction
+        // queue, so both exist before the first URL can be routed (the
+        // router drains `AppDelegate.pendingOpenURL` in its init).
+        let vocab = VocabExtractionManager()
+        _vocabExtractionManager = State(initialValue: vocab)
+        _router = State(initialValue: AppRouter(vocab: vocab))
+        AppDelegate.vocabExtraction = vocab
+    }
+
     var body: some Scene {
         Window("MultiSub", id: "main") {
             rootView
+                .modifier(MainWindowOpenerHandoff())
                 // 760 used to be narrower than the sidebar's own
                 // reserved minimum (190, see SidebarView's
                 // navigationSplitViewColumnWidth) plus the vocab tab's inner
@@ -59,5 +70,19 @@ struct MultiSubApp: App {
             .environment(updateChecker)
             .environment(updateDownloadManager)
         #endif
+    }
+}
+
+/// Gives `AppDelegate` this window's `openWindow` action, so a
+/// `multisub://` URL that arrives while the window is closed (the app keeps
+/// running while vocabulary is being organized) can open it again.
+private struct MainWindowOpenerHandoff: ViewModifier {
+    @Environment(\.openWindow) private var openWindow
+
+    func body(content: Content) -> some View {
+        content.onAppear {
+            let openWindow = openWindow
+            AppDelegate.openMainWindow = { openWindow(id: "main") }
+        }
     }
 }

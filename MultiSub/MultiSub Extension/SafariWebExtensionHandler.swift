@@ -60,6 +60,8 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
                 reply = await handleOpenApp(message)
             case "save-transcript":
                 reply = await handleSaveTranscript(message)
+            case "vocab-status":
+                reply = handleVocabStatus(message)
             default:
                 reply = ["ok": false, "error": "unknown-action"]
             }
@@ -423,27 +425,42 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     /// registered `multisub://` URL scheme (`MultiSub/Info.plist`). Takes a
     /// `destination`/`movieId` (defaulting to the original `styles`
     /// destination so the popup's button works unchanged) so the same action
-    /// can also route to `multisub://vocab?movieId=...`. `NSWorkspace.open`
-    /// returning `false` covers "app not installed / scheme not registered
-    /// with LaunchServices" — surfaced to popup.js as `open-failed`.
+    /// can also route to `multisub://vocab?movieId=...`, which starts
+    /// organizing that episode in the app. `NSWorkspace.open` returning
+    /// `false` covers "app not installed / scheme not registered with
+    /// LaunchServices" — surfaced to popup.js as `open-failed`.
+    ///
+    /// Opening a URL from this process usually doesn't bring the app to the
+    /// front (cooperative activation: Safari is the active app, not us), so
+    /// nothing may depend on the user seeing the app's window; the popup
+    /// follows the work through `vocab-status` instead.
     private func handleOpenApp(_ message: [String: Any]) async -> [String: Any] {
         let destination = message["destination"] as? String ?? "styles"
         var components = URLComponents()
         components.scheme = "multisub"
         components.host = destination
-        if destination == "vocab", let movieId = message["movieId"] as? String {
-            components.queryItems = [URLQueryItem(name: "movieId", value: movieId)]
+        let vocabMovieId = destination == "vocab" ? (message["movieId"] as? String) : nil
+        if let vocabMovieId {
+            components.queryItems = [URLQueryItem(name: "movieId", value: vocabMovieId)]
         }
-        guard let url = components.url else {
-            return ["ok": false, "error": "open-failed"]
+        var opened = false
+        if let url = components.url {
+            opened = await MainActor.run { NSWorkspace.shared.open(url) }
         }
-        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
-        return opened ? ["ok": true] : ["ok": false, "error": "open-failed"]
+        guard opened else {
+            // `save-transcript` already marked the episode handed off; left
+            // as is, the popup would show it waiting for the app.
+            if let vocabMovieId { VocabStatusStore.markOpenFailed(movieId: vocabMovieId) }
+            return ["ok": false, "error": VocabStatusStore.openFailedCode]
+        }
+        return ["ok": true]
     }
 
     /// content.js's "整理本集單字" button. Stages the transcript in the
     /// shared container; the app picks it up when routed to
-    /// `multisub://vocab?movieId=...` (see `PendingTranscriptStore`).
+    /// `multisub://vocab?movieId=...` (see `PendingTranscriptStore`). Also
+    /// marks the episode handed off in `VocabStatusStore`, so the popup shows
+    /// it right away and not an earlier run's result.
     ///
     /// Also unloads this process's (the Safari extension's) local model
     /// here, at the user's request: the app is about to run
@@ -472,21 +489,53 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     /// piggybacked on `ping`) reclaims it once the episode finishes and the
     /// extension goes idle.
     private func handleSaveTranscript(_ message: [String: Any]) async -> [String: Any] {
-        guard let movieId = message["movieId"] as? String, !movieId.isEmpty,
+        guard let movieId = message["movieId"] as? String, VocabStatusStore.isValidMovieId(movieId),
               let seriesTitle = message["seriesTitle"] as? String,
               let sourceLang = message["sourceLang"] as? String,
               let targetLang = message["targetLang"] as? String,
               let lines = message["lines"] as? [String], !lines.isEmpty
         else { return ["ok": false, "error": "bad-request"] }
-        PendingTranscriptStore.save(PendingTranscript(
+        let transcript = PendingTranscript(
             movieId: movieId, seriesTitle: seriesTitle,
             episodeTitle: message["episodeTitle"] as? String,
             seasonNumber: message["seasonNumber"] as? Int,
-            sourceLang: sourceLang, targetLang: targetLang, lines: lines))
+            sourceLang: sourceLang, targetLang: targetLang, lines: lines)
+        PendingTranscriptStore.save(transcript)
+        VocabStatusStore.markHandedOff(movieId: movieId, title: transcript.displayTitle)
         if await !Translator.shared.isBusy {
             await Translator.shared.unload()
         }
         return ["ok": true]
+    }
+
+    /// Where 「整理本集單字」 stands for one episode, for the popup:
+    /// `state` is `queued` (handed off or waiting its turn), `running` with
+    /// `done`/`total` segments, `done` with `wordCount`, `failed` with
+    /// `code` and the app's `message`, or `none` when nothing was asked for
+    /// recently. An entry the app stopped refreshing reads as `failed`
+    /// (`VocabStatusStore.effective`).
+    private func handleVocabStatus(_ message: [String: Any]) -> [String: Any] {
+        guard let movieId = message["movieId"] as? String, VocabStatusStore.isValidMovieId(movieId) else {
+            return ["ok": false, "error": "bad-request"]
+        }
+        guard let status = VocabStatusStore.current(movieId: movieId) else {
+            return ["ok": true, "movieId": movieId, "state": "none"]
+        }
+        var reply: [String: Any] = [
+            "ok": true,
+            "movieId": movieId,
+            "state": status.state.rawValue,
+            "accepted": status.accepted,
+            "done": status.done,
+            "total": status.total,
+            // Milliseconds, like JS `Date.now()`.
+            "updatedAt": (status.updatedAt.timeIntervalSince1970 * 1000).rounded(),
+        ]
+        if let wordCount = status.wordCount { reply["wordCount"] = wordCount }
+        if let code = status.code { reply["code"] = code }
+        if let text = status.message { reply["message"] = text }
+        if let title = status.title { reply["title"] = title }
+        return reply
     }
 
     // MARK: - Helpers

@@ -438,6 +438,42 @@ input[type="range"] {
 
 .vocab { margin-top: 8px; }
 
+.vocab-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 0 2px;
+  font-size: 12px;
+}
+.vocab-status-body { flex: 1; min-width: 0; }
+.vocab-status-text { margin: 0; }
+.vocab-status-text.ok { color: var(--ok); }
+.vocab-status-text.err { color: var(--err); }
+.vocab-status-sub {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.vocab-status-sub:empty { display: none; }
+.vocab-status-sub.err { color: var(--err); }
+.vocab-status .link-button { margin-top: 4px; }
+
+.spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  border: 2px solid var(--seg-bg);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: vocab-spin 0.9s linear infinite;
+}
+@keyframes vocab-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+}
+
 .footer {
   display: flex;
   justify-content: center;

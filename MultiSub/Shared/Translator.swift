@@ -594,14 +594,17 @@ actor Translator {
     /// by the time lines reach here they're already just plain subtitle text
     /// with no language tag attached.
     ///
-    /// `progress` reports segment completion in [0, 1] (there is no
-    /// finer-grained progress within a single model call).
+    /// `progress` reports finished / total segments
+    /// (`vocabSegmentCount(lineCount:)`): 0 of total once the engine is
+    /// ready (for the local engine, after the model has loaded), then once
+    /// per segment. There is no finer-grained progress within a single
+    /// model call.
     ///
     /// A segment that fails is skipped, except that a rejected API key
     /// throws right away, and an episode where every segment failed throws
     /// the last error, so the UI can say what went wrong.
     func extractVocabulary(lines: [String], targetLang: String,
-                           progress: (@Sendable (Double) -> Void)? = nil) async throws -> [VocabWord] {
+                           progress: (@Sendable (_ done: Int, _ total: Int) -> Void)? = nil) async throws -> [VocabWord] {
         guard !lines.isEmpty else { return [] }
         // This can run for many segments over a long stretch of wall time
         // (each segment is its own model call) — `isBusy` must stay true for
@@ -615,6 +618,7 @@ actor Translator {
         let segments = stride(from: 0, to: lines.count, by: Self.vocabSegmentSize).map {
             Array(lines[$0..<min($0 + Self.vocabSegmentSize, lines.count)])
         }
+        progress?(0, segments.count)
 
         // Dedup by lemma, first occurrence wins. An earlier design copied the
         // glossary's cross-segment vote-tallying scheme (require >=2 segments
@@ -668,7 +672,7 @@ actor Translator {
                 guard !lemma.isEmpty, !Lexicon.isStopword(lemma) else { continue }
                 if seen[lemma] == nil { seen[lemma] = entry }
             }
-            progress?(Double(index + 1) / Double(segments.count))
+            progress?(index + 1, segments.count)
         }
         // Nothing came back and at least one segment errored (offline, rate
         // limit…): report that error rather than "this episode has no words".
@@ -687,6 +691,12 @@ actor Translator {
     /// ~40 lines/segment, matching the glossary's `GLOSSARY_SEGMENT_SIZE`
     /// (extension/background.js) — same "bounded prompt per call" tradeoff.
     private static let vocabSegmentSize = 40
+
+    /// How many model calls (progress units) `extractVocabulary` makes for
+    /// `lineCount` lines, so a caller can show the total before it starts.
+    nonisolated static func vocabSegmentCount(lineCount: Int) -> Int {
+        (lineCount + vocabSegmentSize - 1) / vocabSegmentSize
+    }
 
     /// Runs one segment through the engine, retrying once on unparseable
     /// output. Returns `[]` — not an error — if both attempts fail to parse;

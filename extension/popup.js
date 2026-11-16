@@ -934,7 +934,43 @@ async function openKeyPage() {
 // ---------------------------------------------------------------------------
 // Vocabulary and styles
 // ---------------------------------------------------------------------------
+
+// 整理本集單字 hands the transcript to the app, which may well stay behind
+// Safari, so the popup follows the work itself: the app writes where each
+// episode stands to the shared container and native `vocab-status` reads it
+// back. `status` is that reply for the episode in the tab ({state, done,
+// total, wordCount, code, message}), or {state: 'handing-off'} while the
+// click is still out; null shows nothing. `openNote` is what 打開生詞本
+// last reported, shown until the status changes.
+const vocabView = {
+  movieId: null,
+  status: null,
+  inFlight: false,
+  openNote: '',
+  openNoteErr: false
+};
+const VOCAB_ACTIVE_STATES = ['handing-off', 'queued', 'running'];
+
+function vocabActive() {
+  return !!vocabView.status && VOCAB_ACTIVE_STATES.includes(vocabView.status.state);
+}
+
+// Runs on every tab poll (STATUS_POLL_MS): asks once for a newly seen
+// episode, then keeps asking only while its work is queued or running.
 function updateOrganizeVocab() {
+  const st = view.status;
+  const movieId = st && st.onWatchPage && st.movieId ? String(st.movieId) : null;
+  if (movieId !== vocabView.movieId) {
+    vocabView.movieId = movieId;
+    vocabView.status = null;
+    if (movieId) refreshVocabStatus();
+  } else if (movieId && vocabActive() && vocabView.status.state !== 'handing-off') {
+    refreshVocabStatus();
+  }
+  renderOrganizeVocab();
+}
+
+function renderOrganizeVocab() {
   const button = $('organizeVocab');
   const hint = $('organizeVocabHint');
   const st = view.status;
@@ -942,7 +978,8 @@ function updateOrganizeVocab() {
   const active = tracks.find((t) => t.id === st.activeTrackId);
   // Gated on the track's language tag (primary subtag), same check as content.js.
   const english = !!active && MS.normalizeBcp47(active.language) === 'en';
-  button.disabled = !english;
+  // Pressing it again while this episode is being organized changes nothing.
+  button.disabled = !english || vocabActive();
   const reason = '生詞本只支援英文字幕';
   // Only touch the hint for this reason, never a click-triggered error.
   if (!english && tracks.length) {
@@ -951,15 +988,89 @@ function updateOrganizeVocab() {
   } else if (english && hint.textContent === reason) {
     hint.textContent = '';
   }
+  renderVocabStatus();
 }
 
-function organizeVocabErrorText(code) {
+function vocabStatusLines(status) {
+  const where = '整理好的單字會放在 MultiSub App 的「生詞本」';
+  switch (status.state) {
+    case 'handing-off':
+      return { text: '正在交給 MultiSub App…', busy: true };
+    case 'queued':
+      return { text: '已交給 MultiSub App，等一下就開始整理', sub: where, busy: true };
+    case 'running': {
+      const count = status.total > 0 ? '（' + (status.done || 0) + '/' + status.total + '）' : '…';
+      return { text: '整理中' + count, sub: '通常要幾分鐘，可以繼續看影片。' + where, busy: true };
+    }
+    case 'done':
+      return { text: '整理好了：' + (status.wordCount || 0) + ' 個單字', sub: '可以在 MultiSub App 的「生詞本」查看', cls: 'ok', open: true };
+    case 'failed':
+      return { text: organizeVocabErrorText(status.code, status.message), cls: 'err' };
+    default:
+      return null;
+  }
+}
+
+function renderVocabStatus() {
+  const lines = vocabView.status ? vocabStatusLines(vocabView.status) : null;
+  $('vocabStatus').hidden = !lines;
+  if (!lines) return;
+  $('vocabSpinner').hidden = !lines.busy;
+  const text = $('vocabStatusText');
+  text.textContent = lines.text;
+  text.className = 'vocab-status-text' + (lines.cls ? ' ' + lines.cls : '');
+  const sub = $('vocabStatusSub');
+  // 打開生詞本 may leave the app behind Safari too; its result replaces the
+  // line saying where to look, until the status changes.
+  const note = lines.open && vocabView.openNote;
+  sub.textContent = note || lines.sub || '';
+  sub.className = 'vocab-status-sub' + (note && vocabView.openNoteErr ? ' err' : '');
+  $('openVocab').hidden = !lines.open;
+}
+
+async function refreshVocabStatus() {
+  const movieId = vocabView.movieId;
+  if (!movieId || vocabView.inFlight) return;
+  vocabView.inFlight = true;
+  let res;
+  try {
+    res = await send({ type: 'vocab-status', movieId: movieId });
+  } finally {
+    vocabView.inFlight = false;
+  }
+  // Another episode by now, or a click went out while this was asked.
+  if (movieId !== vocabView.movieId || (vocabView.status && vocabView.status.state === 'handing-off')) return;
+  // Unreachable: keep what's shown, the next poll asks again.
+  if (!res || !res.ok) return;
+  const next = res.state === 'none' ? null : res;
+  if (!next || !vocabView.status || next.state !== vocabView.status.state) {
+    vocabView.openNote = '';
+    vocabView.openNoteErr = false;
+  }
+  vocabView.status = next;
+  renderOrganizeVocab();
+}
+
+function organizeVocabErrorText(code, detail) {
+  const again = '，再按一次「整理本集單字」';
   switch (code) {
     case 'non-english': return '生詞本只支援英文字幕';
     case 'no-episode': return '等字幕載入後再試一次';
     case 'open-failed': return '打不開 MultiSub App，請確認已安裝';
+    case 'tab-unreachable': return '連不到 Netflix 分頁';
     case 'native-unavailable': return MS.errorText(code);
-    default: return '整理失敗，請再試一次（' + (code || 'unknown') + '）';
+    // From the app's status (see VocabExtractionManager).
+    case 'engine-not-ready': return '還沒設定 AI 引擎。到 MultiSub App 的「一般設定」設定好後' + again;
+    case 'model-not-ready': return '本機模型還沒下載。到 MultiSub App 下載模型或改用 API Key 後' + again;
+    case 'auth-failed':
+    case 'rate-limited':
+    case 'network':
+    case 'provider-error':
+      return '整理失敗：' + MS.errorText(code);
+    case 'vocab-empty': return '沒有整理出任何單字，可能是 AI 服務連不上。稍後' + again.slice(1);
+    case 'vocab-interrupted': return '整理到一半就停了，可能是 MultiSub App 關掉了。再按一次「整理本集單字」就會重新整理';
+    case 'vocab-not-started': return 'MultiSub App 沒有開始整理。先打開 MultiSub App' + again;
+    default: return detail || '整理失敗，請再試一次（' + (code || 'unknown') + '）';
   }
 }
 
@@ -968,16 +1079,35 @@ async function onOrganizeVocab() {
   hint.textContent = '';
   hint.className = 'hint';
   if (!view.tab) return;
+  vocabView.status = { state: 'handing-off' };
+  vocabView.openNote = '';
+  renderOrganizeVocab();
+  let res;
   try {
-    const res = await api.tabs.sendMessage(view.tab.id, { type: 'organize-vocab' });
-    if (!res || !res.ok) {
-      hint.textContent = organizeVocabErrorText(res && res.error);
-      hint.className = 'hint err';
-    }
+    res = await api.tabs.sendMessage(view.tab.id, { type: 'organize-vocab' });
   } catch (e) {
-    hint.textContent = '連不到 Netflix 分頁';
-    hint.className = 'hint err';
+    res = { ok: false, error: 'tab-unreachable' };
   }
+  if (!res || !res.ok) {
+    vocabView.status = null;
+    hint.textContent = organizeVocabErrorText(res && res.error);
+    hint.className = 'hint err';
+    renderOrganizeVocab();
+    return;
+  }
+  // Shown until the app's own status comes back, right below.
+  vocabView.status = { state: 'queued' };
+  renderOrganizeVocab();
+  refreshVocabStatus();
+}
+
+async function onOpenVocab() {
+  const res = await send({ type: 'open-app', destination: 'vocab' });
+  vocabView.openNoteErr = !res || !res.ok;
+  vocabView.openNote = vocabView.openNoteErr
+    ? '打不開 MultiSub App，請確認已安裝'
+    : '沒看到的話，請切換到 MultiSub App，打開「生詞本」';
+  renderVocabStatus();
 }
 
 async function onOpenStyles() {
@@ -1055,6 +1185,7 @@ function bindEvents() {
   $('sourceTrack').addEventListener('change', onTrackPicked);
   $('openStyles').addEventListener('click', onOpenStyles);
   $('organizeVocab').addEventListener('click', onOrganizeVocab);
+  $('openVocab').addEventListener('click', onOpenVocab);
   $('openNetflix').addEventListener('click', () => {
     api.tabs.create({ url: 'https://www.netflix.com/' }).catch(() => {});
   });

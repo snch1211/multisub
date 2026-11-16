@@ -371,6 +371,34 @@ async function test(name, fn) {
     assert.equal(await bg.request({ type: 'nope' }), undefined);
   });
 
+  await test('整理本集單字: stages the transcript, then opens the app on vocab; vocab-status forwards only movieId', async () => {
+    let saveReply = { ok: true };
+    const bg = boot(async (msg) => {
+      if (msg.action === 'save-transcript') return saveReply;
+      if (msg.action === 'open-app') return { ok: true };
+      if (msg.action === 'vocab-status') return { ok: true, movieId: msg.movieId, state: 'running', accepted: true, done: 3, total: 12 };
+      return { ok: false, error: 'unknown-action' };
+    });
+    const payload = { movieId: '81', seriesTitle: 'Show', episodeTitle: 'Pilot', seasonNumber: 1, sourceLang: 'en', targetLang: 'zh-TW', lines: ['a', 'b'] };
+    assert.deepEqual(await bg.request({ type: 'organize-vocab', payload }), { ok: true });
+    assert.deepEqual(bg.calls, [
+      Object.assign({ action: 'save-transcript' }, payload),
+      { action: 'open-app', destination: 'vocab', movieId: '81' }
+    ]);
+    const st = await bg.request({ type: 'vocab-status', movieId: '81', lines: ['x'], junk: 1 });
+    assert.deepEqual(bg.calls[2], { action: 'vocab-status', movieId: '81' });
+    assert.deepEqual(st, { ok: true, movieId: '81', state: 'running', accepted: true, done: 3, total: 12 });
+    // A failed save opens nothing: there'd be no transcript for the app.
+    saveReply = { ok: false, error: 'bad-request' };
+    assert.deepEqual(await bg.request({ type: 'organize-vocab', payload }), { ok: false, error: 'bad-request' });
+    assert.deepEqual(bg.calls.slice(3).map((c) => c.action), ['save-transcript']);
+    // Native unreachable: the popup gets a code it can show.
+    const down = boot(async () => { throw new Error('no app'); });
+    const res = await down.request({ type: 'vocab-status', movieId: '81' });
+    assert.equal(res.ok, false);
+    assert.equal(res.error, 'native-unavailable');
+  });
+
   await test('disabling MultiSub stops jobs and unloads the model', async () => {
     const bg = boot(async (msg) => {
       if (msg.action === 'ping') return { ok: true, engine: engine('local') };

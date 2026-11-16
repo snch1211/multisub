@@ -192,8 +192,9 @@ enum VocabStore {
 }
 
 /// The episode transcript content.js hands off via the `save-transcript`
-/// native action, staged here until the app's "生詞本" confirm flow
-/// (`multisub://vocab`) picks it up and runs `extractVocabulary`.
+/// native action, staged here until the app's `VocabExtractionManager`
+/// (woken by `multisub://vocab`) picks it up and runs `extractVocabulary`.
+/// It stays staged after a failed run so 「重試」 can use it again.
 struct PendingTranscript: Codable {
     var movieId: String
     /// Same series/episode/season split as `VocabFile`.
@@ -232,9 +233,182 @@ enum PendingTranscriptStore {
         return try? JSONDecoder().decode(PendingTranscript.self, from: data)
     }
 
-    /// Called by the app once extraction finishes (success or not worth
-    /// retrying automatically) so a stale pending file doesn't linger.
+    /// Called by the app once extraction succeeds, or when the user removes
+    /// a failed entry, so a stale pending file doesn't linger.
     static func delete(movieId: String) {
         try? FileManager.default.removeItem(at: fileURL(movieId: movieId))
+    }
+
+    /// Movie IDs with a staged transcript, and when each was staged.
+    static func stagedFiles() -> [(movieId: String, stagedAt: Date)] {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+        return files.filter { $0.pathExtension == "json" }.map { url in
+            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            return (url.deletingPathExtension().lastPathComponent, date ?? .distantPast)
+        }
+    }
+}
+
+/// Where one episode's 「整理本集單字」 stands, persisted as
+/// `vocab-status/<movieId>.json` in the shared container. The app's
+/// `VocabExtractionManager` writes it as the work moves along; the appex
+/// writes the first `queued` entry when it stages the transcript and reads
+/// it back for the popup (native `vocab-status`).
+struct VocabOrganizeStatus: Codable, Equatable {
+    enum State: String, Codable {
+        case queued, running, done, failed
+    }
+
+    var movieId: String
+    var state: State
+    /// false while only the appex has written this entry (handed off, the
+    /// app hasn't picked it up yet); true once the app has it.
+    var accepted: Bool
+    /// Segments finished / total, the units `Translator.extractVocabulary`
+    /// reports progress in. 0 / 0 before the app knows the total.
+    var done: Int = 0
+    var total: Int = 0
+    /// Words saved, when `done`.
+    var wordCount: Int?
+    /// Stable code when `failed`: an engine or provider code shared with
+    /// the extension (`engine-not-ready`, `auth-failed` …), `non-english`,
+    /// or one of the `VocabStatusStore` codes below.
+    var code: String?
+    /// User-facing zh-TW reason when `failed`, worded for the app.
+    var message: String?
+    var title: String?
+    /// The app rewrites active entries every `VocabStatusStore.heartbeat`,
+    /// so a reader can tell a stalled one from one that is still going.
+    var updatedAt: Date
+
+    var isActive: Bool { state == .queued || state == .running }
+}
+
+enum VocabStatusStore {
+    static var root: URL { MultiSubPaths.sharedRoot.appendingPathComponent("vocab-status", isDirectory: true) }
+
+    /// How often the app refreshes `updatedAt` on queued/running entries.
+    static let heartbeat: TimeInterval = 30
+    /// An active entry not refreshed for this long belongs to an app that
+    /// stopped (quit, crashed) or never picked the hand-off up.
+    static let staleAfter: TimeInterval = 120
+    /// Finished entries (done/failed) are shown for this long, then dropped.
+    static let keepFinishedFor: TimeInterval = 24 * 3600
+
+    /// A stale active entry the app had accepted: the app stopped mid-run.
+    static let interruptedCode = "vocab-interrupted"
+    /// A stale hand-off the app never picked up.
+    static let notStartedCode = "vocab-not-started"
+    /// The appex couldn't open the app for the hand-off; same code
+    /// `open-app` replies with.
+    static let openFailedCode = "open-failed"
+
+    /// movieId comes from the extension and ends up in a file name, so only
+    /// plain IDs are accepted (Netflix's are numeric).
+    static func isValidMovieId(_ movieId: String) -> Bool {
+        !movieId.isEmpty && movieId.count <= 64
+            && movieId.unicodeScalars.allSatisfy {
+                $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_")
+            }
+    }
+
+    private static func fileURL(movieId: String) -> URL { root.appendingPathComponent("\(movieId).json") }
+
+    private static var encoder: JSONEncoder {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }
+
+    private static var decoder: JSONDecoder {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }
+
+    static func write(_ status: VocabOrganizeStatus) {
+        guard isValidMovieId(status.movieId) else { return }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        guard let data = try? encoder.encode(status) else { return }
+        try? data.write(to: fileURL(movieId: status.movieId), options: .atomic)
+    }
+
+    /// The entry as written, with no expiry applied.
+    static func load(movieId: String) -> VocabOrganizeStatus? {
+        guard isValidMovieId(movieId),
+              let data = try? Data(contentsOf: fileURL(movieId: movieId)) else { return nil }
+        return try? decoder.decode(VocabOrganizeStatus.self, from: data)
+    }
+
+    static func loadAll() -> [VocabOrganizeStatus] {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        else { return [] }
+        return files.filter { $0.pathExtension == "json" }.compactMap { url in
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            return try? decoder.decode(VocabOrganizeStatus.self, from: data)
+        }
+    }
+
+    static func delete(movieId: String) {
+        guard isValidMovieId(movieId) else { return }
+        try? FileManager.default.removeItem(at: fileURL(movieId: movieId))
+    }
+
+    /// The entry as the popup should see it: nil when there is none or a
+    /// finished one has expired, and a stale active one reads as failed.
+    static func current(movieId: String, now: Date = Date()) -> VocabOrganizeStatus? {
+        guard let status = load(movieId: movieId) else { return nil }
+        return effective(status, now: now)
+    }
+
+    static func effective(_ status: VocabOrganizeStatus, now: Date = Date()) -> VocabOrganizeStatus? {
+        let age = now.timeIntervalSince(status.updatedAt)
+        if status.isActive {
+            guard age > staleAfter else { return status }
+            var stalled = status
+            stalled.state = .failed
+            stalled.code = status.accepted ? interruptedCode : notStartedCode
+            stalled.message = status.accepted
+                ? "整理到一半 MultiSub App 就停了，可能是 App 關掉了。"
+                : "MultiSub App 沒有開始整理。"
+            return stalled
+        }
+        return age > keepFinishedFor ? nil : status
+    }
+
+    /// The appex stages a transcript: shows the popup "handed off" right
+    /// away, replacing an earlier run's done/failed entry. A job the app
+    /// is still running for this movie is left alone (the app ignores the
+    /// repeated request and keeps going).
+    static func markHandedOff(movieId: String, title: String?) {
+        if let existing = current(movieId: movieId), existing.isActive { return }
+        write(VocabOrganizeStatus(movieId: movieId, state: .queued, accepted: false,
+                                  title: title, updatedAt: Date()))
+    }
+
+    /// The appex staged the transcript but couldn't open the app
+    /// (`open-app` → `open-failed`). The hand-off becomes a failure, so the
+    /// popup shows that error with the button free and not a spinner for a
+    /// run that will never start. Only a hand-off the app hasn't taken over
+    /// is replaced. The transcript stays staged, so if the app is opened
+    /// some other way it shows this episode with 「重試」.
+    static func markOpenFailed(movieId: String) {
+        guard var status = load(movieId: movieId), status.state == .queued, !status.accepted else { return }
+        status.state = .failed
+        status.code = openFailedCode
+        status.message = "Safari 沒能打開 MultiSub App，這集還沒開始整理。按「重試」開始整理。"
+        status.updatedAt = Date()
+        write(status)
+    }
+
+    /// The episode's words were deleted in 生詞本, so a `done` entry would
+    /// tell the popup it's still organized. Queued, running and failed
+    /// entries describe a job the app still holds (a re-organize), so they
+    /// stay.
+    static func forgetDone(movieId: String) {
+        guard let status = load(movieId: movieId), status.state == .done else { return }
+        delete(movieId: movieId)
     }
 }

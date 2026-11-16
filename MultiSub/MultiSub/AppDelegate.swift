@@ -24,8 +24,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// `AppRouter.init` drains and clears this.
     static var pendingOpenURL: URL?
 
+    /// Set by `MultiSubApp.init`, so closing the window doesn't quit the
+    /// app in the middle of 「整理本集單字」.
+    static weak var vocabExtraction: VocabExtractionManager?
+
+    /// Opens the main window again, or brings it back if it's already
+    /// open. This delegate has no SwiftUI environment of its own, so
+    /// `MultiSubApp` hands over the window's `openWindow` action once the
+    /// window has appeared; nil until then (the launch window is on its way).
+    static var openMainWindow: (@MainActor () -> Void)?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         startIdleUnloadTimer()
+    }
+
+    /// Cmd-Q (or logging out) in the middle of 「整理本集單字」. Without
+    /// this, the episode's status keeps saying it's being organized until
+    /// it goes stale, and the popup shows a spinner with the button locked
+    /// for that long.
+    func applicationWillTerminate(_ notification: Notification) {
+        Self.vocabExtraction?.markInterrupted()
     }
 
     /// The App target also loads the shared `Translator` model
@@ -45,12 +63,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Quits with the last window, except while vocabulary extraction is
+    /// queued or running: that work doesn't need a window and can take
+    /// minutes, so the app stays up until it's done and then quits
+    /// (`VocabExtractionManager.quitWhenIdle`).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        return true
+        guard let vocab = Self.vocabExtraction, vocab.hasActiveWork else { return true }
+        vocab.quitWhenIdle = true
+        return false
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let url = urls.first else { return }
+        // While an extraction runs, closing the window leaves the app
+        // running with none (`applicationShouldTerminateAfterLastWindowClosed`).
+        // A URL asks to show something, and neither the URL event nor
+        // `activate()` creates a window, so open it again. On a cold launch
+        // this is still nil and SwiftUI opens the window by itself.
+        if !NSApp.windows.contains(where: { $0.isVisible }) {
+            Self.openMainWindow?()
+        }
+        // The Safari extension opens these URLs from its own process, and
+        // under cooperative activation macOS usually leaves us behind
+        // Safari. Ask to come forward anyway; it's harmless when the system
+        // declines, and nothing depends on the window being seen.
+        NSApp.activate()
         Self.pendingOpenURL = url
         NotificationCenter.default.post(name: .multiSubOpenURL, object: nil, userInfo: ["url": url])
     }

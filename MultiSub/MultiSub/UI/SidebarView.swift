@@ -10,6 +10,7 @@ import SwiftUI
 @MainActor
 struct SidebarView: View {
     @Bindable var router: AppRouter
+    @Environment(VocabExtractionManager.self) private var vocab
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -32,8 +33,17 @@ struct SidebarView: View {
                     .tag(AppRouter.Tab.styles)
                 Label("快取管理", systemImage: "internaldrive")
                     .tag(AppRouter.Tab.cache)
-                Label("生詞本", systemImage: "book")
-                    .tag(AppRouter.Tab.vocab)
+                HStack {
+                    Label("生詞本", systemImage: "book")
+                    Spacer(minLength: 4)
+                    // An episode is being organized, wherever the window is.
+                    if vocab.isBusy {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("正在整理單字")
+                    }
+                }
+                .tag(AppRouter.Tab.vocab)
             }
         }
         // Sidebar ~200pt wide — also what keeps "MultiSub"
