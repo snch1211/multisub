@@ -136,6 +136,15 @@
   <section id="vocabSection" class="vocab">
     <button type="button" id="organizeVocab" class="secondary-button" disabled>整理本集單字</button>
     <p id="organizeVocabHint" class="hint"></p>
+    <!-- Where the app's organizing stands for this episode (vocab-status). -->
+    <div id="vocabStatus" class="vocab-status" role="status" aria-live="polite" hidden>
+      <span id="vocabSpinner" class="spinner" aria-hidden="true" hidden></span>
+      <div class="vocab-status-body">
+        <p id="vocabStatusText" class="vocab-status-text"></p>
+        <p id="vocabStatusSub" class="vocab-status-sub"></p>
+        <button type="button" id="openVocab" class="link-button small" hidden>打開生詞本</button>
+      </div>
+    </div>
   </section>
 
   <footer class="footer">

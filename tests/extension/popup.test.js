@@ -137,6 +137,81 @@ test('Netflix tab without access (URL hidden): 允許存取 banner, no "open Net
   assert.equal(r.openNetflixShown, false);
 });
 
+// An English episode playing in the tab, so 整理本集單字 is enabled.
+const watchingEnglish = { onWatchPage: true, movieId: '81', status: 'ready', secondState: 'ready', totalCues: 10, translatedCount: 0,
+  tracks: [{ id: 'en1', language: 'en', label: 'English', trackType: 'PRIMARY' }], activeTrackId: 'en1' };
+const vocabBase = (scenario, extra) => base(scenario, Object.assign({ status: watchingEnglish }, extra || {}));
+const distinct = (list) => list.filter((x, i) => i === 0 || x !== list[i - 1]);
+
+test('整理本集單字: handed off, then the app\'s progress, polled until done; 打開生詞本 opens the app', () => {
+  const r = run(vocabBase('vocab-handoff', { vocabAfter: [
+    { ok: true, state: 'queued', accepted: false, done: 0, total: 0 },
+    { ok: true, state: 'running', accepted: true, done: 3, total: 12 },
+    { ok: true, state: 'running', accepted: true, done: 7, total: 12 },
+    { ok: true, state: 'done', accepted: true, done: 12, total: 12, wordCount: 48 }
+  ] }));
+  assert.deepEqual(r.before, { shown: false, calls: 1 }); // asked once for this episode; nothing to show
+  assert.equal(r.organizeSent, 1);
+  const shown = r.seen.filter((s) => s.shown);
+  assert.deepEqual(distinct(shown.map((s) => s.text)),
+    ['正在交給 MultiSub App…', '已交給 MultiSub App，等一下就開始整理', '整理中（3/12）', '整理中（7/12）', '整理好了：48 個單字']);
+  const running = shown.find((s) => s.text === '整理中（3/12）');
+  assert.equal(running.spinner, true);
+  assert.equal(running.disabled, true); // pressing it again would change nothing
+  assert.equal(running.open, false);
+  assert.equal(running.sub, '通常要幾分鐘，可以繼續看影片。整理好的單字會放在 MultiSub App 的「生詞本」');
+  const done = shown[shown.length - 1];
+  assert.deepEqual(done, { shown: true, text: '整理好了：48 個單字', sub: '可以在 MultiSub App 的「生詞本」查看',
+    cls: 'vocab-status-text ok', spinner: false, open: true, disabled: false });
+  assert.equal(r.callsAfter, r.callsAtDone, 'no more polling once done');
+  assert.ok(r.movieIds.every((id) => id === '81'));
+  assert.deepEqual(r.openApp, [{ type: 'open-app', destination: 'vocab' }]);
+  assert.equal(r.sub, '沒看到的話，請切換到 MultiSub App，打開「生詞本」');
+  // 打開生詞本 when the app can't be opened
+  const r2 = run(vocabBase('vocab-handoff', { replies: { 'open-app': { ok: false, error: 'open-failed' } },
+    vocabAfter: [{ ok: true, state: 'done', accepted: true, done: 3, total: 3, wordCount: 5 }] }));
+  assert.equal(r2.sub, '打不開 MultiSub App，請確認已安裝');
+  assert.match(r2.subCls, /err/);
+});
+
+test('opening on an episode with a recent status shows it; polls only while queued or running', () => {
+  const done = run(vocabBase('vocab-on-open', { vocabInitial: { ok: true, state: 'done', done: 4, total: 4, wordCount: 21 } }));
+  assert.equal(done.first.text, '整理好了：21 個單字');
+  assert.equal(done.first.open, true);
+  assert.equal(done.calls, 1);
+  const running = run(vocabBase('vocab-on-open', { vocabInitial: { ok: true, state: 'running', accepted: true, done: 2, total: 9 } }));
+  assert.equal(running.first.text, '整理中（2/9）');
+  assert.equal(running.first.spinner, true);
+  assert.equal(running.first.disabled, true);
+  assert.ok(running.calls >= 3, 'polled about every 2 s, got ' + running.calls);
+  const none = run(vocabBase('vocab-on-open'));
+  assert.equal(none.first.shown, false);
+  assert.equal(none.first.disabled, false);
+  assert.equal(none.calls, 1);
+});
+
+test('a failed run shows the reason and what to do, from the code (or the app\'s message for an unknown one)', () => {
+  const text = (status) => run(vocabBase('vocab-on-open', { vocabInitial: Object.assign({ ok: true, state: 'failed', accepted: true }, status) })).first;
+  const engine = text({ code: 'engine-not-ready', message: '尚未設定 AI 引擎' });
+  assert.equal(engine.text, '還沒設定 AI 引擎。到 MultiSub App 的「一般設定」設定好後，再按一次「整理本集單字」');
+  assert.equal(engine.cls, 'vocab-status-text err');
+  assert.equal(engine.disabled, false); // pressing it again is the retry
+  assert.equal(engine.open, false);
+  assert.equal(text({ code: 'vocab-interrupted' }).text, '整理到一半就停了，可能是 MultiSub App 關掉了。再按一次「整理本集單字」就會重新整理');
+  assert.equal(text({ code: 'auth-failed' }).text, '整理失敗：API Key 無效或已過期，請重新貼上');
+  assert.equal(text({ code: 'vocab-failed', message: '整理失敗：伺服器沒有回應。' }).text, '整理失敗：伺服器沒有回應。');
+});
+
+test('整理本集單字 that never reaches the app: the error under the button, no status', () => {
+  const r = run(vocabBase('vocab-click-error', { organizeReply: { ok: false, error: 'open-failed' } }));
+  assert.equal(r.hint, '打不開 MultiSub App，請確認已安裝');
+  assert.match(r.cls, /err/);
+  assert.equal(r.shown, false);
+  assert.equal(r.disabled, false);
+  const r2 = run(vocabBase('vocab-click-error', { organizeThrows: true }));
+  assert.equal(r2.hint, '連不到 Netflix 分頁');
+});
+
 test('local-model link follows localModelDownloaded / active', () => {
   const r = run(base('local-downloaded', { engine: Object.assign({}, engineNone, { localModelDownloaded: true }) }));
   assert.equal(r.label, '改用本機模型（已下載，離線可用）');

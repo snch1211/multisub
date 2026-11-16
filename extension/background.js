@@ -971,9 +971,11 @@ async function pingNative() {
 }
 
 // Relays content.js's transcript to the two native calls it has no channel
-// for: first landing the text (`save-transcript`), then waking the app on its
-// vocabulary tab (`open-app` with destination "vocab"). If the save fails,
-// there'd be nothing for the app to pick up, so don't open it.
+// for: first landing the text (`save-transcript`, which also marks the
+// episode handed off), then waking the app on its vocabulary tab (`open-app`
+// with destination "vocab"), which starts organizing it without asking. If
+// the save fails, there'd be nothing for the app to pick up, so don't open
+// it. The popup follows the rest through `vocab-status`.
 async function organizeVocab(payload) {
   const saveRes = await sendNative({
     action: 'save-transcript',
@@ -1000,13 +1002,15 @@ async function organizeVocab(payload) {
 // JavaScript (see ARCHITECTURE §3): 'set-engine' saves it natively, while
 // 'test-engine' (a candidate setup, tested before anything is saved) and
 // 'list-models' only use it for that one request. 'consent' records the
-// user's confirmation that subtitles may go to that provider.
+// user's confirmation that subtitles may go to that provider. 'vocab-status'
+// is where 整理本集單字 stands for one episode, as the app reports it.
 const NATIVE_FORWARD = {
   'get-engine-options': [],
   'set-engine': ['engine', 'provider', 'model', 'baseURL', 'apiKey', 'consent'],
   'test-engine': ['provider', 'model', 'baseURL', 'apiKey'],
   'list-models': ['provider', 'baseURL', 'apiKey'],
-  'set-prefs': ['prefs']
+  'set-prefs': ['prefs'],
+  'vocab-status': ['movieId']
 };
 
 function reply(sendResponse, promise) {

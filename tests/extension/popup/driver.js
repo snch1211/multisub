@@ -14,7 +14,56 @@
   const visible = (id) => { const el = $(id); return !!el && !el.closest('[hidden]'); };
   const QUIET = ['ping-native', 'get-engine-options', 'storage.set', 'storage.remove', 'set-prefs'];
   const log = () => window.__log.filter((m) => !QUIET.includes(m.type));
+  // Every distinct state of the 整理本集單字 status block, in order.
+  function watchVocab() {
+    const seen = [];
+    let stop = false;
+    const snap = () => ({ shown: visible('vocabStatus'), text: $('vocabStatusText').textContent, sub: $('vocabStatusSub').textContent,
+      cls: $('vocabStatusText').className, spinner: visible('vocabSpinner'), open: visible('openVocab'), disabled: $('organizeVocab').disabled });
+    (async () => {
+      while (!stop) {
+        const s = snap();
+        const last = seen[seen.length - 1];
+        if (!last || JSON.stringify(last) !== JSON.stringify(s)) seen.push(s);
+        await sleep(20);
+      }
+    })();
+    return { seen, stop: () => { stop = true; } };
+  }
+  const vocabCalls = () => window.__log.filter((m) => m.type === 'vocab-status');
   const S = {
+    async 'vocab-handoff'() {
+      await waitFor(() => !document.body.classList.contains('loading') && !$('organizeVocab').disabled);
+      const before = { shown: visible('vocabStatus'), calls: vocabCalls().length };
+      const w = watchVocab();
+      $('organizeVocab').click();
+      await waitFor(() => /整理好了/.test($('vocabStatusText').textContent), 12000);
+      const callsAtDone = vocabCalls().length;
+      await sleep(4500); // two more tab polls: done is final, nothing more is asked
+      w.stop();
+      $('openVocab').click();
+      await waitFor(() => /沒看到|打不開/.test($('vocabStatusSub').textContent));
+      return { before, seen: w.seen, callsAtDone, callsAfter: vocabCalls().length, movieIds: vocabCalls().map((m) => m.movieId),
+        organizeSent: window.__log.filter((m) => m.type === 'tab:organize-vocab').length,
+        openApp: window.__log.filter((m) => m.type === 'open-app'), sub: $('vocabStatusSub').textContent, subCls: $('vocabStatusSub').className };
+    },
+    async 'vocab-on-open'() {
+      await waitFor(() => !document.body.classList.contains('loading'));
+      await waitFor(() => vocabCalls().length > 0);
+      await sleep(100);
+      const first = { shown: visible('vocabStatus'), text: $('vocabStatusText').textContent, sub: $('vocabStatusSub').textContent,
+        cls: $('vocabStatusText').className, open: visible('openVocab'), spinner: visible('vocabSpinner'), disabled: $('organizeVocab').disabled };
+      await sleep(4500);
+      return { first, calls: vocabCalls().length };
+    },
+    async 'vocab-click-error'() {
+      await waitFor(() => !document.body.classList.contains('loading') && !$('organizeVocab').disabled);
+      $('organizeVocab').click();
+      await waitFor(() => $('organizeVocabHint').textContent);
+      await sleep(100);
+      return { hint: $('organizeVocabHint').textContent, cls: $('organizeVocabHint').className, shown: visible('vocabStatus'),
+        disabled: $('organizeVocab').disabled, calls: vocabCalls().length };
+    },
     async 'list-models'() {
       await waitFor(() => visible('engineForm') && $('provider').options.length);
       choose('provider', 'openai');
