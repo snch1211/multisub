@@ -29,7 +29,10 @@ struct SidebarView: View {
                     .tag(AppRouter.Tab.welcome)
                 Label("一般設定", systemImage: "gearshape")
                     .tag(AppRouter.Tab.general)
-                Label("字幕樣式", systemImage: "textformat")
+                // A picture, not a letter symbol: the app's language is
+                // zh-Hant, so "textformat" draws 「格式」 and "textformat.abc"
+                // draws 「甲乙丙」 instead of Latin letters.
+                Label("字幕樣式", systemImage: "paintpalette")
                     .tag(AppRouter.Tab.styles)
                 Label("快取管理", systemImage: "internaldrive")
                     .tag(AppRouter.Tab.cache)
