@@ -137,7 +137,18 @@ struct OnboardingView: View {
         extensionState.isEnabled && (!needsEngine || engineReady)
     }
 
+    /// Scroll target of the AI 引擎 section. On the Section itself: an id on
+    /// EngineSetupView would land on each of its rows, and scrollTo then
+    /// finds none of them.
+    private static let engineSectionID = "engine-setup"
+
     var body: some View {
+        ScrollViewReader { proxy in
+            form(scrollProxy: proxy)
+        }
+    }
+
+    private func form(scrollProxy: ScrollViewProxy) -> some View {
         Form {
             Section {
                 SafariExtensionRow(state: extensionState)
@@ -152,7 +163,7 @@ struct OnboardingView: View {
             }
 
             Section {
-                openNetflixRow
+                openNetflixRow(scrollProxy: scrollProxy)
             } header: {
                 stepHeader(2, "打開 Netflix")
             }
@@ -218,6 +229,7 @@ struct OnboardingView: View {
                         }
                     }
                 }
+                .id(Self.engineSectionID)
             }
         }
         .formStyle(.grouped)
@@ -281,7 +293,7 @@ struct OnboardingView: View {
         }
     }
 
-    private var openNetflixRow: some View {
+    private func openNetflixRow(scrollProxy: ScrollViewProxy) -> some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(watchSummary)
@@ -290,7 +302,7 @@ struct OnboardingView: View {
                     HStack(spacing: 6) {
                         Label("「\(mode.title)」需要 AI 引擎", systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
-                        Button("設定 AI 引擎") { showsOptions = true }
+                        Button("設定 AI 引擎") { revealEngineSetup(scrollProxy) }
                             .buttonStyle(.link)
                     }
                     .font(.callout)
@@ -309,14 +321,20 @@ struct OnboardingView: View {
     }
 
     /// What happens on Netflix with the current settings, and where to
-    /// change the language.
+    /// change them. Netflix mode only has a second line where Netflix offers
+    /// an official track in that language (chooseSecondTrack in content.js),
+    /// so it says so here, where it's always visible.
     private var watchSummary: String {
         let language = SubtitleChoices.languageName(targetLang)
-        let change = "要換語言，可以在下方設定，或點 Safari 工具列的 MultiSub 按鈕。"
-        if mode == .annotate {
-            return "播放任一部影片，難字後面就會自動標上\(language)的意思。" + change
+        let change = "要換語言或模式，可以在下方設定，或點 Safari 工具列的 MultiSub 按鈕。"
+        switch mode {
+        case .netflix:
+            return "播放影片時，雙語字幕會自動出現，第二語言是\(language)。有些片沒有 Netflix 官方的\(language)字幕，這時可以改用 AI 翻譯。" + change
+        case .translate:
+            return "播放影片時，雙語字幕會自動出現，第二語言是\(language)。" + change
+        case .annotate:
+            return "播放影片時，難字後面會自動標上\(language)的意思。" + change
         }
-        return "播放任一部影片，雙語字幕就會自動出現，第二語言是\(language)。" + change
     }
 
     private func stepHeader(_ number: Int, _ title: String) -> some View {
@@ -325,12 +343,10 @@ struct OnboardingView: View {
                    isCurrent: currentStep == number)
     }
 
-    private var modeFooter: String {
-        switch mode {
-        case .netflix: return "片子沒有你選的第二語言字幕時，可以改用 AI 翻譯。之後隨時能從 Safari 工具列的 MultiSub 按鈕切換模式。"
-        case .translate, .annotate: return "之後隨時能從 Safari 工具列的 MultiSub 按鈕切換模式。"
-        }
-    }
+    /// Under the mode cards. Netflix mode's caveat (no official track in the
+    /// second language) is in step 2's `watchSummary`, visible with this
+    /// section collapsed too.
+    private var modeFooter: String { "之後隨時能從 Safari 工具列的 MultiSub 按鈕切換模式。" }
 
     /// The known languages, plus the saved one if the extension stored a code
     /// this list doesn't have (so the picker never holds an invalid tag).
@@ -338,6 +354,18 @@ struct OnboardingView: View {
         let known = SubtitleChoices.languages
         guard !known.contains(where: { $0.id == targetLang }) else { return known }
         return known + [SubtitleChoices.Option(id: targetLang, label: targetLang, name: targetLang)]
+    }
+
+    /// Step 2's 「設定 AI 引擎」: opens the optional section if needed and
+    /// brings the engine form into view, which usually sits below the fold
+    /// under the mode cards. The section only exists once `showsOptions` is
+    /// on, so the scroll waits for the next main-queue turn, after that
+    /// update has been laid out.
+    private func revealEngineSetup(_ proxy: ScrollViewProxy) {
+        showsOptions = true
+        DispatchQueue.main.async {
+            withAnimation { proxy.scrollTo(Self.engineSectionID, anchor: .top) }
+        }
     }
 
     private func refreshEngineReady() {
