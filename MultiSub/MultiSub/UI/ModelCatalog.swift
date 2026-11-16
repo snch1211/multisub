@@ -36,27 +36,14 @@ extension ModelCatalog {
     /// downloaded through the picker or dropped in manually by the user via
     /// "在 Finder 中打開模型資料夾") that aren't already one of the curated
     /// `entries` — so a manually-installed model still shows up somewhere.
-    /// Best-effort reverse of `"models--" + id.replacingOccurrences(of: "/",
-    /// with: "--")`: splits the dir name on the *first* "--" only, which is
-    /// lossy if an org or model name itself contains "--", but matches every
-    /// real repo id this project deals with.
+    /// One that isn't complete (a download cut short, or a copy missing a
+    /// file) is listed too, under 「可下載的模型」 marked 下載未完成, so its
+    /// files can still be deleted from the app.
     static func discoverExtraModels() -> [ModelCatalogEntry] {
         let knownIDs = Set(entries.map(\.id))
-        guard let dirs = try? FileManager.default.contentsOfDirectory(
-            at: MultiSubPaths.modelsRoot, includingPropertiesForKeys: nil
-        ) else { return [] }
-        var extras: [ModelCatalogEntry] = []
-        for dir in dirs {
-            let name = dir.lastPathComponent
-            guard name.hasPrefix("models--") else { continue }
-            let rest = String(name.dropFirst("models--".count))
-            guard let separatorRange = rest.range(of: "--") else { continue }
-            let id = rest[..<separatorRange.lowerBound] + "/" + rest[separatorRange.upperBound...]
-            let id2 = String(id)
-            guard !knownIDs.contains(id2), Translator.isModelDownloaded(id2) else { continue }
-            extras.append(ModelCatalogEntry(id: id2, displayName: id2))
-        }
-        return extras
+        return MultiSubPaths.modelIDsOnDisk()
+            .filter { !knownIDs.contains($0) }
+            .map { ModelCatalogEntry(id: $0, displayName: $0) }
     }
 }
 
@@ -65,12 +52,11 @@ extension ModelCatalog {
         entries.first { $0.id == modelID }?.displayName ?? modelID
     }
 
-    /// Bytes on disk for a downloaded model. Mirrors
-    /// `Translator.isModelDownloaded`'s repo-dir naming so the size shown
-    /// always matches what that check just confirmed exists.
+    /// Bytes on disk in a model's folder, downloaded or cut short
+    /// (`MultiSubPaths.modelRepoDirectory`, the folder
+    /// `Translator.isModelDownloaded` checks).
     static func directorySize(modelID: String) -> Int64 {
-        let repoDir = "models--" + modelID.replacingOccurrences(of: "/", with: "--")
-        let root = MultiSubPaths.modelsRoot.appendingPathComponent(repoDir, isDirectory: true)
+        let root = MultiSubPaths.modelRepoDirectory(for: modelID)
         guard let enumerator = FileManager.default.enumerator(
             at: root, includingPropertiesForKeys: [.fileSizeKey], options: [], errorHandler: nil
         ) else { return 0 }

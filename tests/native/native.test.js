@@ -2,7 +2,8 @@
 // Builds the Swift files in MultiSub/Shared that the checks need (the app
 // and the extension both compile them) together with tests/native/main.swift,
 // and runs the result. The checks cover what decides, on disk alone, whether
-// a local model is downloaded (MultiSubPaths).
+// a local model is downloaded, and which model folders the app lists
+// (MultiSubPaths).
 // Skips (exit 0) when not on macOS or when there is no Swift compiler.
 const fs = require('fs');
 const os = require('os');

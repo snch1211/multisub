@@ -35,8 +35,8 @@ let modelsRoot = fm.temporaryDirectory.appendingPathComponent("multisub-native-\
 /// `blobs/`, a relative link to it in `snapshots/<commit>/`. A `dangling`
 /// file's blob is never written.
 func snapshot(_ id: String, _ commit: String, _ files: [String],
-              dangling: Set<String> = [], refMain: Bool = false) throws {
-    let repo = MultiSubPaths.modelRepoDirectory(for: id, in: modelsRoot)
+              dangling: Set<String> = [], refMain: Bool = false, in root: URL = modelsRoot) throws {
+    let repo = MultiSubPaths.modelRepoDirectory(for: id, in: root)
     let snap = repo.appendingPathComponent("snapshots/\(commit)", isDirectory: true)
     try fm.createDirectory(at: snap, withIntermediateDirectories: true)
     try fm.createDirectory(at: repo.appendingPathComponent("blobs"), withIntermediateDirectories: true)
@@ -151,6 +151,29 @@ test("the snapshot refs/main names is tried first") {
     try snapshot("t/prefers-main", "aaa", basics + ["model.safetensors"])
     try snapshot("t/prefers-main", "zzz", basics + ["model.safetensors"], refMain: true)
     try expect(downloaded("t/prefers-main"), "zzz")
+}
+
+test("models on disk: downloaded ones and ones a download cut short, not empty folders") {
+    let root = modelsRoot.appendingPathComponent("listing", isDirectory: true)
+    try MultiSubPaths.recordExpectedFiles(gemmaFiles, modelID: "org/whole", commit: "c1", in: root)
+    try snapshot("org/whole", "c1", gemmaFiles, refMain: true, in: root)
+    // One shard of two stored, then the app quit.
+    try MultiSubPaths.recordExpectedFiles(gemmaFiles, modelID: "org/cut-short", commit: "c1", in: root)
+    try snapshot("org/cut-short", "c1", Array(gemmaFiles.prefix(4)), refMain: true, in: root)
+    // Cut short before the first file was stored: only the list is there.
+    try MultiSubPaths.recordExpectedFiles(gemmaFiles, modelID: "org/list-only", commit: "c1", in: root)
+    try fm.createDirectory(at: MultiSubPaths.modelRepoDirectory(for: "org/empty", in: root)
+        .appendingPathComponent("snapshots/c1"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: root.appendingPathComponent(".download-tmp/x"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: root.appendingPathComponent("not-a-model"), withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: root.appendingPathComponent("not-a-model/file"))
+
+    try expect(MultiSubPaths.modelIDsOnDisk(in: root), ["org/cut-short", "org/list-only", "org/whole"])
+    try expect(MultiSubPaths.modelSnapshotDirectory(for: "org/cut-short", in: root), nil, "cut short")
+    try expect(MultiSubPaths.hasModelFiles(for: "org/cut-short", in: root), true, "cut short")
+    try expect(MultiSubPaths.hasModelFiles(for: "org/empty", in: root), false, "empty folders")
+    try expect(MultiSubPaths.hasModelFiles(for: "org/never", in: root), false, "no folder")
+    try expect(MultiSubPaths.modelIDsOnDisk(in: root.appendingPathComponent("missing")), [], "no models folder")
 }
 
 func unwrap<T>(_ value: T?, line: Int = #line) throws -> T {

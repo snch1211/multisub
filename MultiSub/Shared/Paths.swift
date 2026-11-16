@@ -126,6 +126,39 @@ extension MultiSubPaths {
         try JSONEncoder().encode(ExpectedFiles(files: files.sorted())).write(to: url, options: .atomic)
     }
 
+    /// Every model with a folder holding at least one file, downloaded or
+    /// not: a download cut short leaves gigabytes there that only deleting
+    /// the folder gives back. Best-effort reverse of `modelRepoDirectory`:
+    /// splits the folder name on the *first* "--" only, which is lossy if
+    /// an org or model name itself contains "--", but matches every real
+    /// repo id this project deals with.
+    static func modelIDsOnDisk(in root: URL = MultiSubPaths.modelsRoot) -> [String] {
+        guard let dirs = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        else { return [] }
+        return dirs.compactMap { dir -> String? in
+            let name = dir.lastPathComponent
+            guard name.hasPrefix("models--") else { return nil }
+            let rest = name.dropFirst("models--".count)
+            guard let separator = rest.range(of: "--") else { return nil }
+            let id = String(rest[..<separator.lowerBound]) + "/" + rest[separator.upperBound...]
+            return hasModelFiles(for: id, in: root) ? id : nil
+        }
+        .sorted()
+    }
+
+    /// Whether `modelID` has a folder with any file in it, complete or not.
+    static func hasModelFiles(for modelID: String, in root: URL = MultiSubPaths.modelsRoot) -> Bool {
+        guard let enumerator = FileManager.default.enumerator(
+            at: modelRepoDirectory(for: modelID, in: root),
+            includingPropertiesForKeys: [.isRegularFileKey], options: [], errorHandler: nil)
+        else { return false }
+        for case let url as URL in enumerator
+        where (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+            return true
+        }
+        return false
+    }
+
     private struct ExpectedFiles: Codable {
         var files: [String]
     }

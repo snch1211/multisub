@@ -40,6 +40,9 @@ struct GeneralSettingsView: View {
     /// Measured on disk, downloaded models only. Sizes of the others come
     /// from `downloadManager.sizeEstimates` (Hugging Face).
     @State private var diskSizes: [String: Int64] = [:]
+    /// What a download cut short left on disk, for models that aren't
+    /// downloaded: 0 when there's nothing, missing until measured.
+    @State private var unfinishedSizes: [String: Int64] = [:]
     /// Collapsed by default: the rows inside are what ask Hugging Face for
     /// sizes, and opening 一般設定 alone shouldn't contact it.
     @State private var showsDownloadableModels = false
@@ -112,7 +115,7 @@ struct GeneralSettingsView: View {
 
                 let downloadable = sizeSorted(downloadableEntries)
                 if !downloadable.isEmpty {
-                    DisclosureGroup("可下載的模型（\(downloadable.count) 個）", isExpanded: $showsDownloadableModels) {
+                    DisclosureGroup(downloadableTitle(downloadable), isExpanded: $showsDownloadableModels) {
                         ForEach(downloadable) { entry in
                             modelRow(for: entry)
                         }
@@ -288,6 +291,15 @@ struct GeneralSettingsView: View {
         allEntries.filter { !Translator.isModelDownloaded($0.id) }
     }
 
+    /// Counts the ones a download cut short too, so their disk use shows
+    /// while the list is closed (opening it asks Hugging Face for sizes).
+    private func downloadableTitle(_ entries: [ModelCatalogEntry]) -> String {
+        let unfinished = entries.filter { unfinishedSize(for: $0.id) != nil }.count
+        return unfinished == 0
+            ? "可下載的模型（\(entries.count) 個）"
+            : "可下載的模型（\(entries.count) 個，其中 \(unfinished) 個下載未完成）"
+    }
+
     /// Smallest first; unknown sizes (still being estimated) sort last
     /// rather than arbitrarily among the known ones.
     private func sizeSorted(_ entries: [ModelCatalogEntry]) -> [ModelCatalogEntry] {
@@ -300,6 +312,7 @@ struct GeneralSettingsView: View {
             label: rowLabel(for: entry),
             dotColor: dotColor(for: entry),
             isDownloaded: Translator.isModelDownloaded(entry.id),
+            hasUnfinishedDownload: unfinishedSize(for: entry.id) != nil,
             onDelete: { deleteModel(entry) },
             onDownload: { requestDownload(entry) }
         )
@@ -384,20 +397,37 @@ struct GeneralSettingsView: View {
         }
     }
 
-    /// Measures downloaded models on disk (no network). `force` re-measures
-    /// one whose size is already known; otherwise only entries whose
-    /// downloaded state just changed do any work.
+    /// Measures downloaded models on disk (no network), and what a download
+    /// cut short left for the others. `force` re-measures one whose size is
+    /// already known; otherwise only entries whose downloaded state just
+    /// changed do any work.
     private func refreshDiskSizes(force: Bool = false) {
         for entry in allEntries {
             guard Translator.isModelDownloaded(entry.id) else {
                 // Deleted (here or in Finder): a later re-download is measured afresh.
                 diskSizes[entry.id] = nil
+                if downloadManager.isDownloading(entry.id) {
+                    // Growing by the second; the row shows the progress instead.
+                    unfinishedSizes[entry.id] = nil
+                } else if force || unfinishedSizes[entry.id] == nil {
+                    unfinishedSizes[entry.id] = ModelCatalog.directorySize(modelID: entry.id)
+                }
                 continue
             }
+            unfinishedSizes[entry.id] = nil
             if force || diskSizes[entry.id] == nil {
                 diskSizes[entry.id] = ModelCatalog.directorySize(modelID: entry.id)
             }
         }
+    }
+
+    /// Bytes a download cut short left behind, nil when there are none (or
+    /// the model is downloaded, or still downloading).
+    private func unfinishedSize(for modelID: String) -> Int64? {
+        guard !downloadManager.isDownloading(modelID),
+              let bytes = unfinishedSizes[modelID], bytes > 0
+        else { return nil }
+        return bytes
     }
 
     /// Nil while the size is unknown.
@@ -427,6 +457,9 @@ struct GeneralSettingsView: View {
         case .warning?: parts.append("警告")
         case .blocked?: parts.append("阻擋")
         }
+        if let unfinished = unfinishedSize(for: entry.id) {
+            parts.append("下載未完成（佔用 \(ModelCatalog.formatBytes(unfinished))）")
+        }
         // Only a model `Translator` actually has resident in memory right
         // now earns "使用中" — `config.modelID` alone (even if its files
         // have since been deleted) only earns "已選用". Fixes the earlier
@@ -440,6 +473,7 @@ struct GeneralSettingsView: View {
         return parts.joined(separator: " — ")
     }
 
+    /// Also what the trash button next to 下載 does for a download cut short.
     /// Deleting the currently-selected (`config.modelID`) entry is allowed —
     /// the guard is against pulling out a model that's actually loaded in
     /// memory or mid-request right now, not against which one `config.json`
@@ -459,10 +493,18 @@ struct GeneralSettingsView: View {
                 showDeleteBlocked = true
                 return
             }
-            let repoDir = "models--" + entry.id.replacingOccurrences(of: "/", with: "--")
-            let root = MultiSubPaths.modelsRoot.appendingPathComponent(repoDir, isDirectory: true)
-            try? FileManager.default.removeItem(at: root)
+            // A download started from the engine setup may be filling the
+            // folder of a row that still showed what an earlier one left.
+            if downloadManager.isDownloading(entry.id) {
+                deleteBlockedMessage = "這個模型正在下載，請等下載結束再刪除。"
+                showDeleteBlocked = true
+                return
+            }
+            try? FileManager.default.removeItem(at: MultiSubPaths.modelRepoDirectory(for: entry.id))
             diskSizes[entry.id] = nil
+            unfinishedSizes[entry.id] = nil
+            // A 下載失敗 note would offer to resume from files that are gone.
+            downloadManager.dismissError(modelID: entry.id)
             extraModelEntries.removeAll { $0.id == entry.id }
         }
     }

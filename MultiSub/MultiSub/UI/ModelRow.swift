@@ -26,6 +26,9 @@ struct ModelRow: View {
     /// (so the risk is visible before the user commits the disk space).
     let dotColor: Color
     let isDownloaded: Bool
+    /// Not downloaded, but a download cut short left files behind: next to
+    /// 下載, the row then offers to delete them (when `onDelete` is set).
+    var hasUnfinishedDownload = false
     /// Nil hides the delete button (the engine setup only downloads; deleting
     /// lives in 一般設定's full list) and shows a "已下載" mark instead.
     let onDelete: (() -> Void)?
@@ -69,6 +72,12 @@ struct ModelRow: View {
                         .foregroundStyle(.green)
                 }
             } else {
+                if hasUnfinishedDownload, let onDelete {
+                    Button("刪除下載到一半的檔案", systemImage: "trash", role: .destructive, action: onDelete)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help("刪除下載到一半的檔案")
+                }
                 downloadButton
             }
         }
