@@ -18,10 +18,12 @@ function test(name, fn) {
 test('MS is frozen and has the documented surface', () => {
   assert.ok(Object.isFrozen(MS));
   for (const k of ['DEFAULT_STYLES', 'DEFAULT_SETTINGS', 'LANGUAGES', 'MODES', 'LEVELS', 'normalizeBcp47',
-    'alignCues', 'chunkCues', 'translateKey', 'glossaryKey', 'annotateKey', 'mergeSettings', 'ERROR_TEXT', 'matchAnnotations']) {
+    'alignCues', 'chunkCues', 'translateKey', 'glossaryKey', 'annotateKey', 'mergeSettings', 'ERROR_TEXT', 'matchAnnotations',
+    'DEFAULT_MODE', 'FALLBACK_TARGET_LANG', 'supportedLanguageFor', 'defaultTargetLang']) {
     assert.ok(k in MS, k);
   }
   assert.equal(MS.LANGUAGES.length, 12);
+  assert.equal(MS.DEFAULT_MODE, 'netflix');
   assert.deepEqual(j(MS.MODES.map((m) => [m.id, m.needsEngine])), [['netflix', false], ['translate', true], ['annotate', true]]);
   assert.deepEqual(j(MS.LEVELS.map((l) => l.id)), ['A2', 'B1', 'B2', 'C1']);
   assert.deepEqual(j(MS.LEVELS.map((l) => l.label)), ['A2 初級', 'B1 中級', 'B2 中高級', 'C1 高級']);
@@ -33,7 +35,7 @@ test('MS is frozen and has the documented surface', () => {
 
 test('DEFAULT_SETTINGS', () => {
   assert.deepEqual(j(MS.DEFAULT_SETTINGS), {
-    enabled: true, mode: null, targetLang: 'zh-TW', annotateLevel: 'B1', fontScale: 1, bottomOffset: 10,
+    enabled: true, mode: 'netflix', targetLang: 'zh-TW', annotateLevel: 'B1', fontScale: 1, bottomOffset: 10,
     styles: j(MS.DEFAULT_STYLES), mergedMode: true, prefsUpdatedAt: 0
   });
 });
@@ -150,7 +152,8 @@ test('cache keys', () => {
 
 test('mergeSettings: new install', () => {
   const s = MS.mergeSettings(undefined);
-  assert.equal(s.mode, null);
+  assert.equal(s.mode, 'netflix');
+  assert.equal(s.targetLang, 'zh-TW'); // no navigator here: the fallback
   assert.equal(s.mergedMode, true);
   assert.equal(s.annotateLevel, 'B1');
   assert.equal(s.prefsUpdatedAt, 0);
@@ -159,11 +162,12 @@ test('mergeSettings: new install', () => {
   assert.equal(MS.DEFAULT_STYLES.textColor, '#ffffff');
 });
 
-test('mergeSettings: legacy object without mode keeps mode null and its own mergedMode', () => {
+test('mergeSettings: legacy object without mode gets the default mode and keeps its own mergedMode', () => {
   const legacy = { enabled: true, targetLang: 'ja', fontScale: 1.2, bottomOffset: 14,
     styles: { textColor: '#ffff00' }, mergedMode: false };
   const s = MS.mergeSettings(legacy);
-  assert.equal(s.mode, null);
+  assert.equal(s.mode, 'netflix');
+  assert.equal(s.prefsUpdatedAt, 0);
   assert.equal(s.mergedMode, false);
   assert.equal(s.targetLang, 'ja');
   assert.equal(s.fontScale, 1.2);
@@ -182,7 +186,10 @@ test('mergeSettings: current object, validation', () => {
   assert.equal(s.mode, 'annotate');
   assert.equal(s.mergedMode, true); // missing in a current-format object -> default on
   assert.equal(s.annotateLevel, 'C1');
-  assert.equal(MS.mergeSettings({ mode: 'bogus' }).mode, null);
+  assert.equal(MS.mergeSettings({ mode: 'bogus' }).mode, 'netflix');
+  // a null mode saved by an older build (before the default existed)
+  assert.equal(MS.mergeSettings({ mode: null, targetLang: 'ko' }).mode, 'netflix');
+  assert.equal(MS.mergeSettings({ mode: null, targetLang: 'ko' }).targetLang, 'ko');
   assert.equal(MS.mergeSettings({ mode: 'netflix', annotateLevel: 'Z9' }).annotateLevel, 'B1');
   assert.equal(MS.mergeSettings({ mode: 'netflix', mergedMode: false }).mergedMode, false);
 });
@@ -202,6 +209,91 @@ test('reconcilePrefs', () => {
   assert.deepEqual(j(same), { adopt: null, push: false });
   assert.deepEqual(j(MS.reconcilePrefs(MS.mergeSettings(null), null)), { adopt: null, push: false });
   assert.deepEqual(j(MS.prefsOf(local)), { mode: 'netflix', targetLang: 'zh-TW', annotateLevel: 'B1', updatedAt: 100 });
+});
+
+test('defaults never bump prefsUpdatedAt, so they never win the sync', () => {
+  const defaults = MS.mergeSettings(null);
+  assert.equal(defaults.prefsUpdatedAt, 0);
+  for (const stored of [undefined, {}, { mode: null }, { mode: 'bogus' }, { fontScale: 1.5 }]) {
+    assert.equal(MS.mergeSettings(stored).prefsUpdatedAt, 0, JSON.stringify(stored));
+  }
+  // Nothing to push while only defaults are in use, whatever the app has.
+  assert.equal(MS.reconcilePrefs(defaults, null).push, false);
+  assert.equal(MS.reconcilePrefs(defaults, { updatedAt: 0 }).push, false);
+  assert.equal(MS.reconcilePrefs(defaults, { mode: 'netflix', updatedAt: 0 }).adopt, null);
+  // Any explicit choice in the app wins over them.
+  const app = MS.reconcilePrefs(defaults, { mode: 'annotate', targetLang: 'ko', annotateLevel: 'C1', updatedAt: 1 });
+  assert.equal(app.push, false);
+  assert.deepEqual(j(MS.prefsOf(app.adopt)), { mode: 'annotate', targetLang: 'ko', annotateLevel: 'C1', updatedAt: 1 });
+  // A field the app never set keeps the local value instead of a default.
+  const partial = MS.reconcilePrefs(MS.mergeSettings({ mode: 'translate', targetLang: 'ja', prefsUpdatedAt: 3 }),
+    { targetLang: 'ko', updatedAt: 4 });
+  assert.equal(partial.adopt.mode, 'translate');
+  assert.equal(partial.adopt.targetLang, 'ko');
+  // Round trip through storage (JSON) stays unstamped.
+  assert.equal(MS.mergeSettings(j(defaults)).prefsUpdatedAt, 0);
+});
+
+test('supportedLanguageFor: system language tags to LANGUAGES codes', () => {
+  const cases = {
+    // Traditional Chinese: script first, then region
+    'zh-Hant-TW': 'zh-TW', 'zh-TW': 'zh-TW', 'zh-HK': 'zh-TW', 'zh-MO': 'zh-TW', 'zh-Hant': 'zh-TW',
+    'zh-Hant-HK': 'zh-TW', 'zh_TW': 'zh-TW', 'ZH-HANT-tw': 'zh-TW', 'zh-Hant-CN': 'zh-TW',
+    // Simplified Chinese; a bare zh is Simplified (CLDR likely subtags)
+    'zh-Hans-CN': 'zh-CN', 'zh-CN': 'zh-CN', 'zh-SG': 'zh-CN', 'zh-Hans': 'zh-CN', 'zh-Hans-HK': 'zh-CN',
+    'zh-Hans-TW': 'zh-CN', 'zh-MY': 'zh-CN', 'zh': 'zh-CN',
+    // everything else by primary subtag
+    'ja-JP': 'ja', 'ja': 'ja', 'ko-KR': 'ko', 'en-US': 'en', 'en-GB': 'en', 'en_TW': 'en', 'es-419': 'es',
+    'pt-BR': 'pt', 'fr-CA': 'fr', 'de-DE': 'de', 'vi-VN': 'vi', 'th-TH': 'th', 'id-ID': 'id',
+    // extensions and ICU keywords don't count
+    'zh-TW-u-ca-roc': 'zh-TW', 'en-US-x-private': 'en', 'en_US@calendar=japanese': 'en', 'zh-u-nu-hanidec-hk': 'zh-CN',
+    // not offered
+    'fi-FI': '', 'yue-Hant-HK': '', 'nb-NO': '', 'x-klingon': '', '': '', '-': ''
+  };
+  for (const [tag, want] of Object.entries(cases)) assert.equal(MS.supportedLanguageFor(tag), want, tag);
+  assert.equal(MS.supportedLanguageFor(null), '');
+  assert.equal(MS.supportedLanguageFor(undefined), '');
+  // every code it returns is one the pickers offer
+  const codes = new Set(MS.LANGUAGES.map((l) => l.code));
+  for (const want of Object.values(cases)) if (want) assert.ok(codes.has(want), want);
+});
+
+test('defaultTargetLang: the first preferred language decides, else zh-TW', () => {
+  assert.equal(MS.FALLBACK_TARGET_LANG, 'zh-TW');
+  assert.equal(MS.defaultTargetLang(['zh-Hant-TW', 'en-US']), 'zh-TW');
+  assert.equal(MS.defaultTargetLang(['zh-Hans-CN']), 'zh-CN');
+  assert.equal(MS.defaultTargetLang(['ja-JP', 'zh-TW']), 'ja');
+  assert.equal(MS.defaultTargetLang(['ko-KR']), 'ko');
+  assert.equal(MS.defaultTargetLang(['en-US', 'ja-JP']), 'en');
+  // only the first: Safari's navigator.languages has just that one
+  assert.equal(MS.defaultTargetLang(['fi-FI', 'ja-JP']), 'zh-TW');
+  assert.equal(MS.defaultTargetLang('ja-JP'), 'ja');
+  assert.equal(MS.defaultTargetLang([]), 'zh-TW');
+  assert.equal(MS.defaultTargetLang(null), 'zh-TW');
+  assert.equal(MS.defaultTargetLang(undefined), 'zh-TW');
+});
+
+test('DEFAULT_SETTINGS.targetLang comes from navigator.languages', () => {
+  const load = (navigator) => {
+    const c = vm.createContext(navigator === undefined ? {} : { navigator });
+    vm.runInContext(fs.readFileSync(EXT + '/shared.js', 'utf8'), c, { filename: 'shared.js' });
+    return c.MS;
+  };
+  assert.equal(load({ languages: ['ja-JP', 'en-US'], language: 'ja-JP' }).DEFAULT_SETTINGS.targetLang, 'ja');
+  assert.equal(load({ languages: ['zh-HK'] }).DEFAULT_SETTINGS.targetLang, 'zh-TW');
+  assert.equal(load({ languages: ['zh-CN'] }).DEFAULT_SETTINGS.targetLang, 'zh-CN');
+  assert.equal(load({ language: 'ko-KR' }).DEFAULT_SETTINGS.targetLang, 'ko'); // no languages list
+  assert.equal(load({ languages: ['fi-FI'] }).DEFAULT_SETTINGS.targetLang, 'zh-TW');
+  assert.equal(load(undefined).DEFAULT_SETTINGS.targetLang, 'zh-TW');
+  const ja = load({ languages: ['ja-JP'] });
+  assert.equal(ja.mergeSettings(null).targetLang, 'ja');
+  assert.equal(ja.mergeSettings(null).prefsUpdatedAt, 0);
+  assert.equal(ja.mergeSettings({ targetLang: 'ko' }).targetLang, 'ko'); // a stored value stays
+  // a navigator that throws doesn't stop shared.js from loading
+  const c = vm.createContext({});
+  Object.defineProperty(c, 'navigator', { get() { throw new Error('nope'); } });
+  vm.runInContext(fs.readFileSync(EXT + '/shared.js', 'utf8'), c);
+  assert.equal(c.MS.DEFAULT_SETTINGS.targetLang, 'zh-TW');
 });
 
 const segs = (line, ann) => j(MS.matchAnnotations(line, ann));

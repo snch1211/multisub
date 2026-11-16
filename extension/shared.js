@@ -24,23 +24,6 @@
     boldEnabled: false
   });
 
-  const DEFAULT_SETTINGS = Object.freeze({
-    enabled: true,
-    // null until the user picks one of MODES (first-run chooser).
-    mode: null,
-    targetLang: 'zh-TW',
-    annotateLevel: 'B1',
-    fontScale: 1,
-    bottomOffset: 10, // percent from the bottom of the player
-    styles: DEFAULT_STYLES,
-    // Netflix's own subtitle element is hidden and MultiSub draws both lines,
-    // so the two never collide with Netflix's positioning.
-    mergedMode: true,
-    // Timestamp of the last local change to mode/targetLang/annotateLevel;
-    // compared with the app's config.prefs.updatedAt (newest wins).
-    prefsUpdatedAt: 0
-  });
-
   // `name` is the language's name in Traditional Chinese, for sentences such
   // as 「這部片沒有 Netflix 官方的日文字幕」; `label` is what the pickers show.
   const LANGUAGES = Object.freeze([
@@ -57,6 +40,83 @@
     { code: 'th', label: 'ไทย', name: '泰文' },
     { code: 'id', label: 'Bahasa Indonesia', name: '印尼文' }
   ]);
+
+  // The mode a new install starts in, and what an unset or unknown mode
+  // means: Netflix's own second-language subtitles need no AI and no setup,
+  // so bilingual subtitles show up without the user choosing anything.
+  // Same as SharedPrefs.defaultMode in Shared/Config.swift.
+  const DEFAULT_MODE = 'netflix';
+  // Second language when the system's preferred language isn't one of
+  // LANGUAGES. Same as LanguageNames.fallbackTargetLang in Swift.
+  const FALLBACK_TARGET_LANG = 'zh-TW';
+
+  // Maps one BCP 47 tag ("zh-Hant-TW", "ja-JP", "en_US") to a LANGUAGES
+  // code, or '' when we don't offer that language. Chinese goes by its
+  // script subtag when there is one (zh-Hans-HK is Simplified), else by its
+  // region (TW, HK and MO are Traditional), and a bare "zh" is Simplified,
+  // as in CLDR's likely subtags. Every other language matches on its
+  // primary subtag, so pt-BR is pt and es-419 is es. Extensions ("-u-...",
+  // "-x-...") and ICU keywords ("@...") are ignored.
+  //
+  // Must behave exactly like LanguageNames.supportedLanguage(for:) in
+  // Shared/LanguageNames.swift: the app and the extension each work out the
+  // default second language on their own, and must arrive at the same one.
+  function supportedLanguageFor(tag) {
+    let parts = String(tag || '').split('@')[0].toLowerCase().split(/[-_]/).filter(Boolean);
+    const singleton = parts.findIndex((p) => p.length === 1);
+    if (singleton >= 0) parts = parts.slice(0, singleton);
+    if (!parts.length) return '';
+    if (parts[0] === 'zh') {
+      const rest = parts.slice(1);
+      if (rest.includes('hant')) return 'zh-TW';
+      if (rest.includes('hans')) return 'zh-CN';
+      if (rest.some((p) => p === 'tw' || p === 'hk' || p === 'mo')) return 'zh-TW';
+      return 'zh-CN';
+    }
+    const hit = LANGUAGES.find((l) => l.code === parts[0]);
+    return hit ? hit.code : '';
+  }
+
+  // The default second language from the system's preferred languages, most
+  // preferred first: the first one decides, else FALLBACK_TARGET_LANG. Only
+  // the first, because Safari's navigator.languages holds just that one
+  // while the app sees the whole list (Locale.preferredLanguages); looking
+  // further down would let the two sides pick different defaults. Same as
+  // LanguageNames.defaultTargetLang(preferredLanguages:) in Swift.
+  function defaultTargetLang(locales) {
+    const first = [].concat(locales == null ? [] : locales)[0];
+    return supportedLanguageFor(first) || FALLBACK_TARGET_LANG;
+  }
+
+  // navigator.languages where there is one (content script, popup and
+  // background page all have it), else nothing (a Node test context).
+  function systemLanguages() {
+    try {
+      const nav = root.navigator;
+      if (nav && nav.languages && nav.languages.length) return Array.from(nav.languages);
+      if (nav && nav.language) return [nav.language];
+    } catch (e) { /* no navigator */ }
+    return [];
+  }
+
+  // Defaults are never stamped: prefsUpdatedAt stays 0 until the user picks
+  // a mode, language or level, so a default can't win the newest-wins sync
+  // (reconcilePrefs) over a choice made in the app.
+  const DEFAULT_SETTINGS = Object.freeze({
+    enabled: true,
+    mode: DEFAULT_MODE,
+    targetLang: defaultTargetLang(systemLanguages()),
+    annotateLevel: 'B1',
+    fontScale: 1,
+    bottomOffset: 10, // percent from the bottom of the player
+    styles: DEFAULT_STYLES,
+    // Netflix's own subtitle element is hidden and MultiSub draws both lines,
+    // so the two never collide with Netflix's positioning.
+    mergedMode: true,
+    // Timestamp of the last explicit change to mode/targetLang/annotateLevel;
+    // compared with the app's config.prefs.updatedAt (newest wins).
+    prefsUpdatedAt: 0
+  });
 
   // `short` fits the popup's three-way segmented control.
   const MODES = Object.freeze([
@@ -288,15 +348,16 @@
   // Settings
   // ---------------------------------------------------------------------------
 
-  // Fills in defaults and drops invalid values. An install from before modes
-  // existed has a stored object without a `mode` key: it keeps mode null (so
-  // it gets the chooser like a new install) and keeps its own mergedMode,
+  // Fills in defaults and drops invalid values. A missing, null or unknown
+  // mode becomes DEFAULT_MODE, without touching prefsUpdatedAt. An install
+  // from before modes existed has a stored object without a `mode` key: it
+  // starts in DEFAULT_MODE like a new install, and keeps its own mergedMode,
   // which back then defaulted to off, so upgrading doesn't change its layout.
   function mergeSettings(stored) {
     const s = stored && typeof stored === 'object' ? stored : null;
     const out = Object.assign({}, DEFAULT_SETTINGS, s || {});
     out.styles = Object.assign({}, DEFAULT_STYLES, (s && s.styles) || {});
-    if (!modeById(out.mode)) out.mode = null;
+    if (!modeById(out.mode)) out.mode = DEFAULT_MODE;
     if (typeof out.targetLang !== 'string' || !out.targetLang) out.targetLang = DEFAULT_SETTINGS.targetLang;
     if (!LEVELS.some((l) => l.id === out.annotateLevel)) out.annotateLevel = DEFAULT_SETTINGS.annotateLevel;
     out.enabled = out.enabled !== false;
@@ -319,7 +380,10 @@
   }
 
   // Newest updatedAt wins between storage.local and the app's config.prefs.
-  // Returns {adopt: settings-with-native-prefs | null, push: bool}.
+  // A field the app has never set is absent from nativePrefs and keeps the
+  // local value; defaults are never stamped on either side, so they never
+  // win over an explicit choice. Returns {adopt: settings-with-native-prefs
+  // | null, push: bool}.
   function reconcilePrefs(settings, nativePrefs) {
     const local = settings.prefsUpdatedAt || 0;
     const remote = nativePrefs && Number(nativePrefs.updatedAt) || 0;
@@ -447,6 +511,8 @@
   root.MS = Object.freeze({
     DEFAULT_STYLES: DEFAULT_STYLES,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS,
+    DEFAULT_MODE: DEFAULT_MODE,
+    FALLBACK_TARGET_LANG: FALLBACK_TARGET_LANG,
     LANGUAGES: LANGUAGES,
     MODES: MODES,
     LEVELS: LEVELS,
@@ -458,6 +524,8 @@
     normalizeBcp47: normalizeBcp47,
     sameLanguage: sameLanguage,
     languageName: languageName,
+    supportedLanguageFor: supportedLanguageFor,
+    defaultTargetLang: defaultTargetLang,
     modeById: modeById,
     alignCues: alignCues,
     chunkCues: chunkCues,
