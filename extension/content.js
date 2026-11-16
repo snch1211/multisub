@@ -722,6 +722,10 @@
   }
 
   function openPort() {
+    // A torn-down instance (section 12) talks to background.js no more: a
+    // late callback (say, an engine-changed ping answering after a newer
+    // instance took over) must not start a second job for this tab.
+    if (torn) return null;
     if (state.port) return state.port;
     let port;
     try { port = api.runtime.connect({ name: 'multisub' }); } catch (e) { return null; }
@@ -747,6 +751,7 @@
   // Restarts whatever the current mode needs from scratch. Results already
   // produced come back instantly from background.js's cache.
   function startPipeline() {
+    if (torn) return;
     stopJob();
     state.errorCode = null;
     state.errorHint = '';

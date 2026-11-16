@@ -1056,6 +1056,31 @@ async function test(name, fn) {
     t3.stop();
   });
 
+  await test('a torn-down instance opens no port when a late engine-changed ping answers', async () => {
+    let slow = false;
+    const reply = { ok: true, engine: cloudEngine };
+    const ping = () => (slow ? sleep(400).then(() => reply) : reply);
+    const t = boot({ stored: settingsWith({ mode: 'translate' }), ping, clock: 100 });
+    const port = await runningJob(t);
+    port.onMessage.fire({ type: 'error', kind: 'translate', code: 'engine-not-ready' });
+    await sleep(50);
+    assert.equal((await t.status()).errorCode, 'engine-not-ready');
+    const own = overlaysOn(t.page)[0];
+    // The popup saved an engine; before the ping it sends answers, a newer
+    // instance takes over.
+    slow = true;
+    await t.tabMessage({ type: 'engine-changed' });
+    t.page.window.postMessage({ __multisub_instance: true, type: 'hello', id: 'zzzz', startedAt: 150, managesNative: true });
+    await sleep(100);
+    assertTornDown(t, own);
+    const portsAtTeardown = t.ports.length;
+    await sleep(500); // the ping has answered
+    assert.equal(t.ports.length, portsAtTeardown, 'no port opened after teardown');
+    assert.ok(t.ports.every((p) => p.disconnected));
+    assert.ok(!t.ports.some((p) => p.posted.length && p !== port), 'no job sent');
+    t.stop();
+  });
+
   console.log('\n' + passed + ' tests passed' + (process.exitCode ? ', some FAILED' : ''));
   process.exit(process.exitCode || 0);
 })();
