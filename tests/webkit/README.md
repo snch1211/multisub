@@ -17,7 +17,7 @@ tests/webkit/build.sh             # just build tests/webkit/.build/harness
 ```
 
 `webkit.test.js` builds the harness if needed and skips (exit 0, with a
-message) when not on macOS or when the build fails. It takes about 40 s.
+message) when not on macOS or when the build fails. It takes about a minute.
 Snapshots of the watch scenarios land in `tests/webkit/.build/snapshots/`.
 
 The popup scenarios in `tests/extension/popup.test.js` run in WebKit too once
@@ -64,7 +64,9 @@ on a mock Netflix watch page (`fixtures/netflix-watch.html`):
 - The page is served at `https://www.netflix.com/watch/80000001` in a tab of
   the extension controller, so WebKit injects `shared.js`, `content.js` and
   `inject.js` (in the page's main world) as Safari would. The harness checks
-  that `inject.js` hooked `JSON.parse` before the page's own scripts ran.
+  that `inject.js` hooked `JSON.parse` before the page's own scripts ran,
+  which only the `world: "MAIN"` content script does: `content.js`'s
+  `<script src>` fallback also runs `inject.js`, but after the page.
 - The mock player fetches a Netflix-style manifest (`fixtures/manifest.json`)
   with `Response.json()` (or `JSON.parse`, `"manifestVia": "parse"`) after
   building the request with `JSON.stringify`, so both of `inject.js`'s hooks
@@ -72,7 +74,8 @@ on a mock Netflix watch page (`fixtures/netflix-watch.html`):
 - English comes as WebVTT with `&lrm;`, a double-encoded `&amp;lrm;`, an
   uppercase `&AMP;LRM;`, `<c>` tags and a two-line cue; Traditional Chinese
   comes as TTML (DFXP), next to a forced-narrative track that must not be
-  picked.
+  picked. The manifest lists the forced track first on purpose: a second-line
+  choice that took the first zh-Hant track would pick it.
 - A 30-second silent video made with ffmpeg (once, kept in `.build/`) is
   seeked to each checkpoint's time. Without ffmpeg, or with `--video none`,
   `currentTime` is set on a video with no media, which WebKit keeps and
@@ -95,8 +98,18 @@ comes from `shared.js`). `webkit.test.js` runs each of them, runs the
 engine-error one again in ja to check that the content scripts' Chinese text
 survives a Shift_JIS default, runs translate with `--scheme http`, where the
 page is served over http and the fixtures come from a loopback HTTP server
-with CORS headers and byte ranges, and checks that a copy of the extension
-whose `inject.js` doesn't decode entities fails with `&lrm;` on screen. The scenario format is described at the top of `harness/Watch.swift`.
+with CORS headers and byte ranges, and runs translate again with
+`"manifestVia": "parse"` so `inject.js`'s `JSON.parse` hook is the one that
+captures the manifest. It also checks that copies of the extension with a
+known mistake fail:
+
+- `inject.js` doesn't decode entities: `&lrm;` on screen;
+- `content.js` doesn't skip forced tracks for the second line: the forced
+  track's one cue at 18 s instead of the full track's line;
+- `inject.js` is no longer a `world: "MAIN"` content script: the overlay
+  still works through the fallback, but the `JSON.parse` hook comes too late.
+
+The scenario format is described at the top of `harness/Watch.swift`.
 
 ## What it can't cover
 

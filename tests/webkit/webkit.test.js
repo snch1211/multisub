@@ -6,8 +6,10 @@
 //    Safari;
 //  - the watch scenarios in fixtures/scenarios on the mock Netflix page,
 //    over https (data: URL fixtures), one again in ja, one over http
-//    (loopback server), plus a copy of the extension without entity
-//    decoding that must fail.
+//    (loopback server), one with the manifest read through JSON.parse;
+//  - copies of the extension with a known mistake (no entity decoding, a
+//    forced-narrative second line, no world: "MAIN" inject.js) that must
+//    fail.
 // Skips (exit 0) when not on macOS or when the harness doesn't build.
 const fs = require('fs');
 const os = require('os');
@@ -65,6 +67,33 @@ function test(name, fn) {
 
 const tmp = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'mswebkit-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
+
+// A copy of a scenario from fixtures/scenarios with some fields replaced
+// (undefined drops one), written to tmp with an absolute fixture dir.
+function scenarioVariant(file, tag, changes) {
+  const scenario = Object.assign(JSON.parse(fs.readFileSync(path.join(SCENARIOS, file), 'utf8')),
+    { fixtures: path.join(HERE, 'fixtures') }, changes);
+  const out = path.join(tmp, path.basename(file, '.json') + '-' + tag + '.json');
+  fs.writeFileSync(out, JSON.stringify(scenario));
+  return out;
+}
+
+// A copy of the extension in tmp, changed by edit(dir).
+function extensionVariant(tag, edit) {
+  const dir = path.join(tmp, tag);
+  fs.cpSync(EXT, dir, { recursive: true });
+  edit(dir);
+  return dir;
+}
+
+function assertFailedWith(res, checkName) {
+  assert.ok(res.result, 'no RESULT line (exit ' + res.status + ')\n' + res.stderr.slice(-800));
+  assert.equal(res.status, 1, 'expected the checks to fail\n' + describe(res));
+  const failed = failedChecks(res);
+  const hit = failed.find((c) => c.name === checkName);
+  assert.ok(hit, 'expected "' + checkName + '" to fail; failed: ' + (failed.map((c) => c.name).join(', ') || 'none'));
+  return hit;
+}
 
 // --- smoke ------------------------------------------------------------------
 
@@ -126,7 +155,6 @@ for (const file of scenarios) {
     const snapshot = path.join(SNAPSHOTS, name + '.png');
     const res = harness(['watch', EXT, path.join(SCENARIOS, file), '--snapshot', snapshot]);
     assertPassed(res);
-    assert.equal(res.result.page.hookedBeforePage, true, 'inject.js did not run in the page world before the page');
     assert.ok(fs.existsSync(snapshot), 'no snapshot');
   });
 }
@@ -150,16 +178,28 @@ test('watch translate over http: fixtures from the loopback server (CORS, byte r
   }
 });
 
-// Proves the watch checks see what a viewer would: without entity decoding
-// in inject.js, Netflix's "&lrm;" reaches the overlay as text.
+// The scenarios above read the manifest with Response.json(); inject.js
+// hooks JSON.parse too, and Netflix has used both.
+test('watch translate with the manifest read through JSON.parse (inject.js\'s other capture hook)', () => {
+  const res = harness(['watch', EXT, scenarioVariant('translate.json', 'parse', { manifestVia: 'parse' })]);
+  assertPassed(res);
+  const events = res.result.page.events || [];
+  assert.ok(events.includes('manifest: loaded via JSON.parse'), 'the page did not use JSON.parse: ' + events.join(', '));
+});
+
+// Copies of the extension with a known mistake, to prove the watch checks
+// catch it.
+
+// Without entity decoding in inject.js, Netflix's "&lrm;" reaches the
+// overlay as text.
 test('watch fails when inject.js stops decoding entities (&lrm; on screen)', () => {
-  const dir = path.join(tmp, 'no-decode');
-  fs.cpSync(EXT, dir, { recursive: true });
-  const file = path.join(dir, 'inject.js');
-  const src = fs.readFileSync(file, 'utf8');
-  const patched = src.replace(/function decodeEntities\(s\) \{/, 'function decodeEntities(s) { return s;');
-  assert.notEqual(patched, src, 'inject.js has no decodeEntities(s) any more; update this test');
-  fs.writeFileSync(file, patched);
+  const dir = extensionVariant('no-decode', (d) => {
+    const file = path.join(d, 'inject.js');
+    const src = fs.readFileSync(file, 'utf8');
+    const patched = src.replace(/function decodeEntities\(s\) \{/, 'function decodeEntities(s) { return s;');
+    assert.notEqual(patched, src, 'inject.js has no decodeEntities(s) any more; update this test');
+    fs.writeFileSync(file, patched);
+  });
   const scenario = path.join(tmp, 'lrm.json');
   fs.writeFileSync(scenario, JSON.stringify({
     name: 'entity leak', fixtures: path.join(HERE, 'fixtures'),
@@ -171,6 +211,46 @@ test('watch fails when inject.js stops decoding entities (&lrm; on screen)', () 
   const leak = failedChecks(res).find((c) => /no literal entities/.test(c.name));
   assert.ok(leak, 'no entity-leak failure: ' + describe(res));
   assert.deepEqual(leak.detail, ['&lrm;']);
+});
+
+// fixtures/manifest.json lists the forced-narrative zh-Hant track before the
+// full one, so a second-line choice that stops skipping forced tracks picks
+// it and shows its one cue (17-20 s) instead of the full track's.
+test('watch netflix fails when content.js picks the forced-narrative track for the second line', () => {
+  const dir = extensionVariant('forced-second', (d) => {
+    const file = path.join(d, 'content.js');
+    const src = fs.readFileSync(file, 'utf8');
+    const patched = src.replace(/(function chooseSecondTrack\([^)]*\) \{[^}]*?)!t\.forced &&\s*/, '$1');
+    assert.notEqual(patched, src, 'content.js chooseSecondTrack has no "!t.forced &&" any more; update this test');
+    fs.writeFileSync(file, patched);
+  });
+  const scenario = scenarioVariant('netflix.json', 'forced', {
+    checkpoints: [{ time: 18, waitMs: 8000, expect: { original: "Don't touch anything.", text: '什麼都別碰。' } }],
+    status: undefined, native: undefined
+  });
+  const res = harness(['watch', dir, scenario]);
+  assertFailedWith(res, 'overlay at 18.0 s');
+  assert.equal(res.result.checkpoints[0].observed.text, '［標誌：禁止進入］', 'not the forced track\'s cue');
+});
+
+// Without the world: "MAIN" entry, content.js's <script src> fallback still
+// runs inject.js, so the overlay works on the mock page, but only after the
+// page's own scripts: on Netflix the player can parse its manifest first.
+test('watch fails when inject.js is no longer a world: "MAIN" content script (fallback only)', () => {
+  const dir = extensionVariant('no-main-world', (d) => {
+    const file = path.join(d, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const scripts = manifest.content_scripts || [];
+    const kept = scripts.filter((cs) => cs.world !== 'MAIN');
+    assert.equal(kept.length, scripts.length - 1, 'manifest.json has no world: "MAIN" content script; update this test');
+    manifest.content_scripts = kept;
+    fs.writeFileSync(file, JSON.stringify(manifest, null, 2));
+  });
+  const translate = JSON.parse(fs.readFileSync(path.join(SCENARIOS, 'translate.json'), 'utf8'));
+  const scenario = scenarioVariant('translate.json', 'no-main', { checkpoints: translate.checkpoints.slice(0, 1) });
+  const res = harness(['watch', dir, scenario]);
+  assertFailedWith(res, 'inject.js hooked JSON.parse before the page\'s scripts (world MAIN)');
+  assert.equal(res.result.page.injected, true, 'the <script src> fallback did not run inject.js either');
 });
 
 console.log('\n' + passed + ' tests passed' + (process.exitCode ? ', some FAILED' : '') + '  (snapshots: ' + path.relative(process.cwd(), SNAPSHOTS) + ')');

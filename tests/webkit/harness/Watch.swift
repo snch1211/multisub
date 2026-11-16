@@ -203,6 +203,11 @@ struct WatchRunner {
       result["serverRangeRequests"] = server.rangeRequests
     }
     checks.add("inject.js ran in the page world", (fixtureState["injected"] as? Bool) == true)
+    // content.js's <script src=inject.js> fallback also sets the flag above,
+    // but runs after the page's own scripts. Only the world: "MAIN" content
+    // script hooks JSON.parse before them, which the page records.
+    checks.add("inject.js hooked JSON.parse before the page's scripts (world MAIN)",
+               (fixtureState["hookedBeforePage"] as? Bool) == true)
     if let m = scenario["manifest"] as? [String: Any], let want = m["webvttRequested"] as? Bool {
       checks.add("manifest request \(want ? "asks" : "does not ask") for WebVTT (JSON.stringify hook)", webvttRequested == want)
     }

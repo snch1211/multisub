@@ -108,9 +108,10 @@
       state.manifestRequestBody = body;
       state.events.push('manifest: requesting');
       const res = await fetch(FX.manifestURL, FX.manifestMethod === 'POST' ? { method: 'POST', body: body } : {});
-      const manifest = FX.manifestVia === 'parse' ? JSON.parse(await res.text()) : await res.json();
+      const via = FX.manifestVia === 'parse' ? 'JSON.parse' : 'Response.json';
+      const manifest = via === 'JSON.parse' ? JSON.parse(await res.text()) : await res.json();
       state.manifestFetched = !!(manifest && manifest.result);
-      state.events.push('manifest: ' + (state.manifestFetched ? 'loaded' : 'no result'));
+      state.events.push('manifest: ' + (state.manifestFetched ? 'loaded' : 'no result') + ' via ' + via);
       startNativeRenderer();
     } catch (e) {
       state.events.push('manifest failed: ' + e.message);
