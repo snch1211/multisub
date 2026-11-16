@@ -21,6 +21,13 @@ final class NativeStub {
   private(set) var counts: [String: Int] = [:]
   /// Every request in order: action plus a short summary.
   private(set) var log: [[String: Any]] = []
+  /// Direction marks and entities left as text that reached the native side
+  /// in subtitle text (lines, context, reference lines, glossary pairs),
+  /// i.e. would end up in the AI prompts.
+  private(set) var markLeaks: [String] = []
+  static let markPattern = try! NSRegularExpression(
+    pattern: "[\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]|&(?:[a-z]{2,8}|#[0-9]{1,6}|#x[0-9a-f]{1,6});",
+    options: [.caseInsensitive])
 
   static let defaultEngine: [String: Any] = [
     "configured": "cloud", "active": "cloud", "provider": "openai", "providerName": "OpenAI",
@@ -40,6 +47,7 @@ final class NativeStub {
     var entry: [String: Any] = ["action": action]
     if !lines.isEmpty { entry["lines"] = lines.count }
     log.append(entry)
+    findMarks(action, msg)
     Out.debug("native \(action)\(lines.isEmpty ? "" : " lines=\(lines.count)")")
     if let code = errors[action] { return ["ok": false, "error": code, "detail": "stubbed error"] }
     switch action {
@@ -64,6 +72,28 @@ final class NativeStub {
     default:
       return ["ok": false, "error": "unknown-action"]
     }
+  }
+
+  private func findMarks(_ action: String, _ msg: [String: Any]) {
+    func strings(_ v: Any?) -> [String] {
+      if let s = v as? String { return [s] }
+      if let a = v as? [Any] { return a.flatMap { strings($0) } }
+      if let d = v as? [String: Any] { return d.keys.sorted().flatMap { strings(d[$0]) } }
+      return []
+    }
+    for key in ["lines", "context", "reference", "pairs"] {
+      for s in strings(msg[key]) {
+        let range = NSRange(s.startIndex..., in: s)
+        guard NativeStub.markPattern.firstMatch(in: s, range: range) != nil, markLeaks.count < 20 else { continue }
+        // The marks themselves are invisible: show them as code points.
+        let shown = s.unicodeScalars.map { NativeStub.isBidiControl($0) ? String(format: "<U+%04X>", $0.value) : String($0) }.joined()
+        markLeaks.append("\(action) \(key): \(shown)")
+      }
+    }
+  }
+
+  static func isBidiControl(_ u: Unicode.Scalar) -> Bool {
+    [0x200E, 0x200F].contains(u.value) || (0x202A...0x202E).contains(u.value) || (0x2066...0x2069).contains(u.value)
   }
 
   /// The first run of letters longer than six, as it appears in the line.
@@ -148,7 +178,8 @@ enum HostError: Error, CustomStringConvertible {
 
 @MainActor
 final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate, WKNavigationDelegate {
-  let extensionDir: URL
+  /// The build loaded last (reloadContext(from:) can switch to another).
+  private(set) var extensionDir: URL
   let native: NativeStub
   private(set) var webExtension: WKWebExtension!
   private(set) var controller: WKWebExtensionController!
@@ -170,18 +201,51 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate, WKNavigat
   /// Loads the extension and grants everything it asks for, as a user who
   /// enabled it in Safari and allowed it on netflix.com would have.
   func load() async throws {
-    let ext = try await WKWebExtension(resourceBaseURL: extensionDir)
-    webExtension = ext
     controller = WKWebExtensionController(configuration: .nonPersistent())
     controller.delegate = self
+    try await loadContext()
+    controller.didOpenWindow(window)
+    controller.didFocusWindow(window)
+  }
+
+  /// A context for a freshly read copy of the extension, loaded into the
+  /// controller. `sameAs` keeps an earlier context's identity (its
+  /// runtime.id, base URL and storage), as Safari does when it reloads an
+  /// extension it already knows.
+  private func loadContext(sameAs previous: WKWebExtensionContext? = nil) async throws {
+    let ext = try await WKWebExtension(resourceBaseURL: extensionDir)
+    webExtension = ext
     let ctx = WKWebExtensionContext(for: ext)
+    if let previous {
+      ctx.uniqueIdentifier = previous.uniqueIdentifier
+      ctx.baseURL = previous.baseURL
+    }
     ctx.isInspectable = true
     for p in ext.requestedPermissions { ctx.setPermissionStatus(.grantedExplicitly, for: p) }
     for m in ext.allRequestedMatchPatterns { ctx.setPermissionStatus(.grantedExplicitly, for: m) }
     context = ctx
     try controller.load(ctx)
-    controller.didOpenWindow(window)
-    controller.didFocusWindow(window)
+  }
+
+  /// Whether the extension's context is loaded (unloadContext() unloads it).
+  var contextLoaded: Bool { context.map { controller.extensionContexts.contains($0) } ?? false }
+
+  /// Unloads the extension's context, as Safari does when the extension is
+  /// turned off. Pages keep whatever its content scripts left running.
+  func unloadContext() throws {
+    if contextLoaded { try controller.unload(context) }
+  }
+
+  /// Unloads the extension's context, if loaded, and loads a new one for
+  /// the same extension, as Safari does when it installs a new build or the
+  /// extension is turned off and on again: WebKit injects the new content
+  /// scripts into tabs that are already open. `dir`: another build of it to
+  /// load this time.
+  func reloadContext(from dir: URL? = nil) async throws {
+    let previous = context!
+    try unloadContext()
+    if let dir { extensionDir = dir }
+    try await loadContext(sameAs: previous)
   }
 
   var extensionErrors: [String] { webExtension?.errors.map { describe($0) } ?? [] }

@@ -12,6 +12,23 @@
 //  3. Report the subtitle and audio tracks selected in Netflix's player.
 //  4. On request from the content script, fetch a track, parse it into cues
 //     [{start, end, text}], and post them back via window.postMessage.
+//
+// The messages between this file and content.js are a protocol between
+// versions. Only the first copy of this file runs in a page (the
+// __multisubInjected guard below), and the page world outlives the
+// extension: after Safari reloads the extension (an update, or turning it
+// off and on) the new content.js is injected into open tabs and talks to the
+// inject.js the page loaded with, possibly from an older version, until the
+// tab is reloaded. So:
+//  - never rename or remove a message type or field, or change what one
+//    means; posts are { __multisub: true, type, ... }, commands are
+//    { __multisub_cmd: true, type, ... };
+//  - anything new is optional: content.js must work with an inject.js that
+//    doesn't send it, and inject.js ignores commands and fields it doesn't
+//    know;
+//  - a change to what this file computes (how it parses a track, say) only
+//    reaches pages loaded after the update, so content.js must not depend on
+//    it either.
 (() => {
   'use strict';
   // An engine that ignores `world: "MAIN"` would run this in the isolated
@@ -329,7 +346,10 @@
       const text = await res.text();
       const cues = track.format === 'webvtt' ? parseWebVTT(text) : parseTTML(text);
       dbg('fetchTrack:', track.format, text.length, 'bytes,', cues.length, 'cues, purpose=', purpose);
-      post({ type: 'cues', movieId: movieId, trackId: trackId, purpose: purpose, cues: cues });
+      // `cleaned`: every cue's text went through cleanText(). content.js
+      // cleans cues from an inject.js that doesn't say so (one from before
+      // this field, whose TTML parser left direction marks in).
+      post({ type: 'cues', movieId: movieId, trackId: trackId, purpose: purpose, cues: cues, cleaned: true });
     } catch (e) {
       dbg('fetchTrack error:', e && e.message);
       // The URL may have expired. Forget what was posted, so the next
@@ -353,12 +373,10 @@
     return h * 3600 + m * 60 + (+secParts[0]) + (+(secParts[1] || 0)) / Math.pow(10, (secParts[1] || '').length || 1);
   }
 
-  // Netflix's WebVTT uses named entities beyond the basic five, notably
-  // &lrm;/&rlm; (left-to-right / right-to-left marks) in front of most lines,
-  // which used to show up literally as "&lrm;". A <textarea> decodes every
-  // named and numeric entity without parsing any markup. The marks themselves
-  // (and other invisible bidi controls) are then removed: the overlay sets its
-  // own direction and the AI prompts don't need them.
+  // Netflix's subtitle files use named entities beyond the basic five,
+  // notably &lrm;/&rlm; (left-to-right / right-to-left marks) in front of
+  // most lines, which used to show up literally as "&lrm;". A <textarea>
+  // decodes every named and numeric entity without parsing any markup.
   const entityDecoder = document.createElement('textarea');
   const BIDI_CONTROLS = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
   // Netflix's files sometimes encode the mark twice ("&amp;lrm;"), so decode
@@ -372,11 +390,21 @@
       entityDecoder.innerHTML = out;
       out = entityDecoder.value;
     }
-    return out.replace(LITERAL_MARKS, '').replace(BIDI_CONTROLS, '').replace(/\u00A0/g, ' ');
+    return out;
   }
 
-  function stripTags(s) {
-    return decodeEntities(s.replace(/<[^>]*>/g, ''));
+  // What both parsers do to a cue's text once its markup is gone, so a cue
+  // reads the same whether Netflix served WebVTT or TTML: entities decoded
+  // (in TTML the XML parser has decoded one level already, which turns
+  // Netflix's "&amp;lrm;" into the text "&lrm;"), then the direction marks
+  // and other invisible bidi controls removed, whether they came as
+  // characters (TTML's "&#8206;") or as entities left as text: the overlay
+  // sets its own direction, and the AI prompts must not get them in their
+  // reference lines. Non-breaking spaces become plain ones, and each line
+  // is trimmed.
+  function cleanText(s) {
+    return decodeEntities(s).replace(LITERAL_MARKS, '').replace(BIDI_CONTROLS, '').replace(/\u00A0/g, ' ')
+      .replace(/[ \t]*\n[ \t]*/g, '\n').trim();
   }
 
   function mergeCues(cues) {
@@ -403,7 +431,7 @@
       const end = clockTime(m[2]);
       const buf = [];
       for (i++; i < lines.length && lines[i].trim() !== ''; i++) buf.push(lines[i]);
-      const cueText = stripTags(buf.join('\n')).trim();
+      const cueText = cleanText(buf.join('\n').replace(/<[^>]*>/g, ''));
       if (cueText) cues.push({ start: start, end: end, text: cueText });
     }
     return mergeCues(cues);
@@ -436,7 +464,7 @@
           else walk(child);
         }
       })(p);
-      t = t.replace(/\s*\n\s*/g, '\n').trim();
+      t = cleanText(t.replace(/\s*\n\s*/g, '\n'));
       if (t) cues.push({ start: start, end: end, text: t });
     }
     return mergeCues(cues);

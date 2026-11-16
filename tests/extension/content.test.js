@@ -44,9 +44,15 @@ function matches(n, sel) {
   return n.tagName === sel.toUpperCase();
 }
 
-function makeEvent() { const l = []; return { addListener: (f) => l.push(f), l, fire: (...a) => l.map((f) => f(...a)) }; }
+function makeEvent() {
+  const l = [];
+  return { addListener: (f) => l.push(f), removeListener: (f) => { const i = l.indexOf(f); if (i >= 0) l.splice(i, 1); },
+    l, fire: (...a) => l.slice().map((f) => f(...a)) };
+}
 
-function boot({ stored, ping, path = '/watch/81', scale = 1, extraStore = {}, navigator }) {
+// The watch page: the DOM and the window that every content-script instance
+// on it shares (two instances when the extension was reloaded under it).
+function makePage(path) {
   const html = new Node('html'); const head = new Node('head'); const body = new Node('body');
   html.append(head, body);
   const container = new Node('div'); container.classList.add('watch-video');
@@ -57,18 +63,38 @@ function boot({ stored, ping, path = '/watch/81', scale = 1, extraStore = {}, na
     documentElement: html, head,
     createElement: (t) => new Node(t),
     createTextNode: (v) => new Text(v),
-    querySelector: (s) => html.querySelector(s)
+    querySelector: (s) => html.querySelector(s),
+    querySelectorAll: (s) => html.querySelectorAll(s)
   };
   const pageCommands = [];
   const winListeners = [];
+  // Like the real thing, postMessage delivers asynchronously to every
+  // listener on the window, whichever world added it.
   const window = {
     addEventListener: (t, f) => { if (t === 'message') winListeners.push(f); },
-    postMessage: (m) => { if (m.__multisub_cmd) pageCommands.push(m); }
+    removeEventListener: (t, f) => { const i = winListeners.indexOf(f); if (t === 'message' && i >= 0) winListeners.splice(i, 1); },
+    postMessage: (m) => {
+      if (m.__multisub_cmd) pageCommands.push(m);
+      const data = JSON.parse(JSON.stringify(m));
+      setImmediate(() => winListeners.slice().forEach((f) => f({ source: window, data })));
+    }
   };
   window.window = window;
-  const fromPage = (msg) => winListeners.forEach((f) => f({ source: window, data: Object.assign({ __multisub: true }, msg) }));
+  const fromPage = (msg) => winListeners.slice().forEach((f) => f({ source: window, data: Object.assign({ __multisub: true }, msg) }));
+  // The root element's computed custom properties (overlay.css's marker).
+  const rootStyle = {};
+  // overlaySheet: some version of overlay.css styles the page (its rule for
+  // #multisub-overlay, z-index included, applies).
+  return { html, container, video, timedtext, document, window, winListeners, pageCommands, fromPage, rootStyle,
+    overlaySheet: false, location: { pathname: path } };
+}
 
-  const store = Object.assign({ settings: stored }, extraStore);
+// One content-script instance (shared.js + content.js in a world of its own)
+// on `page`, a new one by default. `clock` is performance.now() there.
+function boot({ stored, ping, path = '/watch/81', scale = 1, extraStore = {}, navigator, page, store: sharedStore, clock }) {
+  page = page || makePage(path);
+  const { html, container, video, timedtext, document, window, pageCommands, fromPage } = page;
+  const store = sharedStore || Object.assign({ settings: stored }, extraStore);
   const storageChanged = makeEvent();
   const onMessage = makeEvent();
   const ports = [];
@@ -96,13 +122,16 @@ function boot({ stored, ping, path = '/watch/81', scale = 1, extraStore = {}, na
     }
   };
   const intervals = [];
-  const locationObj = { pathname: path };
+  const locationObj = page.location;
   const ctx = vm.createContext({
     browser, window, document, console, Promise, JSON,
     // shared.js reads navigator.languages for the default second language.
     ...(navigator ? { navigator } : {}),
+    ...(clock != null ? { performance: { timeOrigin: 0, now: () => clock } } : {}),
     location: locationObj,
-    getComputedStyle: () => ({ position: 'relative' }),
+    getComputedStyle: (el) => ({ position: 'relative',
+      zIndex: el.id === 'multisub-overlay' && el.parentElement && page.overlaySheet ? '2147483000' : 'auto',
+      getPropertyValue: (k) => (el === html && page.rootStyle[k] != null ? String(page.rootStyle[k]) : '') }),
     // scale < 1 shortens the long delays (retries, timeouts) so tests can
     // walk through them; the 100 ms tick and short waits stay real.
     setTimeout: (f, ms) => { const t = setTimeout(f, ms >= 1000 ? ms * scale : ms); t.unref(); return t; },
@@ -115,7 +144,8 @@ function boot({ stored, ping, path = '/watch/81', scale = 1, extraStore = {}, na
   const status = () => new Promise((r) => onMessage.l[0]({ type: 'get-status' }, {}, r));
   const tabMessage = (m) => new Promise((r) => { const ret = onMessage.l[0](m, {}, r); if (ret !== true && m.type !== 'get-status') {} });
   return {
-    ctx, html, container, video, timedtext, store, ports, pageCommands, runtimeMessages, fromPage, status, tabMessage,
+    ctx, page, browser, onMessage, storageChanged,
+    html, container, video, timedtext, store, ports, pageCommands, runtimeMessages, fromPage, status, tabMessage,
     navigate: (p) => { locationObj.pathname = p; },
     port: () => ports[ports.length - 1],
     overlayText: () => html.querySelector('#multisub-text'),
@@ -754,6 +784,361 @@ async function test(name, fn) {
     t.video.currentTime = 53; // cue 4: "a stand-up guy", the term's first real occurrence
     await sleep(150);
     assert.equal(t.overlayText().querySelector('.ms-gloss').textContent, '站');
+    t.stop();
+  });
+
+  await test('cues from an inject.js older than `cleaned` lose their direction marks; flagged ones are taken as they are', async () => {
+    const t = boot({ stored: settingsWith({ mode: 'netflix' }), ping: () => ({ ok: true, engine: null }) });
+    await toFetch(t);
+    const marked = (cues, f) => cues.map((c, i) => Object.assign({}, c, { text: f(c.text, i) }));
+    // What a shipped inject.js made of Netflix's TTML: "&amp;lrm;" as the
+    // text "&lrm;", "&#8206;" as U+200E, a double-encoded one, a mark alone.
+    const zh = marked(ZH_CUES, (text, i) => [
+      '&lrm;' + text, '‎' + text + ' ', '&amp;lrm;' + text, '&#x200F;‫' + text + '‬'][i % 4]);
+    zh.push({ start: 201, end: 202, text: '&lrm;' });
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cues: zh });
+    await sleep(150);
+    for (const [time, want] of [[13, '第 3 句'], [17, '第 4 句'], [21, '第 5 句'], [25, '第 6 句'], [30, '第 7 句']]) {
+      t.video.currentTime = time;
+      await sleep(120);
+      assert.equal(JSON.stringify(t.overlayText().textContent), JSON.stringify(want), 'at ' + time + ' s');
+    }
+    t.video.currentTime = 201.5;
+    await sleep(120);
+    assert.equal(t.overlayText().style.display, 'none', 'a cue that was only a mark is gone');
+    // An inject.js that cleans its cues says so, and they are used as sent.
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cleaned: true,
+      cues: [{ start: 0, end: 200, text: 'A&B  as sent ' }] });
+    t.video.currentTime = 30;
+    await sleep(120);
+    assert.equal(t.overlayText().textContent, 'A&B  as sent ');
+    t.stop();
+  });
+
+  await test('the lower line is drawn smaller only while it is the second of two lines', async () => {
+    const twoLines = (t) => t.html.querySelector('#multisub-overlay').classList.contains('multisub-two-lines');
+    const t = boot({ stored: settingsWith({ mode: 'translate' }), ping: () => ({ ok: true, engine: cloudEngine }) });
+    const port = await runningJob(t);
+    await sleep(150);
+    // the original alone while its translation is pending
+    assert.equal(t.overlayOriginal().textContent, 'line 7');
+    assert.equal(t.overlayText().style.display, 'none');
+    assert.ok(!twoLines(t));
+    port.onMessage.fire({ type: 'progress', kind: 'translate', start: 7, items: ['翻譯七'] });
+    await sleep(150);
+    assert.ok(twoLines(t), 'original + translation');
+    // Not merged, Netflix draws the original: still the second of two lines.
+    t.fromPage({ type: 'active-track', movieId: '81', bcp47: 'en', audioBcp47: 'en' });
+    await t.setSettings({ mergedMode: false });
+    await sleep(150);
+    assert.equal(t.overlayOriginal().style.display, 'none');
+    assert.equal(t.overlayText().textContent, '翻譯七');
+    assert.ok(twoLines(t), "under Netflix's own line");
+    // annotate: the one line is the original itself
+    await t.setSettings({ mode: 'annotate', mergedMode: true, prefsUpdatedAt: 20 });
+    await sleep(150);
+    assert.equal(t.overlayText().textContent, 'line 7');
+    assert.ok(!twoLines(t), 'annotate');
+    // back to two lines in netflix mode
+    await t.setSettings({ mode: 'netflix', prefsUpdatedAt: 30 });
+    await sleep(150);
+    assert.equal(t.overlayText().textContent, '第 7 句');
+    assert.ok(twoLines(t), 'netflix');
+    t.stop();
+
+    // passthrough: the original is already in the target language
+    const t2 = boot({ stored: settingsWith({ mode: 'translate', targetLang: 'en' }), ping: () => ({ ok: true, engine: cloudEngine }) });
+    await sleep(150);
+    t2.fromPage({ type: 'active-track', movieId: '81', bcp47: 'en', audioBcp47: 'en' });
+    t2.fromPage({ type: 'tracks', movieId: '81', tracks: TRACKS.slice(0, 1) });
+    await sleep(20);
+    t2.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    await sleep(150);
+    assert.equal((await t2.status()).status, 'passthrough');
+    assert.equal(t2.overlayText().textContent, 'line 7');
+    assert.ok(!twoLines(t2), 'passthrough');
+    t2.stop();
+  });
+
+  await test("netflix mode: the second line keeps its size while its cue outlasts the original's", async () => {
+    const twoLines = (t) => t.html.querySelector('#multisub-overlay').classList.contains('multisub-two-lines');
+    // Netflix times each language on its own: here every Chinese cue ends
+    // 0.9 s after its English one.
+    const zh = Array.from({ length: 50 }, (_, i) => ({ start: i * 4, end: i * 4 + 3.9, text: '第 ' + i + ' 句' }));
+    const t = boot({ stored: settingsWith({ mode: 'netflix' }), ping: () => ({ ok: true, engine: null }) });
+    await toFetch(t);
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cues: zh });
+    const at = async (time) => { t.video.currentTime = time; await sleep(150); };
+    await at(30.5);
+    assert.equal(t.overlayOriginal().textContent, 'line 7');
+    assert.equal(t.overlayText().textContent, '第 7 句');
+    assert.ok(twoLines(t), 'both cues on screen');
+    await at(31.5);
+    assert.equal(t.overlayOriginal().style.display, 'none', 'the English cue has ended');
+    assert.equal(t.overlayText().textContent, '第 7 句');
+    assert.ok(twoLines(t), 'the same Chinese cue, the same size');
+    // Not merged: Netflix draws the English line, on the same timeline.
+    await t.setSettings({ mergedMode: false });
+    await at(30.5);
+    assert.equal(t.overlayText().textContent, '第 7 句');
+    assert.ok(twoLines(t), "under Netflix's own line");
+    await at(31.5);
+    assert.ok(twoLines(t), "after Netflix's own line has gone");
+    t.stop();
+  });
+
+  // --- Several instances on one page (the extension reloaded under an open
+  // tab) and an instance whose extension context is gone.
+  const overlaysOn = (page) => page.html.querySelectorAll('#multisub-overlay');
+  const instanceStyles = (page) => page.html.querySelectorAll('style').filter((n) => n.getAttribute('data-ms-instance'));
+  const instanceOf = (node) => node.getAttribute('data-ms-instance');
+  // Netflix mode with both tracks loaded, drawing at 30 s.
+  async function netflixReady(t) {
+    await toFetch(t);
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cues: ZH_CUES });
+    await sleep(150);
+  }
+  // Nothing of `t` is left running or on the page.
+  function assertTornDown(t, ownOverlay) {
+    assert.equal(ownOverlay.parentElement, null, 'overlay removed');
+    assert.equal(t.onMessage.l.length, 0, 'runtime.onMessage listener removed');
+    assert.equal(t.storageChanged.l.length, 0, 'storage.onChanged listener removed');
+    assert.ok(t.ports.every((p) => p.disconnected), 'port disconnected');
+    assert.ok(!instanceStyles(t.page).some((n) => instanceOf(n) === instanceOf(ownOverlay)), 'style rule removed');
+  }
+
+  await test('a newer instance takes over the page: the older one stops, and only the newer one draws', async () => {
+    const page = makePage('/watch/81');
+    const ping = () => ({ ok: true, engine: cloudEngine });
+    const a = boot({ page, stored: settingsWith({ mode: 'translate' }), ping, clock: 100 });
+    const aPort = await runningJob(a);
+    aPort.onMessage.fire({ type: 'progress', kind: 'translate', start: 7, items: ['翻譯七'] });
+    await sleep(150);
+    const aOverlay = overlaysOn(page)[0];
+    const aId = instanceOf(aOverlay);
+    assert.ok(/^[0-9a-z]+$/.test(aId), aId);
+    assert.equal(a.overlayText().textContent, '翻譯七');
+    // An overlay drawn by a version already shipped, which knows nothing of this.
+    const shipped = new Node('div'); shipped.id = 'multisub-overlay';
+    page.container.appendChild(shipped);
+
+    // The extension is reloaded: a new instance (another world, the same
+    // storage, now in netflix mode) starts on the same page.
+    a.store.settings = settingsWith({ mode: 'netflix', prefsUpdatedAt: 20 });
+    const b = boot({ page, store: a.store, ping, clock: 200 });
+    await sleep(30);
+    assertTornDown(a, aOverlay);
+    assert.equal(page.winListeners.length, 1, "only the new instance listens to the page");
+    // The new instance asks inject.js again and draws from what it gets.
+    await netflixReady(b);
+    assert.equal(page.pageCommands.filter((c) => c.type === 'get-tracks').length, 2);
+    const overlays = overlaysOn(page);
+    assert.equal(overlays.length, 1, 'one overlay on the page');
+    const bId = instanceOf(overlays[0]);
+    assert.notEqual(bId, aId);
+    assert.equal(shipped.parentElement, null, "the shipped version's overlay was taken off when ours went on");
+    assert.equal(b.overlayOriginal().textContent, 'line 7');
+    assert.equal(b.overlayText().textContent, '第 7 句');
+    assert.ok(page.html.classList.contains('multisub-native-hidden'));
+    const styles = instanceStyles(page);
+    assert.equal(styles.length, 1);
+    assert.equal(instanceOf(styles[0]), bId);
+    assert.equal(styles[0].textContent,
+      '[id^="multisub-"]:not([data-ms-instance="' + bId + '"]):not([data-ms-instance="' + bId + '"] *) { display: none !important; }');
+    // The old instance stays quiet: no tick puts its overlay back, and page
+    // messages no longer reach it.
+    page.container.appendChild(shipped);
+    await sleep(250);
+    assert.equal(aOverlay.parentElement, null);
+    assert.equal(overlaysOn(page).length, 2, 'the shipped overlay is back (hidden by the style rule), ours stays');
+    assert.equal((await b.status()).mode, 'netflix');
+    a.stop(); b.stop();
+  });
+
+  await test('instances that start close together: exactly one survives, in either order', async () => {
+    const ping = () => ({ ok: true, engine: null });
+    // Same start time: the id decides, the same way on both sides.
+    const page = makePage('/watch/81');
+    const a = boot({ page, stored: settingsWith({ mode: 'netflix' }), ping, clock: 100 });
+    const b = boot({ page, store: a.store, ping, clock: 100 });
+    const ids = instanceStyles(page).map(instanceOf);
+    assert.equal(ids.length, 2);
+    await sleep(250);
+    const alive = [a, b].filter((t) => t.onMessage.l.length);
+    assert.equal(alive.length, 1);
+    assert.equal(page.winListeners.length, 1);
+    assert.equal(overlaysOn(page).length, 1);
+    assert.equal(instanceOf(overlaysOn(page)[0]), ids.sort()[1]);
+    a.stop(); b.stop();
+
+    // The newer one starts first: the older one's hello gets an answer, and
+    // it steps aside.
+    const page2 = makePage('/watch/81');
+    const newer = boot({ page: page2, stored: settingsWith({ mode: 'netflix' }), ping, clock: 200 });
+    await sleep(150);
+    const newerOverlay = overlaysOn(page2)[0];
+    const older = boot({ page: page2, store: newer.store, ping, clock: 150 });
+    await sleep(250);
+    assert.equal(older.onMessage.l.length, 0, 'the older instance tore itself down');
+    assert.equal(newer.onMessage.l.length, 1);
+    assert.deepEqual(overlaysOn(page2), [newerOverlay]);
+    newer.stop(); older.stop();
+  });
+
+  await test("a newer instance's hello: Netflix's subtitles are left to it; a forged one from the future is ignored", async () => {
+    const hello = (page, fields) => page.window.postMessage(Object.assign({ __multisub_instance: true, type: 'hello' }, fields));
+    const t = boot({ stored: settingsWith({ mode: 'netflix' }), ping: () => ({ ok: true, engine: null }), clock: 100 });
+    await netflixReady(t);
+    const own = overlaysOn(t.page)[0];
+    assert.ok(t.html.classList.contains('multisub-native-hidden'));
+    hello(t.page, { id: 'zzzz', startedAt: 1e12, managesNative: true });
+    hello(t.page, { id: 'zzzz', startedAt: 'soon', managesNative: true });
+    await sleep(150);
+    assert.equal(own.parentElement, t.container, 'still drawing');
+    hello(t.page, { id: 'zzzz', startedAt: 150, managesNative: true });
+    await sleep(150);
+    assertTornDown(t, own);
+    assert.ok(t.html.classList.contains('multisub-native-hidden'), 'the newer instance decides about the class now');
+    t.stop();
+
+    // A newer instance that doesn't say it manages the class: give it back.
+    const t2 = boot({ stored: settingsWith({ mode: 'netflix' }), ping: () => ({ ok: true, engine: null }), clock: 100 });
+    await netflixReady(t2);
+    hello(t2.page, { id: 'zzzz', startedAt: 150 });
+    await sleep(150);
+    assert.ok(!t2.html.classList.contains('multisub-native-hidden'));
+    t2.stop();
+  });
+
+  await test('extension context gone: the instance tears itself down and gives Netflix its subtitles back', async () => {
+    const ping = () => ({ ok: true, engine: cloudEngine });
+    // runtime.id cleared (Chrome-style engines)
+    const t = boot({ stored: settingsWith({ mode: 'translate' }), ping });
+    const port = await runningJob(t);
+    port.onMessage.fire({ type: 'progress', kind: 'translate', start: 7, items: ['翻譯七'] });
+    await sleep(150);
+    const own = overlaysOn(t.page)[0];
+    assert.ok(t.html.classList.contains('multisub-native-hidden'));
+    t.browser.runtime.id = undefined;
+    await sleep(150);
+    assertTornDown(t, own);
+    assert.ok(port.disconnected);
+    assert.ok(!t.html.classList.contains('multisub-native-hidden'));
+    assert.equal(t.page.winListeners.length, 0);
+    // Nothing comes back on later ticks or page messages.
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    await sleep(250);
+    assert.equal(overlaysOn(t.page).length, 0);
+    assert.equal(t.ports.length, 1);
+    t.stop();
+
+    // runtime calls throwing
+    const t2 = boot({ stored: settingsWith({ mode: 'netflix' }), ping });
+    await netflixReady(t2);
+    const own2 = overlaysOn(t2.page)[0];
+    t2.browser.runtime.getURL = () => { throw new Error('Extension context invalidated.'); };
+    await sleep(150);
+    assertTornDown(t2, own2);
+    assert.ok(!t2.html.classList.contains('multisub-native-hidden'));
+    t2.stop();
+
+    // WebKit: runtime.id stays, but the context's stylesheet leaves the page.
+    const withStylesheet = async () => {
+      const page = makePage('/watch/81');
+      page.rootStyle['--multisub-stylesheet'] = ' 1';
+      page.overlaySheet = true;
+      const t = boot({ page, stored: settingsWith({ mode: 'netflix' }), ping });
+      await netflixReady(t);
+      await sleep(1000); // the stylesheet is looked at once a second
+      const own = overlaysOn(t.page)[0];
+      assert.equal(own.parentElement, t.container);
+      assert.ok(t.html.classList.contains('multisub-native-hidden'));
+      return { t, own };
+    };
+    const { t: t3, own: own3 } = await withStylesheet();
+    delete t3.page.rootStyle['--multisub-stylesheet'];
+    t3.page.overlaySheet = false;
+    await sleep(1150);
+    assertTornDown(t3, own3);
+    assert.ok(!t3.html.classList.contains('multisub-native-hidden'));
+    t3.stop();
+
+    // A runtime that says the context is gone while its stylesheet stays
+    // (marker and all): no other instance to leave the class to.
+    const { t: t4, own: own4 } = await withStylesheet();
+    t4.browser.runtime.id = undefined;
+    await sleep(150);
+    assertTornDown(t4, own4);
+    assert.ok(!t4.html.classList.contains('multisub-native-hidden'));
+    t4.stop();
+  });
+
+  await test('reloaded onto an older build (no marker, no hello): the class is left to it', async () => {
+    const ping = () => ({ ok: true, engine: null });
+    const page = makePage('/watch/81');
+    page.rootStyle['--multisub-stylesheet'] = ' 1';
+    page.overlaySheet = true;
+    const t = boot({ page, stored: settingsWith({ mode: 'netflix' }), ping });
+    await netflixReady(t);
+    await sleep(1000);
+    const own = overlaysOn(page)[0];
+    // Safari swaps this build's overlay.css for the older one's, which has
+    // no marker, and the older content.js draws its own overlay. It set the
+    // class when its cues came and, like the versions already shipped, sets
+    // it again only when its own idea of it changes.
+    delete page.rootStyle['--multisub-stylesheet'];
+    const older = new Node('div'); older.id = 'multisub-overlay';
+    page.container.appendChild(older);
+    await sleep(1150);
+    assertTornDown(t, own);
+    assert.deepEqual(overlaysOn(page), [older]);
+    assert.ok(t.html.classList.contains('multisub-native-hidden'), "Netflix's line stays hidden under the older build's");
+    t.stop();
+
+    // Same, with this instance's overlay never attached (no video yet): the
+    // older build's overlay tells which stylesheet is on the page.
+    const page2 = makePage('/watch/81');
+    page2.rootStyle['--multisub-stylesheet'] = ' 1';
+    page2.overlaySheet = true;
+    page2.video.remove();
+    const t2 = boot({ page: page2, stored: settingsWith({ mode: 'netflix' }), ping });
+    await sleep(1150);
+    assert.equal(overlaysOn(page2).length, 0);
+    delete page2.rootStyle['--multisub-stylesheet'];
+    const older2 = new Node('div'); older2.id = 'multisub-overlay';
+    page2.container.appendChild(older2);
+    page2.html.classList.add('multisub-native-hidden');
+    await sleep(1150);
+    assert.equal(t2.onMessage.l.length, 0, 'torn down');
+    assert.ok(page2.html.classList.contains('multisub-native-hidden'));
+    t2.stop();
+  });
+
+  await test('a torn-down instance opens no port when a late engine-changed ping answers', async () => {
+    let slow = false;
+    const reply = { ok: true, engine: cloudEngine };
+    const ping = () => (slow ? sleep(400).then(() => reply) : reply);
+    const t = boot({ stored: settingsWith({ mode: 'translate' }), ping, clock: 100 });
+    const port = await runningJob(t);
+    port.onMessage.fire({ type: 'error', kind: 'translate', code: 'engine-not-ready' });
+    await sleep(50);
+    assert.equal((await t.status()).errorCode, 'engine-not-ready');
+    const own = overlaysOn(t.page)[0];
+    // The popup saved an engine; before the ping it sends answers, a newer
+    // instance takes over.
+    slow = true;
+    await t.tabMessage({ type: 'engine-changed' });
+    t.page.window.postMessage({ __multisub_instance: true, type: 'hello', id: 'zzzz', startedAt: 150, managesNative: true });
+    await sleep(100);
+    assertTornDown(t, own);
+    const portsAtTeardown = t.ports.length;
+    await sleep(500); // the ping has answered
+    assert.equal(t.ports.length, portsAtTeardown, 'no port opened after teardown');
+    assert.ok(t.ports.every((p) => p.disconnected));
+    assert.ok(!t.ports.some((p) => p.posted.length && p !== port), 'no job sent');
     t.stop();
   });
 

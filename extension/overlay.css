@@ -1,3 +1,11 @@
+/* Marks the page as having this stylesheet. WebKit removes an extension's
+   content stylesheets from open pages when the extension is turned off,
+   but keeps its content scripts running there, with runtime.id still set:
+   content.js's extensionGone() notices the marker gone and steps aside. */
+:root {
+  --multisub-stylesheet: 1;
+}
+
 #multisub-overlay {
   position: absolute;
   left: 0;
@@ -40,10 +48,15 @@
   text-shadow: var(--multisub-outline, 0 0 4px rgba(0, 0, 0, 0.9));
 }
 
-/* The second-language line (#multisub-text) defaults to 80% of the original
-   line, so the language being watched stays the visual anchor. Users can still
-   scale both with the popup's font-size slider. */
-#multisub-text {
+/* The second-language line (#multisub-text under the original, ours or
+   Netflix's own) is 80% of the original line's size, so the language being
+   watched stays the visual anchor; content.js's render() sets
+   .multisub-two-lines then, for the whole of a second-language cue even
+   while the original track has none. When the line holds the original
+   itself (annotate mode, or an original already in the target language) it
+   is full size. Users can still scale both with the popup's font-size
+   slider. */
+#multisub-overlay.multisub-two-lines #multisub-text {
   font-size: calc(2.4vw * var(--multisub-font-scale, 1) * var(--multisub-second-scale, 0.8));
 }
 

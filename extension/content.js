@@ -17,6 +17,8 @@
 //  9. Sync loop (renders the cue at video.currentTime, detects seeks).
 // 10. Navigation between episodes.
 // 11. Popup messaging and the vocabulary hand-off.
+// 12. Instances: the newest content.js on the page takes over from older
+//     ones, and an instance whose extension is gone steps aside.
 (() => {
   'use strict';
   const api = typeof browser !== 'undefined' ? browser : chrome;
@@ -28,6 +30,45 @@
     if (!DEBUG) return;
     try { console.log.apply(console, ['[MultiSub][content]'].concat([].slice.call(arguments))); } catch (e) { /* ignore */ }
   }
+
+  // Every timer this instance starts goes through these two, which shadow
+  // the global ones inside this file, so that teardown() (section 12) can
+  // stop them all and none fires once the instance is gone.
+  const liveTimeouts = new Set();
+  const liveIntervals = new Set();
+  function setTimeout(fn, ms) {
+    const id = globalThis.setTimeout(() => {
+      liveTimeouts.delete(id);
+      if (!torn) fn();
+    }, ms);
+    liveTimeouts.add(id);
+    return id;
+  }
+  function clearTimeout(id) {
+    liveTimeouts.delete(id);
+    globalThis.clearTimeout(id);
+  }
+  function setInterval(fn, ms) {
+    const id = globalThis.setInterval(() => { if (!torn) fn(); }, ms);
+    liveIntervals.add(id);
+    return id;
+  }
+  function clearInterval(id) {
+    liveIntervals.delete(id);
+    globalThis.clearInterval(id);
+  }
+
+  // This instance (section 12). Safari injects the content scripts again
+  // into open tabs whenever it reloads the extension, next to the instance
+  // already running there.
+  const INSTANCE_ID = newInstanceId();
+  const STARTED_AT = pageClock();
+  // window.postMessage marker of the announcements between instances.
+  const INSTANCE_MSG = '__multisub_instance';
+  // Attribute naming the instance an element on the page belongs to.
+  const INSTANCE_ATTR = 'data-ms-instance';
+  // Set by teardown(): nothing of this instance may run any more.
+  let torn = false;
 
   // ===========================================================================
   // 1. Setup and state
@@ -142,7 +183,6 @@
     fallbackGlossPlan: new Map(),
     // --- overlay and UI
     lastRenderedKey: null,
-    nativeHidden: false,
     notice: null, // { text, until }
     noSecondHintShown: false,
     noDataHintShown: false,
@@ -215,6 +255,7 @@
   }
 
   function applySettingsChange(next) {
+    if (torn) return;
     const prev = settings;
     settings = next;
     applySettingsToOverlay();
@@ -248,10 +289,11 @@
     resumeHeldPipeline();
   }
 
-  api.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.settings) return;
+  function onStorageChanged(changes, area) {
+    if (torn || area !== 'local' || !changes.settings) return;
     applySettingsChange(MS.mergeSettings(changes.settings.newValue));
-  });
+  }
+  api.storage.onChanged.addListener(onStorageChanged);
 
   function stylesEqual(a, b) {
     return Object.keys(MS.DEFAULT_STYLES).every((k) => (a || {})[k] === (b || {})[k]);
@@ -295,6 +337,7 @@
   // Applies a native `ping` reply: subtitle styles (owned by the app), the
   // shared preferences (newest updatedAt wins) and the engine status.
   function onNativePing(res) {
+    if (torn) return;
     state.startupPingDone = true;
     if (!res || !res.ok) {
       state.nativeOk = false;
@@ -355,16 +398,30 @@
   // ===========================================================================
   // 3. Page-world messages
   // ===========================================================================
-  window.addEventListener('message', (ev) => {
-    if (ev.source !== window) return;
+  // inject.js may be older than this file: it runs once per page (see its
+  // window.__multisubInjected guard), so after Safari reloads the extension
+  // the new content.js talks to the inject.js the page loaded with. Read
+  // its messages as the versions already shipped send them, treat any field
+  // added since as optional (cues' `cleaned`, see cuesFrom()), and send only
+  // commands every shipped inject.js knows (fetch-track, get-tracks,
+  // get-title); the rule for changing the protocol is at the top of
+  // inject.js.
+  //
+  // The same channel carries the announcements of other content.js
+  // instances (INSTANCE_MSG, section 12), which inject.js ignores.
+  function onWindowMessage(ev) {
+    if (torn || ev.source !== window) return;
     const msg = ev.data;
-    if (!msg || msg.__multisub !== true) return;
+    if (!msg) return;
+    if (msg[INSTANCE_MSG] === true) { onInstanceMessage(msg); return; }
+    if (msg.__multisub !== true) return;
     if (msg.type === 'tracks') onTracks(msg);
     else if (msg.type === 'cues') onCues(msg);
     else if (msg.type === 'track-error') onTrackError(msg);
     else if (msg.type === 'active-track') onActiveTrack(msg);
     else if (msg.type === 'title') onTitle(msg);
-  });
+  }
+  window.addEventListener('message', onWindowMessage);
 
   function onTracks(msg) {
     if (!state.urlMovieId || msg.movieId !== state.urlMovieId) return; // prefetch of another episode
@@ -402,19 +459,41 @@
     selectTracks();
   }
 
+  // Netflix's direction marks, as characters or as entities left as text
+  // ("&lrm;", "&amp;lrm;").
+  const DIRECTION_MARK_ENTITIES = /&(?:amp;)*(?:lrm|rlm|#x200[ef]|#820[67]);/gi;
+  const BIDI_CONTROLS = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+
+  // The cues of a 'cues' message. inject.js cleans each cue's text and says
+  // so (`cleaned`); one from before that flag (still running in a page that
+  // was open when the extension was updated) left Netflix's direction marks
+  // in its TTML cues, so those are removed here, along with what else needs
+  // no entity decoding.
+  function cuesFrom(msg) {
+    const cues = Array.isArray(msg.cues) ? msg.cues : [];
+    if (msg.cleaned) return cues;
+    const out = [];
+    for (const c of cues) {
+      const text = String((c && c.text) || '').replace(DIRECTION_MARK_ENTITIES, '').replace(BIDI_CONTROLS, '')
+        .replace(/\u00A0/g, ' ').replace(/[ \t]*\n[ \t]*/g, '\n').trim();
+      if (text) out.push(Object.assign({}, c, { text: text }));
+    }
+    return out;
+  }
+
   function onCues(msg) {
     if (msg.movieId !== state.urlMovieId) return;
     if (msg.purpose === 'reference') {
       if (msg.trackId !== state.secondTrackId) return; // superseded by a newer choice
       clearSecondTimer();
-      state.secondCues = Array.isArray(msg.cues) ? msg.cues : [];
+      state.secondCues = cuesFrom(msg);
       state.secondState = state.secondCues.length ? 'ready' : 'failed';
       dbg('second track cues:', state.secondCues.length);
       onSecondSettled();
       return;
     }
     if (msg.trackId !== state.activeTrackId) return; // superseded by a newer track switch
-    state.cues = Array.isArray(msg.cues) ? msg.cues : [];
+    state.cues = cuesFrom(msg);
     dbg('primary cues:', state.cues.length);
     if (!state.cues.length) { enableFallback('empty-track'); return; }
     state.fallback = false;
@@ -643,6 +722,10 @@
   }
 
   function openPort() {
+    // A torn-down instance (section 12) talks to background.js no more: a
+    // late callback (say, an engine-changed ping answering after a newer
+    // instance took over) must not start a second job for this tab.
+    if (torn) return null;
     if (state.port) return state.port;
     let port;
     try { port = api.runtime.connect({ name: 'multisub' }); } catch (e) { return null; }
@@ -668,6 +751,7 @@
   // Restarts whatever the current mode needs from scratch. Results already
   // produced come back instantly from background.js's cache.
   function startPipeline() {
+    if (torn) return;
     stopJob();
     state.errorCode = null;
     state.errorHint = '';
@@ -1035,6 +1119,7 @@
   function buildOverlay() {
     overlay = document.createElement('div');
     overlay.id = 'multisub-overlay';
+    overlay.setAttribute(INSTANCE_ATTR, INSTANCE_ID);
     // The upper line goes first in DOM order so #multisub-text stays the
     // bottom-most child: its position is what bottomOffset and dragging
     // calibrate against, in every layout.
@@ -1121,11 +1206,12 @@
     return canDraw && mergedLayout();
   }
 
+  // Compared with the page rather than with what this instance set last: an
+  // older instance (section 12) may have left the class either way.
   function updateNativeHidden() {
     const hide = shouldHideNative();
-    if (hide === state.nativeHidden) return;
-    state.nativeHidden = hide;
-    document.documentElement.classList.toggle('multisub-native-hidden', hide);
+    const classes = document.documentElement.classList;
+    if (classes.contains('multisub-native-hidden') !== hide) classes.toggle('multisub-native-hidden', hide);
   }
 
   function overlayContainer(video) {
@@ -1138,6 +1224,7 @@
     if (!container) return null;
     if (overlay.parentElement !== container) {
       if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
+      removeForeignElements();
       container.appendChild(overlay);
     }
     return container;
@@ -1183,16 +1270,26 @@
     }
   }
 
-  // frame: { top, bottom, segments? } — `top` is the upper line (the original
-  // in merged layouts), `bottom` the lower one; `segments` renders `bottom`
-  // with glosses.
+  // frame: { top, bottom, segments?, second? } — `top` is the upper line
+  // (the original in merged layouts), `bottom` the lower one; `segments`
+  // renders `bottom` with glosses; `second`: `bottom` is the second language,
+  // drawn under the original (ours, or Netflix's own in the non-merged
+  // layout), rather than the original itself.
   function render(frame) {
     if (!overlay) return;
     const hint = currentHint();
+    // overlay.css draws the second-language line smaller, but not a lower
+    // line that holds the original (annotate mode's line with glosses, or an
+    // original already in the target language). Decided by what the line
+    // is, not by whether the upper line has a cue right now: in netflix mode
+    // the two tracks have their own timings, and the Chinese line would
+    // change size halfway through whenever its cue outlasts the English one.
+    const twoLines = !!frame.bottom && !!frame.second;
     const segKey = frame.segments ? JSON.stringify(frame.segments) : '';
-    const key = frame.top + '\u0001' + frame.bottom + '\u0001' + segKey + '\u0001' + hint;
+    const key = frame.top + '\u0001' + frame.bottom + '\u0001' + segKey + '\u0001' + hint + '\u0001' + twoLines;
     if (state.lastRenderedKey === key) return;
     state.lastRenderedKey = key;
+    overlay.classList.toggle('multisub-two-lines', twoLines);
     setLines(overlayOriginal, frame.top);
     if (frame.segments) setAnnotatedLines(overlayText, frame.segments);
     else setLines(overlayText, frame.bottom);
@@ -1215,12 +1312,12 @@
       // Separate timelines: Netflix often splits lines differently per
       // language, and aligning would drop or merge some of them.
       const j = state.secondState === 'ready' ? MS.findCueIndex(state.secondCues, t) : -1;
-      return { top: merged ? original : '', bottom: j >= 0 ? state.secondCues[j].text || '' : '' };
+      return { top: merged ? original : '', bottom: j >= 0 ? state.secondCues[j].text || '' : '', second: true };
     }
     if (state.status === 'passthrough') return { top: '', bottom: merged ? original : '' };
     if (mode === 'translate') {
       const tr = idx >= 0 && typeof state.items[idx] === 'string' ? state.items[idx] : '';
-      return { top: merged ? original : '', bottom: tr };
+      return { top: merged ? original : '', bottom: tr, second: true };
     }
     // annotate: a cue whose annotations aren't ready shows the plain line.
     if (idx < 0) return EMPTY_FRAME;
@@ -1238,7 +1335,7 @@
     if (!state.fallbackCache.has(key)) requestLine(mode, original);
     const result = state.fallbackCache.get(key);
     if (mode === 'translate') {
-      return { top: merged ? original : '', bottom: typeof result === 'string' ? result : '' };
+      return { top: merged ? original : '', bottom: typeof result === 'string' ? result : '', second: true };
     }
     const allowed = Array.isArray(result) ? fallbackAllowed(original, result) : null;
     return { top: '', bottom: original, segments: annotatedSegments(original, allowed) };
@@ -1351,6 +1448,7 @@
   function buildToast() {
     const host = document.createElement('div');
     host.id = 'multisub-toast';
+    host.setAttribute(INSTANCE_ATTR, INSTANCE_ID);
     host.style.cssText = 'position:absolute;top:max(64px,8%);right:3%;z-index:2147483001;pointer-events:none;';
     const root = host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
@@ -1444,6 +1542,8 @@
   }
 
   function tick() {
+    if (extensionGone()) { teardown('context'); return; }
+    keepInstanceStyle();
     checkUrl();
     if (!state.urlMovieId) return; // not on a watch page
     const video = getVideo();
@@ -1647,8 +1747,8 @@
     return null; // unknown, loading or failed to load
   }
 
-  api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (!msg) return false;
+  function onRuntimeMessage(msg, sender, sendResponse) {
+    if (torn || !msg) return false;
     if (msg.type === 'get-status') {
       sendResponse({
         onWatchPage: !!state.urlMovieId,
@@ -1696,5 +1796,205 @@
       return true; // async response
     }
     return false;
-  });
+  }
+  api.runtime.onMessage.addListener(onRuntimeMessage);
+
+  // ===========================================================================
+  // 12. Instances
+  // ===========================================================================
+  // When Safari reloads the extension (a new build installed, the extension
+  // turned off and on), it injects the new content scripts into the Netflix
+  // tabs already open, and the instance running there before keeps running
+  // in its own world: its timers, its overlay and its hold on Netflix's own
+  // subtitles all outlive its extension context. Two overlays then draw at
+  // the same spot until the tab is reloaded. So:
+  //  - Every element an instance puts on the page carries INSTANCE_ATTR, and
+  //    the instance keeps a style rule in the page that hides every MultiSub
+  //    element that isn't its own. Instances from versions already shipped
+  //    never step aside, and redraw what is removed, so hiding them is the
+  //    defence that holds; removing them when attaching just tidies up.
+  //  - Each instance announces itself (INSTANCE_MSG 'hello' with its id and
+  //    start time) and the newest one wins: an instance that hears a newer
+  //    one tears itself down, and one that hears an older one answers so the
+  //    older one hears it too, even if it started listening after the first
+  //    hello. Start time, then id, orders any two instances the same way on
+  //    both sides, so exactly one survives however close they started.
+  //  - An instance whose extension context is gone (the extension turned
+  //    off, or reloaded before the new instance has started) tears itself
+  //    down and gives Netflix's own subtitles back, unless a build from
+  //    before all this has taken the page over (nativeClassHeldByOlderBuild()).
+
+  // Ids of the elements any version of content.js attaches to the page
+  // itself (#multisub-original, #multisub-text and #multisub-hint live
+  // inside #multisub-overlay; #multisub-chooser is from an older version).
+  const TOP_LEVEL_IDS = ['multisub-overlay', 'multisub-toast', 'multisub-chooser'];
+  // overlay.css sets this custom property on the root element; see
+  // extensionGone().
+  const STYLESHEET_MARKER = '--multisub-stylesheet';
+  // How often extensionGone() looks at the stylesheet (on the first tick,
+  // then on the first tick after this long: WebKit may slow a page's timers
+  // down to one a second).
+  const STYLESHEET_CHECK_MS = 1000;
+  // The z-index every version of overlay.css gives #multisub-overlay; see
+  // nativeClassHeldByOlderBuild().
+  const OVERLAY_Z_INDEX = '2147483000';
+
+  let instanceStyle = null;
+  let stylesheetCheckedAt = -Infinity;
+  let stylesheetSeen = false;
+
+  // Letters and digits only: it goes into a CSS attribute selector as is.
+  function newInstanceId() {
+    try {
+      if (globalThis.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID().replace(/-/g, '');
+    } catch (e) { /* fall through */ }
+    return Date.now().toString(36) + Math.random().toString(36).slice(2);
+  }
+
+  // Milliseconds on a clock every world of this page shares (and that
+  // doesn't jump with the system clock), for ordering instances.
+  function pageClock() {
+    try {
+      if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+        return (performance.timeOrigin || 0) + performance.now();
+      }
+    } catch (e) { /* fall through */ }
+    return Date.now();
+  }
+
+  // Whether instance `a` is newer than instance `b`.
+  function newerThan(a, b) {
+    return a.startedAt !== b.startedAt ? a.startedAt > b.startedAt : a.id > b.id;
+  }
+
+  // `managesNative`: the sender keeps html.multisub-native-hidden up to date
+  // on its own (updateNativeHidden() on every tick), so an instance it
+  // replaces leaves the class to it rather than flash Netflix's subtitles.
+  function announce() {
+    try {
+      window.postMessage({ [INSTANCE_MSG]: true, type: 'hello', id: INSTANCE_ID, startedAt: STARTED_AT, managesNative: true }, '*');
+    } catch (e) { /* nobody to tell */ }
+  }
+
+  function onInstanceMessage(msg) {
+    if (msg.type !== 'hello' || typeof msg.id !== 'string' || msg.id === INSTANCE_ID) return;
+    if (typeof msg.startedAt !== 'number' || !isFinite(msg.startedAt)) return;
+    // A start time in the future can't come from an instance on this page.
+    if (msg.startedAt > pageClock() + 1000) return;
+    if (newerThan(msg, { id: INSTANCE_ID, startedAt: STARTED_AT })) teardown('replaced', msg);
+    else announce();
+  }
+
+  function instanceCss() {
+    const mine = '[' + INSTANCE_ATTR + '="' + INSTANCE_ID + '"]';
+    return '[id^="multisub-"]:not(' + mine + '):not(' + mine + ' *) { display: none !important; }';
+  }
+
+  // Puts the style rule that hides other instances' elements on the page,
+  // and puts it back if the page dropped it.
+  function keepInstanceStyle() {
+    if (!instanceStyle) {
+      instanceStyle = document.createElement('style');
+      instanceStyle.setAttribute(INSTANCE_ATTR, INSTANCE_ID);
+      instanceStyle.textContent = instanceCss();
+    }
+    if (instanceStyle.parentElement) return;
+    try { (document.head || document.documentElement).appendChild(instanceStyle); } catch (e) { /* no document yet */ }
+  }
+
+  function removeForeignElements() {
+    for (const id of TOP_LEVEL_IDS) {
+      for (const node of document.querySelectorAll('#' + id)) {
+        if (node.getAttribute(INSTANCE_ATTR) !== INSTANCE_ID) node.remove();
+      }
+    }
+  }
+
+  // Whether this instance's extension context is gone. Chrome-style engines
+  // clear runtime.id (and make runtime calls throw). WebKit (Safari) keeps
+  // both working in an unloaded context's content scripts, but removes the
+  // context's stylesheets from the page: overlay.css's marker disappears.
+  // It only counts once it has been seen, so a stylesheet that is applied a
+  // moment after this script starts (or never, on some engine) can't make
+  // a live instance give up. After a reload the new context's overlay.css
+  // carries the marker too; there the new instance's hello is what makes
+  // the old one step aside.
+  function extensionGone() {
+    try {
+      if (!api.runtime || !api.runtime.id) return true;
+      api.runtime.getURL('');
+    } catch (e) {
+      return true;
+    }
+    const now = Date.now();
+    if (Math.abs(now - stylesheetCheckedAt) < STYLESHEET_CHECK_MS) return false;
+    stylesheetCheckedAt = now;
+    const present = stylesheetPresent();
+    if (present === true) stylesheetSeen = true;
+    return stylesheetSeen && present === false;
+  }
+
+  // true / false, or null when it can't be told.
+  function stylesheetPresent() {
+    try {
+      const style = getComputedStyle(document.documentElement);
+      if (!style || typeof style.getPropertyValue !== 'function') return null;
+      return style.getPropertyValue(STYLESHEET_MARKER).trim() !== '';
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Whether html.multisub-native-hidden now belongs to an instance of an
+  // older build, which won't set it again if this one takes it off. That is
+  // a reload onto a build from before instances knew of each other: it never
+  // announces itself, so this instance sees its own stylesheet go and steps
+  // aside as if the extension were off, and those versions set the class
+  // only when their own idea of it changes. Told by the overlay.css styling
+  // the page: some version's still applies (every one gives
+  // #multisub-overlay OVERLAY_Z_INDEX), but not one with STYLESHEET_MARKER.
+  // Both instances read the same settings, so the class as this one leaves
+  // it is what that one wants. With no overlay.css left the class hides
+  // nothing (its only rule is there), and one with the marker is this
+  // build's (an engine that keeps a dead context's stylesheet) or a newer
+  // one's, which checks the class on every tick: then the class comes off.
+  // Read before this instance's overlay leaves the page.
+  function nativeClassHeldByOlderBuild() {
+    const probe = overlay && overlay.parentElement ? overlay : document.querySelector('#multisub-overlay');
+    if (!probe) return false;
+    let zIndex;
+    try { zIndex = getComputedStyle(probe).zIndex; } catch (e) { return false; }
+    return String(zIndex) === OVERLAY_Z_INDEX && stylesheetPresent() === false;
+  }
+
+  // Stops everything this instance does and takes what it put on the page
+  // off it. `reason` is 'replaced' (a newer instance, `by`, took over) or
+  // 'context' (the extension context is gone).
+  function teardown(reason, by) {
+    if (torn) return;
+    dbg('tearing down:', reason, by ? 'for ' + by.id : '');
+    torn = true;
+    for (const id of liveTimeouts) globalThis.clearTimeout(id);
+    for (const id of liveIntervals) globalThis.clearInterval(id);
+    liveTimeouts.clear();
+    liveIntervals.clear();
+    // Closing the port cancels this tab's job in background.js (when the
+    // context is still there to hear it).
+    try { stopJob(); } catch (e) { /* port already gone */ }
+    state.pendingTitleRequests.clear();
+    const keepNativeClass = by ? !!by.managesNative : nativeClassHeldByOlderBuild();
+    window.removeEventListener('message', onWindowMessage);
+    try { api.storage.onChanged.removeListener(onStorageChanged); } catch (e) { /* context gone */ }
+    try { api.runtime.onMessage.removeListener(onRuntimeMessage); } catch (e) { /* context gone */ }
+    removeToast();
+    if (overlay) overlay.remove();
+    if (instanceStyle) instanceStyle.remove();
+    // Netflix's own subtitles come back, unless a newer instance decides
+    // about them from now on, or an older build's does (see
+    // nativeClassHeldByOlderBuild()).
+    if (!keepNativeClass) document.documentElement.classList.remove('multisub-native-hidden');
+  }
+
+  keepInstanceStyle();
+  announce();
 })();

@@ -5,12 +5,14 @@
 <layout><region xml:id="region0" tts:origin="10% 80%" tts:extent="80% 20%"/></layout>
 </head>
 <body>
+<!-- Netflix's direction marks as they come in TTML: "&amp;lrm;" (the text
+     "&lrm;" once the XML is parsed) and "&#8206;" (the character U+200E). -->
 <div xml:space="preserve">
 <p begin="10000000t" end="40000000t" region="region0" style="style0">歡迎回到實驗室。</p>
 <p begin="50000000t" end="80000000t" region="region0" style="style0">一切都取決於這個實驗。</p>
 <p begin="90000000t" end="120000000t" region="region0" style="style0">沒有人看得懂<br/>這些說明。</p>
-<p begin="130000000t" end="160000000t" region="region0" style="style0">保持冷靜。</p>
-<p begin="170000000t" end="200000000t" region="region0" style="style0">什麼都別碰。</p>
+<p begin="130000000t" end="160000000t" region="region0" style="style0">&amp;lrm;保持冷靜。</p>
+<p begin="170000000t" end="200000000t" region="region0" style="style0">&#8206;什麼都別碰。</p>
 </div>
 </body>
 </tt>
