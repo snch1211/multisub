@@ -2,20 +2,18 @@
 //  VocabularyView.swift
 //  MultiSub
 //
-//  Style guide v2 §5.4. Behavior ported from ViewController.buildVocabTab()
-//  and its neighboring methods (reloadVocabEpisodes/applyVocabFilter/
-//  deleteSelectedWordsTapped/deleteEpisodeTapped/promptOrganizeVocab/
-//  runVocabExtraction) — see PLAN.md G5. CEFR-column sort is simplified to
+//  生詞本. Behavior ported from the old AppKit ViewController's vocabulary
+//  tab (reloadVocabEpisodes/applyVocabFilter/deleteSelectedWordsTapped/
+//  deleteEpisodeTapped/promptOrganizeVocab/runVocabExtraction).
+//  CEFR-column sort is simplified to
 //  Table's native ascending/descending toggle (no third "unsorted" state —
 //  SwiftUI's Table header tap doesn't expose one without extra machinery);
 //  everything else is a straight port.
 //
-//  C4(b)/(c) (2026-07-05, corrected same day after user screenshot
-//  feedback — see PLAN.md for the full history):
-//  episode list gained its own search field + collapsible series/season
+//  The episode list has its own search field + collapsible series/season
 //  groups (default collapsed) + a sort control (最近整理新→舊/舊→新/劇名 A-Z).
-//  Word search stays on the window's native `.searchable()` (style guide v2
-//  §4), which is what gives it the Tahoe glass search-field look; the
+//  Word search stays on the window's native `.searchable()`, which is what
+//  gives it the Tahoe glass search-field look; the
 //  episode-sort control lives in `.toolbar` for the same reason — only real
 //  toolbar items get the native Liquid Glass button treatment, so it's a
 //  `Menu` in a `ToolbarItem`, not a view-content control. Under this window's
@@ -43,7 +41,7 @@ import SwiftUI
 
 extension VocabWord: Identifiable {
     /// `lemma` is unique within one episode's word list (extraction
-    /// de-duplicates by lemma — see vocab-design.md), so it doubles as a
+    /// de-duplicates by lemma), so it doubles as a
     /// stable row identity without touching the shared model type.
     var id: String { lemma }
 }
@@ -84,24 +82,28 @@ struct VocabularyView: View {
     @State private var showDeleteWordsConfirm = false
     @State private var showDeleteEpisodeConfirm = false
 
-    // C4(b): episode list search/sort/collapse.
+    // Episode list search/sort/collapse.
     @State private var episodeSearchText = ""
     @State private var episodeSortOption: EpisodeSortOption = .recentDesc
     /// Group label -> expanded. Absent means collapsed (default-collapsed,
     /// per user's pick), so this only ever needs to record exceptions.
     @State private var expandedGroups = Set<String>()
 
-    // V4 trigger flow.
+    // multisub://vocab trigger flow.
     @State private var pendingTranscript: PendingTranscript?
     @State private var showOrganizeConfirm = false
     @State private var nonEnglishSourceLang: String?
     @State private var showNonEnglishAlert = false
+    /// Which engine the confirmation says it will use, e.g. "本機模型（Gemma 4 E4B）".
+    @State private var organizeEngineName = ""
+    @State private var engineMissingMessage = ""
+    @State private var showEngineMissingAlert = false
 
     private var selectedEpisode: VocabFile? {
         episodes.first { $0.movieId == selectedMovieId }
     }
 
-    /// C4(c): no episode selected means "search everything" rather than
+    /// No episode selected means "search everything" rather than
     /// "show nothing" — the old behavior required picking an episode first.
     private var filteredWordRows: [WordRow] {
         let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
@@ -176,12 +178,18 @@ struct VocabularyView: View {
             Button("開始整理") { if let pending = pendingTranscript { startOrganizing(pending) } }
             Button("取消", role: .cancel) { pendingTranscript = nil }
         } message: {
-            Text("這會用本地模型分析這一集的字幕、抽取值得學習的單字，可能需要幾分鐘。")
+            Text("會分析這一集的字幕，挑出值得學的單字，可能需要幾分鐘。\n使用的 AI 引擎：\(organizeEngineName)")
+        }
+        .alert("尚未設定 AI 引擎", isPresented: $showEngineMissingAlert) {
+            Button("前往一般設定") { router.selection = .general }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(engineMissingMessage)
         }
     }
 
-    // MARK: - Toolbar: episode sort menu (C4(b)), sits left of the native
-    // word search field .searchable() places in the same toolbar (C4(c)).
+    // MARK: - Toolbar: episode sort menu, sits left of the native
+    // word search field .searchable() places in the same toolbar.
 
     private var episodeSortMenu: some View {
         Menu("劇集排序", systemImage: "line.3.horizontal.decrease.circle") {
@@ -293,7 +301,7 @@ struct VocabularyView: View {
             .frame(maxWidth: .infinity, alignment: .center)
 
             if filteredWordRows.isEmpty {
-                // C4(a): give the empty state the same footprint the Table
+                // Give the empty state the same footprint the Table
                 // would occupy (rather than its own compact intrinsic size)
                 // so swapping between the two doesn't reflow the rest of the
                 // pane, and make it non-interactive — it's a status message,
@@ -307,7 +315,7 @@ struct VocabularyView: View {
                     TableColumn("CEFR", value: \.word.cefr) { row in CEFRBadge(level: row.word.cefr) }
                         .width(60)
                     TableColumn("翻譯", value: \.word.translation)
-                    // C4(c): only meaningful once results can span episodes.
+                    // Only meaningful once results can span episodes.
                     if selectedEpisode == nil {
                         TableColumn("集數", value: \.episodeDisplayTitle)
                     }
@@ -373,7 +381,7 @@ struct VocabularyView: View {
         }
     }
 
-    /// C4(c): selection can now span multiple episodes (cross-episode search
+    /// Selection can span multiple episodes (cross-episode search
     /// with nothing selected in the left list), so removal has to be grouped
     /// by source episode rather than assuming everything selected belongs to
     /// `selectedEpisode`.
@@ -396,13 +404,13 @@ struct VocabularyView: View {
         reloadEpisodes()
     }
 
-    // MARK: - V4: multisub://vocab trigger flow
+    // MARK: - multisub://vocab trigger flow
 
     private func handlePendingVocabMovieId(_ movieId: String?) {
         guard let movieId, let pending = PendingTranscriptStore.load(movieId: movieId) else { return }
         router.pendingVocabMovieId = nil
 
-        // vocab-design.md §4's second gate: content.js/popup.js already check
+        // Second gate: content.js/popup.js already check
         // this before the user ever gets here, but this App-side check is the
         // actual line of defense against a stale popup button state or any
         // future caller that bypasses popup entirely.
@@ -412,8 +420,30 @@ struct VocabularyView: View {
             showNonEnglishAlert = true
             return
         }
+        // Checked before asking, so the user isn't told "this takes a few
+        // minutes" for a run that would fail on its first request. The
+        // transcript stays staged; the popup's button stages it again anyway.
+        do {
+            organizeEngineName = try Self.engineDescription()
+        } catch {
+            engineMissingMessage = VocabExtractionManager.message(for: error)
+                + "設定好後，再到 Netflix 播放頁按一次「整理本集單字」。"
+            showEngineMissingAlert = true
+            return
+        }
         pendingTranscript = pending
         showOrganizeConfirm = true
+    }
+
+    /// The engine `Translator` would use right now, named for the
+    /// confirmation alert. Throws `TranslatorError` when none can run.
+    private static func engineDescription() throws -> String {
+        switch try Translator.resolveEngine(config: MultiSubConfig.load()) {
+        case .local(let modelID):
+            return "本機模型（\(ModelCatalog.displayName(for: modelID))）"
+        case .cloud(let client):
+            return "\(client.provider.displayName)（\(client.model)）"
+        }
     }
 
     private func startOrganizing(_ pending: PendingTranscript) {

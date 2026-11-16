@@ -27,12 +27,10 @@
 		4D580000000000000000AA07 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 4D580000000000000000AA03 /* MLXLMCommon */; };
 		4D580000000000000000AA08 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D580000000000000000AA04 /* MLXLLM */; };
 		4D580000000000000000AA09 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 4D580000000000000000AA05 /* MLXLMCommon */; };
-		4D580000000000000000AA0B /* TranslatorCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA0A /* TranslatorCore.swift */; };
 		4D580000000000000000AB0A /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = 4D580000000000000000AB05 /* HuggingFace */; };
 		4D580000000000000000AB0B /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = 4D580000000000000000AB07 /* Tokenizers */; };
 		4D580000000000000000AB0D /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = 4D580000000000000000AB06 /* HuggingFace */; };
 		4D580000000000000000AB0E /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = 4D580000000000000000AB08 /* Tokenizers */; };
-		4D580000000000000000AA0C /* TranslatorCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA0A /* TranslatorCore.swift */; };
 		4D580000000000000000AA0F /* ModelDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA0E /* ModelDownloader.swift */; };
 		4D580000000000000000AA11 /* stopwords-en.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA10 /* stopwords-en.txt */; };
 		4D580000000000000000AA13 /* cefr-wordlist-en.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA12 /* cefr-wordlist-en.txt */; };
@@ -45,6 +43,9 @@
 		4D580000000000000000AC17 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AC07 /* ContentView.swift */; };
 		4D580000000000000000AC18 /* MultiSubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AC08 /* MultiSubApp.swift */; };
 		4D580000000000000000AC19 /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AC09 /* GeneralSettingsView.swift */; };
+		4D58000000000000000C0102 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000C0101 /* OnboardingView.swift */; };
+		4D58000000000000000C0202 /* EngineSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000C0201 /* EngineSetupView.swift */; };
+		4D58000000000000000C0302 /* SafariSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000C0301 /* SafariSupport.swift */; };
 		4D580000000000000000AC1A /* SubtitleStylesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AC0A /* SubtitleStylesView.swift */; };
 		4D580000000000000000AC1B /* CacheManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AC0B /* CacheManagementView.swift */; };
 		4D580000000000000000AC1C /* VocabularyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AC0C /* VocabularyView.swift */; };
@@ -57,6 +58,29 @@
 		4D580000000000000000AD0C /* UpdateDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AD0B /* UpdateDownloadManager.swift */; };
 		4D580000000000000000AF02 /* HubBridges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AF01 /* HubBridges.swift */; };
 		4D580000000000000000AF03 /* HubBridges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AF01 /* HubBridges.swift */; };
+		4D58000000000000000B0102 /* AppIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0101 /* AppIdentity.swift */; };
+		4D58000000000000000B0103 /* AppIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0101 /* AppIdentity.swift */; };
+		4D58000000000000000B0202 /* Paths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0201 /* Paths.swift */; };
+		4D58000000000000000B0203 /* Paths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0201 /* Paths.swift */; };
+		4D58000000000000000B0302 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0301 /* Config.swift */; };
+		4D58000000000000000B0303 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0301 /* Config.swift */; };
+		4D58000000000000000B0402 /* Stores.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0401 /* Stores.swift */; };
+		4D58000000000000000B0403 /* Stores.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0401 /* Stores.swift */; };
+		4D58000000000000000B0502 /* LanguageNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0501 /* LanguageNames.swift */; };
+		4D58000000000000000B0503 /* LanguageNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0501 /* LanguageNames.swift */; };
+		4D58000000000000000B0602 /* Lexicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0601 /* Lexicon.swift */; };
+		4D58000000000000000B0603 /* Lexicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0601 /* Lexicon.swift */; };
+		4D58000000000000000B0702 /* Prompts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0701 /* Prompts.swift */; };
+		4D58000000000000000B0703 /* Prompts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0701 /* Prompts.swift */; };
+		4D58000000000000000B0802 /* CloudLLM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0801 /* CloudLLM.swift */; };
+		4D58000000000000000B0803 /* CloudLLM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0801 /* CloudLLM.swift */; };
+		4D58000000000000000B0902 /* SecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0901 /* SecretStore.swift */; };
+		4D58000000000000000B0903 /* SecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0901 /* SecretStore.swift */; };
+		4D58000000000000000B0A02 /* Translator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0A01 /* Translator.swift */; };
+		4D58000000000000000B0A03 /* Translator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0A01 /* Translator.swift */; };
+		4D58000000000000000B1001 /* stopwords-en.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA10 /* stopwords-en.txt */; };
+		4D58000000000000000B1002 /* cefr-wordlist-en.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA12 /* cefr-wordlist-en.txt */; };
+		4D58000000000000000B1102 /* shared.js in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B1101 /* shared.js */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -104,7 +128,6 @@
 		22F5F6832FF6D34F00A10F74 /* inject.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = inject.js; path = ../../extension/inject.js; sourceTree = "<group>"; };
 		22F5F6842FF6D34F00A10F74 /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = popup.css; path = ../../extension/popup.css; sourceTree = "<group>"; };
 		22F5F6852FF6D34F00A10F74 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = ../../extension/content.js; sourceTree = "<group>"; };
-		4D580000000000000000AA0A /* TranslatorCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslatorCore.swift; sourceTree = "<group>"; };
 		4D580000000000000000AA0E /* ModelDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloader.swift; sourceTree = "<group>"; };
 		4D580000000000000000AA10 /* stopwords-en.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "stopwords-en.txt"; sourceTree = "<group>"; };
 		4D580000000000000000AA12 /* cefr-wordlist-en.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "cefr-wordlist-en.txt"; sourceTree = "<group>"; };
@@ -117,6 +140,9 @@
 		4D580000000000000000AC07 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		4D580000000000000000AC08 /* MultiSubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiSubApp.swift; sourceTree = "<group>"; };
 		4D580000000000000000AC09 /* GeneralSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingsView.swift; sourceTree = "<group>"; };
+		4D58000000000000000C0101 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		4D58000000000000000C0201 /* EngineSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineSetupView.swift; sourceTree = "<group>"; };
+		4D58000000000000000C0301 /* SafariSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariSupport.swift; sourceTree = "<group>"; };
 		4D580000000000000000AC0A /* SubtitleStylesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubtitleStylesView.swift; sourceTree = "<group>"; };
 		4D580000000000000000AC0B /* CacheManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheManagementView.swift; sourceTree = "<group>"; };
 		4D580000000000000000AC0C /* VocabularyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VocabularyView.swift; sourceTree = "<group>"; };
@@ -128,6 +154,17 @@
 		4D580000000000000000AD09 /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
 		4D580000000000000000AD0B /* UpdateDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateDownloadManager.swift; sourceTree = "<group>"; };
 		4D580000000000000000AF01 /* HubBridges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubBridges.swift; sourceTree = "<group>"; };
+		4D58000000000000000B0101 /* AppIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIdentity.swift; sourceTree = "<group>"; };
+		4D58000000000000000B0201 /* Paths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Paths.swift; sourceTree = "<group>"; };
+		4D58000000000000000B0301 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
+		4D58000000000000000B0401 /* Stores.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Stores.swift; sourceTree = "<group>"; };
+		4D58000000000000000B0501 /* LanguageNames.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageNames.swift; sourceTree = "<group>"; };
+		4D58000000000000000B0601 /* Lexicon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lexicon.swift; sourceTree = "<group>"; };
+		4D58000000000000000B0701 /* Prompts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Prompts.swift; sourceTree = "<group>"; };
+		4D58000000000000000B0801 /* CloudLLM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudLLM.swift; sourceTree = "<group>"; };
+		4D58000000000000000B0901 /* SecretStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretStore.swift; sourceTree = "<group>"; };
+		4D58000000000000000B0A01 /* Translator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Translator.swift; sourceTree = "<group>"; };
+		4D58000000000000000B1101 /* shared.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = shared.js; path = ../../extension/shared.js; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -213,6 +250,9 @@
 				4D580000000000000000AC06 /* SidebarView.swift */,
 				4D580000000000000000AC04 /* BrandLogoView.swift */,
 				4D580000000000000000AC05 /* PlaceholderView.swift */,
+				4D58000000000000000C0101 /* OnboardingView.swift */,
+				4D58000000000000000C0201 /* EngineSetupView.swift */,
+				4D58000000000000000C0301 /* SafariSupport.swift */,
 				4D580000000000000000AC09 /* GeneralSettingsView.swift */,
 				4D580000000000000000AC0A /* SubtitleStylesView.swift */,
 				4D580000000000000000AC0B /* CacheManagementView.swift */,
@@ -241,7 +281,16 @@
 		4D580000000000000000AA0D /* Shared */ = {
 			isa = PBXGroup;
 			children = (
-				4D580000000000000000AA0A /* TranslatorCore.swift */,
+				4D58000000000000000B0101 /* AppIdentity.swift */,
+				4D58000000000000000B0201 /* Paths.swift */,
+				4D58000000000000000B0301 /* Config.swift */,
+				4D58000000000000000B0401 /* Stores.swift */,
+				4D58000000000000000B0501 /* LanguageNames.swift */,
+				4D58000000000000000B0601 /* Lexicon.swift */,
+				4D58000000000000000B0701 /* Prompts.swift */,
+				4D58000000000000000B0801 /* CloudLLM.swift */,
+				4D58000000000000000B0901 /* SecretStore.swift */,
+				4D58000000000000000B0A01 /* Translator.swift */,
 				4D580000000000000000AF01 /* HubBridges.swift */,
 			);
 			path = Shared;
@@ -258,6 +307,7 @@
 				22F5F6832FF6D34F00A10F74 /* inject.js */,
 				22F5F6842FF6D34F00A10F74 /* popup.css */,
 				22F5F6852FF6D34F00A10F74 /* content.js */,
+				4D58000000000000000B1101 /* shared.js */,
 			);
 			name = Resources;
 			path = "MultiSub Extension";
@@ -394,6 +444,9 @@
 				22F5F6882FF6D34F00A10F74 /* popup.html in Resources */,
 				22F5F6862FF6D34F00A10F74 /* popup.js in Resources */,
 				22F5F68B2FF6D34F00A10F74 /* inject.js in Resources */,
+				4D58000000000000000B1102 /* shared.js in Resources */,
+				4D58000000000000000B1001 /* stopwords-en.txt in Resources */,
+				4D58000000000000000B1002 /* cefr-wordlist-en.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -405,7 +458,16 @@
 			buildActionMask = 2147483647;
 			files = (
 				22F5F6552FF6D34D00A10F74 /* AppDelegate.swift in Sources */,
-				4D580000000000000000AA0B /* TranslatorCore.swift in Sources */,
+				4D58000000000000000B0102 /* AppIdentity.swift in Sources */,
+				4D58000000000000000B0202 /* Paths.swift in Sources */,
+				4D58000000000000000B0302 /* Config.swift in Sources */,
+				4D58000000000000000B0402 /* Stores.swift in Sources */,
+				4D58000000000000000B0502 /* LanguageNames.swift in Sources */,
+				4D58000000000000000B0602 /* Lexicon.swift in Sources */,
+				4D58000000000000000B0702 /* Prompts.swift in Sources */,
+				4D58000000000000000B0802 /* CloudLLM.swift in Sources */,
+				4D58000000000000000B0902 /* SecretStore.swift in Sources */,
+				4D58000000000000000B0A02 /* Translator.swift in Sources */,
 				4D580000000000000000AF02 /* HubBridges.swift in Sources */,
 				4D580000000000000000AA0F /* ModelDownloader.swift in Sources */,
 				4D580000000000000000AC18 /* MultiSubApp.swift in Sources */,
@@ -416,6 +478,9 @@
 				4D580000000000000000AC16 /* SidebarView.swift in Sources */,
 				4D580000000000000000AC14 /* BrandLogoView.swift in Sources */,
 				4D580000000000000000AC15 /* PlaceholderView.swift in Sources */,
+				4D58000000000000000C0102 /* OnboardingView.swift in Sources */,
+				4D58000000000000000C0202 /* EngineSetupView.swift in Sources */,
+				4D58000000000000000C0302 /* SafariSupport.swift in Sources */,
 				4D580000000000000000AC19 /* GeneralSettingsView.swift in Sources */,
 				4D580000000000000000AC1A /* SubtitleStylesView.swift in Sources */,
 				4D580000000000000000AC1B /* CacheManagementView.swift in Sources */,
@@ -435,7 +500,16 @@
 			buildActionMask = 2147483647;
 			files = (
 				22F5F6722FF6D34E00A10F74 /* SafariWebExtensionHandler.swift in Sources */,
-				4D580000000000000000AA0C /* TranslatorCore.swift in Sources */,
+				4D58000000000000000B0103 /* AppIdentity.swift in Sources */,
+				4D58000000000000000B0203 /* Paths.swift in Sources */,
+				4D58000000000000000B0303 /* Config.swift in Sources */,
+				4D58000000000000000B0403 /* Stores.swift in Sources */,
+				4D58000000000000000B0503 /* LanguageNames.swift in Sources */,
+				4D58000000000000000B0603 /* Lexicon.swift in Sources */,
+				4D58000000000000000B0703 /* Prompts.swift in Sources */,
+				4D58000000000000000B0803 /* CloudLLM.swift in Sources */,
+				4D58000000000000000B0903 /* SecretStore.swift in Sources */,
+				4D58000000000000000B0A03 /* Translator.swift in Sources */,
 				4D580000000000000000AF03 /* HubBridges.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -602,7 +676,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -638,7 +712,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -657,7 +731,7 @@
 		22F5F67B2FF6D34E00A10F74 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "$(MULTISUB_APP_ICON_$(MULTISUB_DISTRIBUTION))";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -676,7 +750,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -698,7 +772,7 @@
 		22F5F67C2FF6D34E00A10F74 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "$(MULTISUB_APP_ICON_$(MULTISUB_DISTRIBUTION))";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -717,7 +791,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,

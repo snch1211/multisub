@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>MultiSubPrivacyPolicyURL</key>
+	<string>$(MULTISUB_PRIVACY_URL)</string>
+	<key>MultiSubSourceURL</key>
+	<string>$(MULTISUB_SOURCE_URL)</string>
 	<key>SFSafariWebExtensionConverterVersion</key>
 	<string>26.6</string>
 	<key>CFBundleURLTypes</key>

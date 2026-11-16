@@ -2,9 +2,8 @@
 //  ModelDownloader.swift
 //  MultiSub
 //
-//  S1 (PLAN.md Phase S): swift-huggingface's bundled download path gets stuck
-//  around 1% on large (multi-GB) LFS files on flaky connections. Root cause
-//  (see memory model-download-xet-cdn-resume-bug / CLAUDE.md 已知缺陷): its
+//  swift-huggingface's bundled download path gets stuck around 1% on large
+//  (multi-GB) LFS files on flaky connections. Root cause: its
 //  `URLSession.download(for:delegate:)` call writes partial data to a private
 //  system temp file that's discarded when the connection drops, and is never
 //  persisted to `incompleteBlobPath` — so every retry restarts from byte 0.
@@ -18,8 +17,8 @@
 //  already cached via `HubClient+Files.swift`'s per-file fast path and does
 //  zero network I/O for the weights.
 //
-//  App target only — the extension never downloads (`Translator.translate`
-//  always calls `loadModel(allowDownload: false)`).
+//  App target only — the extension never downloads (every `Translator`
+//  request loads the model with `allowDownload: false`).
 //
 
 import CryptoKit

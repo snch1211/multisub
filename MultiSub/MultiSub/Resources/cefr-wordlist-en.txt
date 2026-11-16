@@ -1,7 +1,6 @@
 # cefr-wordlist-en.txt — English word -> CEFR level (A1-C2) lookup table.
 #
-# Source (2026-07-04, replacing the earlier self-authored placeholder list
-# after user review — vocab-design.md §5.5 / §9 open item #4 is now resolved):
+# Source (2026-07-04, replacing an earlier self-authored placeholder list):
 #   - A1-B2: "The CEFR-J Wordlist" version 1.5, compiled by Yukio Tono,
 #     Tokyo University of Foreign Studies (TUFS). Retrieved from
 #     https://github.com/openlanguageprofiles/olp-en-cefrj
@@ -17,7 +16,7 @@
 #     License: Creative Commons Attribution-ShareAlike 4.0 International
 #     (https://creativecommons.org/licenses/by-sa/4.0/).
 #
-# Processing applied (see MultiSub/Shared/TranslatorCore.swift, cefrWordlist):
+# Processing applied (read by MultiSub/Shared/Lexicon.swift, cefrWordlist):
 #   - Both CSVs' `headword`/`CEFR` columns only; other columns (POS,
 #     CoreInventory groupings, notes) dropped — this app only needs a single
 #     word -> level mapping, not the source datasets' full detail.

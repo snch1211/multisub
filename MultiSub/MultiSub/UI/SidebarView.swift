@@ -2,7 +2,7 @@
 //  SidebarView.swift
 //  MultiSub
 //
-//  Style guide v2 §5.0: brand row + four NavigationLinks.
+//  Brand row + one row per tab.
 //
 
 import SwiftUI
@@ -24,6 +24,8 @@ struct SidebarView: View {
             .padding(.bottom, 12)
 
             List(selection: $router.selection) {
+                Label("開始使用", systemImage: "sparkles")
+                    .tag(AppRouter.Tab.welcome)
                 Label("一般設定", systemImage: "gearshape")
                     .tag(AppRouter.Tab.general)
                 Label("字幕樣式", systemImage: "textformat")
@@ -34,7 +36,7 @@ struct SidebarView: View {
                     .tag(AppRouter.Tab.vocab)
             }
         }
-        // Style guide §5.0: sidebar ~200pt wide — also what keeps "MultiSub"
+        // Sidebar ~200pt wide — also what keeps "MultiSub"
         // on one line next to the (now smaller) brand mark.
         .navigationSplitViewColumnWidth(min: 190, ideal: 200, max: 220)
     }

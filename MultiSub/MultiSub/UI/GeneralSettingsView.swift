@@ -2,44 +2,54 @@
 //  GeneralSettingsView.swift
 //  MultiSub
 //
-//  Style guide v2 §5.1. Behavior ported from ViewController.buildGeneralTab()
-//  and its neighboring methods (refreshExtensionStatus/refreshModelStatus/
-//  downloadModel/runTest/controlTextDidEndEditing) — see PLAN.md G2.
+//  一般設定: Safari extension status, the AI engine (shared with onboarding),
+//  local model management, a test translation through whichever engine is
+//  in use, memory, and (direct builds only) software updates.
 //
 
 import AppKit
-import SafariServices
 import SwiftUI
-
-/// The Safari extension is always "<app bundle id>.Extension" (see MultiSub.xcconfig).
-let extensionBundleIdentifier = (Bundle.main.bundleIdentifier ?? "") + ".Extension"
 
 @MainActor
 struct GeneralSettingsView: View {
-    private enum PendingBlockedAction {
+    /// A selection or download waiting on the memory confirmation.
+    private enum PendingMemoryAction {
         case select(String)
         case download(String)
+
+        var modelID: String {
+            switch self {
+            case .select(let id), .download(let id): return id
+            }
+        }
     }
 
     @Environment(ConfigStore.self) private var configStore
     @Environment(ModelDownloadManager.self) private var downloadManager
+    #if !APP_STORE
+    // The Mac App Store build updates through the App Store and must not
+    // ship a self-updater, so everything about it is compiled out there.
     @Environment(UpdateChecker.self) private var updateChecker
     @Environment(UpdateDownloadManager.self) private var updateDownloadManager
+    #endif
 
-    @State private var extensionStatusText = "檢查中…"
-    @State private var extensionStatusColor = Color.secondary
+    @State private var extensionState: SafariExtensionState = .checking
 
     @State private var selectedModelID = ""
     @State private var extraModelEntries: [ModelCatalogEntry] = []
-    @State private var modelSizes: [String: Int64] = [:]
-    @State private var sizesLoading: Set<String> = []
+    /// Measured on disk, downloaded models only. Sizes of the others come
+    /// from `downloadManager.sizeEstimates` (Hugging Face).
+    @State private var diskSizes: [String: Int64] = [:]
+    /// Collapsed by default: the rows inside are what ask Hugging Face for
+    /// sizes, and opening 一般設定 alone shouldn't contact it.
+    @State private var showsDownloadableModels = false
     /// Polled periodically (see the `.task` loop below) rather than read
     /// synchronously, since `Translator` is an actor — this is a display
     /// snapshot of "which model is actually resident in memory right now",
     /// distinct from `configStore.config.modelID` ("which model the user
     /// picked"). Only the former earns the "使用中" label.
     @State private var loadedModelID: String?
-    @State private var pendingBlockedAction: PendingBlockedAction?
+    @State private var pendingMemoryAction: PendingMemoryAction?
     @State private var showForceConfirm = false
     @State private var deleteBlockedMessage = ""
     @State private var showDeleteBlocked = false
@@ -50,11 +60,25 @@ struct GeneralSettingsView: View {
     @State private var testOutput = " "
     @State private var testRunning = false
 
+    private static var versionText: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(version)（\(build)）"
+    }
+
     var body: some View {
         Form {
-            Section("Safari 擴充功能") {
-                StatusDot(color: extensionStatusColor, text: extensionStatusText)
-                Button("開啟 Safari 擴充功能設定") { openSafariPreferences() }
+            Section("Safari 延伸功能") {
+                SafariExtensionRow(state: extensionState)
+            }
+
+            Section {
+                EngineSetupView()
+            } header: {
+                Text("AI 引擎")
+            } footer: {
+                Text("「AI 翻譯雙語字幕」、「生字標註」和生詞本都用這裡的引擎。用 API Key 時，字幕文字會送到你選的 AI 服務。本機模型完全在這台 Mac 上執行。")
             }
 
             Section {
@@ -70,7 +94,7 @@ struct GeneralSettingsView: View {
                 // whether via the picker below or dropped in manually) are
                 // selectable here — an undownloaded catalog entry belongs in
                 // the list below with a "下載" button, not in this picker.
-                Picker("翻譯模型", selection: $selectedModelID) {
+                Picker("選用模型", selection: $selectedModelID) {
                     ForEach(downloadedEntries) { entry in
                         Text(rowLabel(for: entry)).tag(entry.id)
                     }
@@ -82,34 +106,35 @@ struct GeneralSettingsView: View {
                         .labelStyle(.iconOnly)
                 }
 
-                ForEach(sizeSortedEntries) { entry in
-                    ModelRow(
-                        label: rowLabel(for: entry),
-                        dotColor: dotColor(for: entry),
-                        downloadState: downloadManager.downloads[entry.id],
-                        isDownloading: downloadManager.isDownloading(entry.id),
-                        isDownloaded: Translator.isModelDownloaded(entry.id),
-                        onDelete: { deleteModel(entry) },
-                        onDownload: { requestDownload(entry) }
-                    )
+                ForEach(sizeSorted(downloadedEntries)) { entry in
+                    modelRow(for: entry)
+                }
+
+                let downloadable = sizeSorted(downloadableEntries)
+                if !downloadable.isEmpty {
+                    DisclosureGroup("可下載的模型（\(downloadable.count) 個）", isExpanded: $showsDownloadableModels) {
+                        ForEach(downloadable) { entry in
+                            modelRow(for: entry)
+                        }
+                    }
                 }
             } header: {
-                Text("模型")
+                Text("本機模型")
             } footer: {
-                Text("模型越大通常翻譯品質越好，但需要更多記憶體與下載時間；下載完成後即存在本機，翻譯時不會重新下載。模型下載自 Hugging Face（MLX 格式），也可以自行在模型資料夾放入符合 MLX 格式的權重。\n此裝置實體記憶體 \(Self.formatBytes(Int64(ProcessInfo.processInfo.physicalMemory)))；紅燈表示模型磁碟大小超出建議上限（可強制選用），橘燈為警告。")
+                Text("模型越大通常翻譯品質越好，但需要更多記憶體與下載時間。下載完成後存在本機，翻譯時不會重新下載。模型下載自 Hugging Face（MLX 格式），也可以自行在模型資料夾放入符合 MLX 格式的權重。展開「可下載的模型」時才會向 Hugging Face 查詢模型大小，查到大小後才能下載。\n此裝置實體記憶體 \(ModelCatalog.formatBytes(Int64(ProcessInfo.processInfo.physicalMemory)))。紅燈表示模型磁碟大小超出建議上限（仍可強制選用），橘燈是警告。")
             }
-            .alert("此模型可能超出裝置記憶體", isPresented: $showForceConfirm) {
-                Button("仍要使用", role: .destructive) {
-                    switch pendingBlockedAction {
+            .alert(ModelMemoryAdvisor.confirmationTitle(sizeKnown: pendingSizeKnown), isPresented: $showForceConfirm) {
+                Button(pendingIsDownload ? "仍要下載" : "仍要使用", role: .destructive) {
+                    switch pendingMemoryAction {
                     case .select(let id): commitSelection(id)
                     case .download(let id): downloadManager.start(modelID: id)
                     case nil: break
                     }
-                    pendingBlockedAction = nil
+                    pendingMemoryAction = nil
                 }
-                Button("取消", role: .cancel) { pendingBlockedAction = nil }
+                Button("取消", role: .cancel) { pendingMemoryAction = nil }
             } message: {
-                Text("此模型磁碟大小換算約超過裝置實體記憶體的 \(Int(ModelMemoryAdvisor.blockedRatio * 100))%，載入可能導致系統記憶體吃緊或當機。")
+                Text(ModelMemoryAdvisor.confirmationMessage(sizeKnown: pendingSizeKnown))
             }
             .alert("無法刪除模型", isPresented: $showDeleteBlocked) {
                 Button("好", role: .cancel) {}
@@ -117,15 +142,20 @@ struct GeneralSettingsView: View {
                 Text(deleteBlockedMessage)
             }
 
-            Section("測試翻譯") {
+            Section {
                 TextField("測試輸入", text: $testInput)
-                Button("測試翻譯（繁中）") { runTest() }
+                Button("測試翻譯（\(testLanguageLabel)）") { runTest() }
                     .disabled(testRunning)
                 LabeledContent("測試輸出") {
                     Text(testOutput)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.trailing)
+                        .textSelection(.enabled)
                 }
+            } header: {
+                Text("測試翻譯")
+            } footer: {
+                Text("用目前的 AI 引擎，翻成你選的第二語言。")
             }
 
             Section {
@@ -140,9 +170,10 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("記憶體")
             } footer: {
-                Text("翻譯閒置超過此時間會自動釋放模型記憶體；App 與 Safari 擴充功能皆適用；0 或負數停用")
+                Text("本機模型閒置超過這段時間，就會從記憶體卸載。App 與 Safari 延伸功能都適用，填 0 或負數表示不自動卸載。")
             }
 
+            #if !APP_STORE
             Section {
                 LabeledContent("目前版本") { Text(updateChecker.currentVersion) }
                 StatusDot(color: updateStatusColor, text: updateStatusText)
@@ -165,7 +196,7 @@ struct GeneralSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.red)
                     } else if downloadState.completedFileURL != nil {
-                        Text("下載完成，已開啟安裝檔——請將 App 拖進「應用程式」資料夾取代舊版；首次開啟新版需在「系統設定 › 隱私權與安全性」選擇「仍要打開」")
+                        Text("下載完成，已打開安裝檔。請把 App 拖進「應用程式」資料夾取代舊版，第一次打開新版時，到「系統設定 › 隱私權與安全性」選「仍要打開」。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
@@ -180,52 +211,55 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("軟體更新")
             } footer: {
-                Text("檢查更新會連線 GitHub Releases 公開 API（僅一般 HTTP 連線資訊，不含任何個人或使用資料）；翻譯功能仍完全在本機執行。")
+                Text("檢查更新會連線 GitHub Releases 公開 API，只帶一般 HTTP 連線資訊，不含任何個人或使用資料。")
+            }
+            #endif
+
+            Section("關於") {
+                LabeledContent("版本", value: Self.versionText)
+                if let url = MultiSubLinks.privacyPolicy {
+                    Link("隱私權政策", destination: url)
+                }
+                if let url = MultiSubLinks.sourceCode {
+                    Link("原始碼（GitHub）", destination: url)
+                }
+                if let url = MultiSubLinks.issues {
+                    Link("回報問題", destination: url)
+                }
             }
         }
         .formStyle(.grouped)
         .onChange(of: idleUnloadMinutes) { _, _ in commitIdleUnload() }
         .onChange(of: selectedModelID) { oldValue, newValue in handleModelSelection(oldValue: oldValue, newValue: newValue) }
+        // Follow changes that arrive through `ConfigStore.reload()` (the app
+        // becoming active) or another view, not only this view's own edits.
+        .onChange(of: configStore.config.modelID) { _, newValue in selectedModelID = newValue }
+        .onChange(of: configStore.config.idleUnloadMinutes) { _, newValue in idleUnloadMinutes = newValue }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // Back from Safari's settings: show the new state right away.
+            Task { extensionState = await SafariExtensionState.fetch() }
+        }
         .task {
             selectedModelID = configStore.config.modelID
             idleUnloadMinutes = configStore.config.idleUnloadMinutes
-            refreshExtensionStatus()
+            extensionState = await SafariExtensionState.fetch()
             refreshAll()
+            // A download started earlier (here or from the engine row) keeps
+            // its progress visible after switching tabs and back.
+            if downloadableEntries.contains(where: { downloadManager.downloads[$0.id] != nil }) {
+                showsDownloadableModels = true
+            }
             // Lightweight periodic display refresh: picks up model files
             // that finished downloading, got deleted from Finder, or were
             // loaded/unloaded by `Translator` for reasons this view didn't
             // directly cause (idle-unload, a vocab-extraction run, etc.).
+            // Disk only: Hugging Face is asked by the rows themselves.
             while !Task.isCancelled {
                 await refreshLoadedModelState()
-                refreshModelSizes()
+                refreshDiskSizes()
                 try? await Task.sleep(for: .seconds(5))
             }
         }
-    }
-
-    // MARK: - Safari extension status
-
-    private func refreshExtensionStatus() {
-        SFSafariExtensionManager.getStateOfSafariExtension(withIdentifier: extensionBundleIdentifier) { state, error in
-            Task { @MainActor in
-                if let state {
-                    if state.isEnabled {
-                        extensionStatusText = "已啟用"
-                        extensionStatusColor = .green
-                    } else {
-                        extensionStatusText = "未啟用 — 請在 Safari 設定中開啟"
-                        extensionStatusColor = .orange
-                    }
-                } else {
-                    extensionStatusText = "無法取得（\(error?.localizedDescription ?? "unknown")）"
-                    extensionStatusColor = .red
-                }
-            }
-        }
-    }
-
-    private func openSafariPreferences() {
-        SFSafariApplication.showPreferencesForExtension(withIdentifier: extensionBundleIdentifier) { _ in }
     }
 
     // MARK: - Idle-unload field commit
@@ -236,8 +270,8 @@ struct GeneralSettingsView: View {
     /// case left to handle here.
     private func commitIdleUnload() {
         guard idleUnloadMinutes != configStore.config.idleUnloadMinutes else { return }
-        configStore.config.idleUnloadMinutes = idleUnloadMinutes
-        configStore.save()
+        let minutes = idleUnloadMinutes
+        configStore.update { $0.idleUnloadMinutes = minutes }
     }
 
     // MARK: - Model management
@@ -249,10 +283,42 @@ struct GeneralSettingsView: View {
         allEntries.filter { Translator.isModelDownloaded($0.id) }
     }
 
-    /// The row list below, smallest first; unknown sizes (still being
-    /// estimated) sort last rather than arbitrarily among the known ones.
-    private var sizeSortedEntries: [ModelCatalogEntry] {
-        allEntries.sorted { (modelSizes[$0.id] ?? .max) < (modelSizes[$1.id] ?? .max) }
+    /// The rows under 「可下載的模型」.
+    private var downloadableEntries: [ModelCatalogEntry] {
+        allEntries.filter { !Translator.isModelDownloaded($0.id) }
+    }
+
+    /// Smallest first; unknown sizes (still being estimated) sort last
+    /// rather than arbitrarily among the known ones.
+    private func sizeSorted(_ entries: [ModelCatalogEntry]) -> [ModelCatalogEntry] {
+        entries.sorted { (size(for: $0.id) ?? .max) < (size(for: $1.id) ?? .max) }
+    }
+
+    private func modelRow(for entry: ModelCatalogEntry) -> ModelRow {
+        ModelRow(
+            modelID: entry.id,
+            label: rowLabel(for: entry),
+            dotColor: dotColor(for: entry),
+            isDownloaded: Translator.isModelDownloaded(entry.id),
+            onDelete: { deleteModel(entry) },
+            onDownload: { requestDownload(entry) }
+        )
+    }
+
+    /// Disk size once downloaded, else the Hugging Face estimate if known.
+    private func size(for modelID: String) -> Int64? {
+        Translator.isModelDownloaded(modelID)
+            ? diskSizes[modelID]
+            : downloadManager.sizeEstimates[modelID]?.bytes
+    }
+
+    private var pendingIsDownload: Bool {
+        if case .download? = pendingMemoryAction { return true }
+        return false
+    }
+
+    private var pendingSizeKnown: Bool {
+        pendingMemoryAction.map { size(for: $0.modelID) != nil } ?? true
     }
 
     /// Fires on every `selectedModelID` change, including the initial
@@ -263,8 +329,13 @@ struct GeneralSettingsView: View {
     /// `commitSelection` runs only after the user confirms the alert.
     private func handleModelSelection(oldValue: String, newValue: String) {
         guard newValue != configStore.config.modelID else { return }
-        if tier(for: newValue) == .blocked {
-            pendingBlockedAction = .select(newValue)
+        // The picker only lists downloaded models; measure one that arrived
+        // since the last poll so the decision isn't made on a missing size.
+        if Translator.isModelDownloaded(newValue), diskSizes[newValue] == nil {
+            diskSizes[newValue] = ModelCatalog.directorySize(modelID: newValue)
+        }
+        if ModelMemoryAdvisor.needsConfirmation(diskBytes: size(for: newValue)) {
+            pendingMemoryAction = .select(newValue)
             showForceConfirm = true
             selectedModelID = oldValue
             return
@@ -277,13 +348,14 @@ struct GeneralSettingsView: View {
     /// whether or not `id` happens to be downloaded yet.
     private func commitSelection(_ id: String) {
         selectedModelID = id
-        configStore.config.modelID = id
-        configStore.save()
+        configStore.update { $0.modelID = id }
     }
 
+    /// The row only enables 下載 once the size is known; an unknown size
+    /// still asks first rather than counting as "fits".
     private func requestDownload(_ entry: ModelCatalogEntry) {
-        if tier(for: entry.id) == .blocked {
-            pendingBlockedAction = .download(entry.id)
+        if ModelMemoryAdvisor.needsConfirmation(diskBytes: size(for: entry.id)) {
+            pendingMemoryAction = .download(entry.id)
             showForceConfirm = true
             return
         }
@@ -297,65 +369,63 @@ struct GeneralSettingsView: View {
     /// Re-scans `models/` for manually-installed extras (in case the user
     /// dropped a model in via "在 Finder 中打開模型資料夾") and force-remeasures
     /// every downloaded entry's size — the explicit "重新整理" action. The
-    /// periodic `.task` loop calls `refreshModelSizes()` (not forced) instead,
+    /// periodic `.task` loop calls `refreshDiskSizes()` (not forced) instead,
     /// since re-walking every downloaded model's directory tree with
     /// `FileManager` every 5 seconds regardless of whether anything changed
-    /// would be wasted work on multi-GB model folders.
+    /// would be wasted work on multi-GB model folders. With the downloadable
+    /// list open, it also asks Hugging Face again for sizes that failed.
     private func refreshAll() {
         extraModelEntries = ModelCatalog.discoverExtraModels()
-        refreshModelSizes(force: true)
-    }
-
-    /// Kicks off size lookups for every catalog + manually-discovered entry:
-    /// measured from disk for already-downloaded models, or (S1's existing
-    /// `listFiles`-based size, no network download) estimated for the rest —
-    /// needed up front so the list can show a memory-tier light without
-    /// waiting for a selection. `force` re-measures a downloaded entry even
-    /// if a size is already cached (used by the explicit "重新整理" action);
-    /// otherwise an already-known size is left alone, so the periodic poll
-    /// only does real work for entries whose downloaded state just changed.
-    private func refreshModelSizes(force: Bool = false) {
-        for entry in allEntries {
-            if Translator.isModelDownloaded(entry.id) {
-                if force || modelSizes[entry.id] == nil {
-                    modelSizes[entry.id] = Self.modelDirectorySize(modelID: entry.id)
-                }
-                continue
-            }
-            guard modelSizes[entry.id] == nil, !sizesLoading.contains(entry.id) else { continue }
-            sizesLoading.insert(entry.id)
-            Task {
-                let size = try? await ModelDownloader.estimatedSize(modelID: entry.id)
-                sizesLoading.remove(entry.id)
-                if let size { modelSizes[entry.id] = size }
+        refreshDiskSizes(force: true)
+        if showsDownloadableModels {
+            for entry in downloadableEntries where downloadManager.sizeEstimates[entry.id] == .failed {
+                downloadManager.retrySizeEstimate(modelID: entry.id)
             }
         }
     }
 
-    private func tier(for modelID: String) -> ModelMemoryTier {
-        guard let size = modelSizes[modelID] else { return .ok }
-        return ModelMemoryAdvisor.tier(diskBytes: size)
+    /// Measures downloaded models on disk (no network). `force` re-measures
+    /// one whose size is already known; otherwise only entries whose
+    /// downloaded state just changed do any work.
+    private func refreshDiskSizes(force: Bool = false) {
+        for entry in allEntries {
+            guard Translator.isModelDownloaded(entry.id) else {
+                // Deleted (here or in Finder): a later re-download is measured afresh.
+                diskSizes[entry.id] = nil
+                continue
+            }
+            if force || diskSizes[entry.id] == nil {
+                diskSizes[entry.id] = ModelCatalog.directorySize(modelID: entry.id)
+            }
+        }
+    }
+
+    /// Nil while the size is unknown.
+    private func tier(for modelID: String) -> ModelMemoryTier? {
+        size(for: modelID).map { ModelMemoryAdvisor.tier(diskBytes: $0) }
     }
 
     private func dotColor(for entry: ModelCatalogEntry) -> Color {
         switch tier(for: entry.id) {
-        case .blocked: return .red
-        case .warning: return .orange
-        case .ok: return Translator.isModelDownloaded(entry.id) ? .green : .secondary
+        case .blocked?: return .red
+        case .warning?: return .orange
+        case .ok?, nil: return Translator.isModelDownloaded(entry.id) ? .green : .secondary
         }
     }
 
     private func rowLabel(for entry: ModelCatalogEntry) -> String {
         var parts = [entry.displayName]
-        if let size = modelSizes[entry.id] {
-            parts.append(Self.formatBytes(size))
+        if let size = size(for: entry.id) {
+            parts.append(ModelCatalog.formatBytes(size))
+        } else if Translator.isModelDownloaded(entry.id) {
+            parts.append("計算大小中…")
         } else {
-            parts.append("查詢大小中…")
+            parts.append(downloadManager.sizePlaceholder(for: entry.id))
         }
         switch tier(for: entry.id) {
-        case .ok: break
-        case .warning: parts.append("警告")
-        case .blocked: parts.append("阻擋")
+        case .ok?, nil: break
+        case .warning?: parts.append("警告")
+        case .blocked?: parts.append("阻擋")
         }
         // Only a model `Translator` actually has resident in memory right
         // now earns "使用中" — `config.modelID` alone (even if its files
@@ -392,7 +462,7 @@ struct GeneralSettingsView: View {
             let repoDir = "models--" + entry.id.replacingOccurrences(of: "/", with: "--")
             let root = MultiSubPaths.modelsRoot.appendingPathComponent(repoDir, isDirectory: true)
             try? FileManager.default.removeItem(at: root)
-            modelSizes[entry.id] = nil
+            diskSizes[entry.id] = nil
             extraModelEntries.removeAll { $0.id == entry.id }
         }
     }
@@ -401,32 +471,9 @@ struct GeneralSettingsView: View {
         NSWorkspace.shared.open(MultiSubPaths.modelsRoot)
     }
 
-    /// Mirrors `Translator.isModelDownloaded`'s repo-dir naming so the size
-    /// shown always matches what that check just confirmed exists.
-    private static func modelDirectorySize(modelID: String) -> Int64 {
-        let repoDir = "models--" + modelID.replacingOccurrences(of: "/", with: "--")
-        let root = MultiSubPaths.modelsRoot.appendingPathComponent(repoDir, isDirectory: true)
-        guard let enumerator = FileManager.default.enumerator(
-            at: root, includingPropertiesForKeys: [.fileSizeKey], options: [], errorHandler: nil
-        ) else { return 0 }
-        var total: Int64 = 0
-        for case let url as URL in enumerator {
-            if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                total += Int64(size)
-            }
-        }
-        return total
-    }
+    // MARK: - Software update
 
-    private static func formatBytes(_ bytes: Int64) -> String {
-        let kb = Double(bytes) / 1024
-        if kb < 1024 { return String(format: "%.1f KB", kb) }
-        let mb = kb / 1024
-        if mb < 1024 { return String(format: "%.1f MB", mb) }
-        return String(format: "%.2f GB", mb / 1024)
-    }
-
-    // MARK: - Software update (C7)
+    #if !APP_STORE
 
     private var updateStatusText: String {
         switch updateChecker.status {
@@ -447,9 +494,10 @@ struct GeneralSettingsView: View {
         }
     }
 
-    /// 方案 B（2026-07-06 使用者拍板）：有 DMG 資產就在 App 內下載；若該次
-    /// release 沒附 DMG（例如發佈流程出錯漏傳），退回方案 A 開網頁，而不是
-    /// 讓使用者卡在一個永遠不會完成的下載上。
+    /// Downloads the release's DMG inside the app when it has one. A release
+    /// published without a DMG (e.g. the upload step failed) opens the
+    /// release page instead of leaving the user on a download that can never
+    /// finish.
     private func startUpdate(version: String, htmlURL: URL, downloadURL: URL?) {
         guard let downloadURL else {
             NSWorkspace.shared.open(htmlURL)
@@ -457,19 +505,36 @@ struct GeneralSettingsView: View {
         }
         updateDownloadManager.start(from: downloadURL, suggestedFileName: "MultiSub-\(version).dmg")
     }
+    #endif
 
     // MARK: - Test translation
+
+    /// The user's second language, falling back to the extension's default.
+    private var testTargetLang: String {
+        configStore.config.prefs?.targetLang ?? SubtitleChoices.defaultTargetLang
+    }
+
+    private var testLanguageLabel: String {
+        SubtitleChoices.languages.first { $0.id == testTargetLang }?.label ?? testTargetLang
+    }
 
     private func runTest() {
         let text = testInput
         guard !text.isEmpty else { return }
         testRunning = true
-        testOutput = "翻譯中…（首次執行需載入模型，約 10–30 秒）"
+        // Only the local engine has a slow first call (loading the model).
+        if case .local(let modelID)? = try? Translator.resolveEngine(config: configStore.config),
+           modelID != loadedModelID {
+            testOutput = "翻譯中…（第一次要先載入模型，約 10–30 秒）"
+        } else {
+            testOutput = "翻譯中…"
+        }
 
+        let targetLang = testTargetLang
         Task {
             do {
                 let start = Date()
-                let result = try await Translator.shared.translate(lines: [text], targetLang: "zh-TW")
+                let result = try await Translator.shared.translate(lines: [text], targetLang: targetLang)
                 let elapsed = Date().timeIntervalSince(start)
                 testOutput = (result.first ?? "") + String(format: " （%.1f 秒）", elapsed)
                 testRunning = false

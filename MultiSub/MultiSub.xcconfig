@@ -27,4 +27,22 @@ MULTISUB_SWIFT_FLAGS_direct =
 MULTISUB_SWIFT_FLAGS_appstore = APP_STORE
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(MULTISUB_SWIFT_FLAGS_$(MULTISUB_DISTRIBUTION))
 
+// App icon per channel. The App Store icon avoids a lone "N" letterform so the
+// listing can't be mistaken for Netflix's mark (App Review guideline 4.1).
+MULTISUB_APP_ICON_direct = AppIcon
+MULTISUB_APP_ICON_appstore = AppIconStore
+
+// Linked from the app's 一般設定 › 關於 (App Review guideline 5.1.1 asks for
+// the privacy policy inside the app). `/$()/` keeps xcconfig from reading
+// "//" as a comment.
+MULTISUB_PRIVACY_URL = https:/$()/github.com/ncchen99/Multisub/blob/main/PRIVACY.md
+MULTISUB_SOURCE_URL = https:/$()/github.com/snch1211/multisub
+
+// Only the OS's own TLS (URLSession) is used, which is exempt from export
+// documentation; this skips the encryption questionnaire on every upload.
+INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO
+
+// Required for Mac App Store uploads (ITMS-90242); matches the Education listing.
+INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.education
+
 #include? "Local.xcconfig"

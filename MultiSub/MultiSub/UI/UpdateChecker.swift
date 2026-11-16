@@ -2,13 +2,15 @@
 //  UpdateChecker.swift
 //  MultiSub
 //
-//  C7: checks GitHub Releases for a newer version than the running app's
-//  own `CFBundleShortVersionString`. App target only — the extension has no
-//  use for this and CLAUDE.md's scope rule for this task forbids touching
-//  the shared container, so `lastCheckedAt` lives in this process's own
-//  `UserDefaults`, not `MultiSubConfig`.
+//  Checks GitHub Releases for a newer version than the running app's own
+//  `CFBundleShortVersionString`. App target only, and direct (DMG) builds
+//  only: the Mac App Store build updates through the App Store, so this
+//  whole file is compiled out under `APP_STORE`. The extension has no use
+//  for `lastCheckedAt`, so it lives in this process's own `UserDefaults`
+//  rather than in the shared config.json.
 //
 
+#if !APP_STORE
 import Foundation
 
 @Observable
@@ -27,10 +29,10 @@ final class UpdateChecker {
 
     let currentVersion: String
 
-    // Public repo coordinates decided in R2a. Until Phase R actually creates
-    // it, `checkOnLaunchIfDue`/`check` against this constant will 404 — that
-    // failure path is exactly what "查無 release" needs to be verified against
-    // before shipping, so this stays the real constant rather than a dev stub.
+    // The public repo's coordinates. While it has no release yet, `check`
+    // gets a 404, which is exactly the "查無 release" path that needs
+    // verifying before shipping, so this stays the real constant rather than
+    // a dev stub.
     private static let repoPath = "snch1211/multisub"
     private static let lastCheckedDefaultsKey = "UpdateChecker.lastCheckedAt"
     private static let autoCheckInterval: TimeInterval = 24 * 60 * 60
@@ -43,7 +45,7 @@ final class UpdateChecker {
     }
 
     /// Called once at launch (see `ContentView`'s `.task`). At most once a
-    /// day, per PLAN.md's C7 spec — skips entirely if the stored
+    /// day — skips entirely if the stored
     /// `lastCheckedAt` is still within the interval, rather than checking and
     /// discarding the result, so a launch right after a manual check doesn't
     /// spend the user's GitHub API rate-limit budget for nothing.
@@ -137,3 +139,4 @@ final class UpdateChecker {
         }
     }
 }
+#endif

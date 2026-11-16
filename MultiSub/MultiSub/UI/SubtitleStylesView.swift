@@ -2,16 +2,17 @@
 //  SubtitleStylesView.swift
 //  MultiSub
 //
-//  Style guide v2 §5.2. Behavior ported from ViewController.buildStylesTab()
-//  and its neighboring methods (loadStyleControls/styleControlChanged/
-//  resetStyles/updateStylePreview/hexString/color(fromHex:)) — see PLAN.md G3.
+//  字幕樣式. Behavior ported from the old AppKit ViewController's styles tab
+//  (loadStyleControls/styleControlChanged/resetStyles/updateStylePreview/
+//  hexString/color(fromHex:)).
 //
 //  Controls bind directly to `configStore.config.styles` via computed
-//  `Binding`s (hex↔Color conversion happens in the getter/setter) instead of
+//  `Binding`s (hex↔Color conversion happens in the getter, the setter writes
+//  through `configStore.update`) instead of
 //  mirroring into local @State reloaded on `onAppear`. An earlier version
 //  used local @State + a load/save timing guard, but SwiftUI doesn't
 //  guarantee `.onChange` fires before a deferred `Task` resets that guard —
-//  found via G6 regression testing, where the race actually fired and
+//  found in regression testing, where the race actually fired and
 //  silently overwrote a real saved style with `SubtitleStyle()` defaults.
 //  Binding straight to the model has no load step and therefore no race.
 //
@@ -89,11 +90,11 @@ struct SubtitleStylesView: View {
 
     // MARK: - Live preview
 
-    /// Style guide §5.2: fake player frame (hardcode exception #2) with a
+    /// Fake player frame (hardcoded-color exception #2) with a
     /// fake original-language line (mimics Netflix's own non-configurable
     /// native subtitle for contrast reference) and a fake translated line
-    /// that applies every current adjustment. Both are two-line text (C6
-    /// follow-up, 2026-07-05) so the 行高 slider has something to visibly
+    /// that applies every current adjustment. Both are two-line text so the
+    /// 行高 slider has something to visibly
     /// demonstrate — a single-line preview made that control a no-op visually.
     private var preview: some View {
         ZStack {
@@ -135,10 +136,10 @@ struct SubtitleStylesView: View {
         .multilineTextAlignment(.center)
     }
 
-    /// C6 follow-up: `lineSpacing` (SwiftUI adds space only *between* lines,
+    /// `lineSpacing` (SwiftUI adds space only *between* lines,
     /// unlike CSS line-height which also pads above/below each line) mirrors
     /// how the extension's overlay now turns 行高 into a gap between lines
-    /// rather than inflating the background box (see overlay.css's C6 comment).
+    /// rather than inflating the background box (see overlay.css).
     private var previewLineSpacing: CGFloat {
         CGFloat((styles.lineHeight - 1) * 15)
     }
@@ -154,21 +155,21 @@ struct SubtitleStylesView: View {
     private var textColorBinding: Binding<Color> {
         Binding(
             get: { color(fromHex: configStore.config.styles.textColor) },
-            set: { configStore.config.styles.textColor = hexString(from: $0); configStore.save() }
+            set: { newValue in configStore.update { $0.styles.textColor = hexString(from: newValue) } }
         )
     }
 
     private var backgroundColorBinding: Binding<Color> {
         Binding(
             get: { color(fromHex: configStore.config.styles.backgroundColor) },
-            set: { configStore.config.styles.backgroundColor = hexString(from: $0); configStore.save() }
+            set: { newValue in configStore.update { $0.styles.backgroundColor = hexString(from: newValue) } }
         )
     }
 
     private var outlineColorBinding: Binding<Color> {
         Binding(
             get: { color(fromHex: configStore.config.styles.outlineColor) },
-            set: { configStore.config.styles.outlineColor = hexString(from: $0); configStore.save() }
+            set: { newValue in configStore.update { $0.styles.outlineColor = hexString(from: newValue) } }
         )
     }
 
@@ -178,43 +179,42 @@ struct SubtitleStylesView: View {
                 let current = configStore.config.styles.fontFamily
                 return fontOptions.contains { $0.cssValue == current } ? current : fontOptions[0].cssValue
             },
-            set: { configStore.config.styles.fontFamily = $0; configStore.save() }
+            set: { newValue in configStore.update { $0.styles.fontFamily = newValue } }
         )
     }
 
     private var lineHeightBinding: Binding<Double> {
         Binding(
             get: { configStore.config.styles.lineHeight },
-            set: { configStore.config.styles.lineHeight = $0; configStore.save() }
+            set: { newValue in configStore.update { $0.styles.lineHeight = newValue } }
         )
     }
 
     private var boldEnabledBinding: Binding<Bool> {
         Binding(
             get: { configStore.config.styles.boldEnabled },
-            set: { configStore.config.styles.boldEnabled = $0; configStore.save() }
+            set: { newValue in configStore.update { $0.styles.boldEnabled = newValue } }
         )
     }
 
     private var backgroundOpacityBinding: Binding<Double> {
         Binding(
             get: { configStore.config.styles.backgroundOpacity },
-            set: { configStore.config.styles.backgroundOpacity = $0; configStore.save() }
+            set: { newValue in configStore.update { $0.styles.backgroundOpacity = newValue } }
         )
     }
 
     private var outlineEnabledBinding: Binding<Bool> {
         Binding(
             get: { configStore.config.styles.outlineEnabled },
-            set: { configStore.config.styles.outlineEnabled = $0; configStore.save() }
+            set: { newValue in configStore.update { $0.styles.outlineEnabled = newValue } }
         )
     }
 
     // MARK: - Actions
 
     private func resetStyles() {
-        configStore.config.styles = SubtitleStyle()
-        configStore.save()
+        configStore.update { $0.styles = SubtitleStyle() }
     }
 
     private func hexString(from color: Color) -> String {

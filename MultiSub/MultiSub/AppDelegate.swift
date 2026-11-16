@@ -6,17 +6,17 @@
 import Cocoa
 
 extension Notification.Name {
-    /// D1: posted when the app is asked to open a `multisub://` URL while
+    /// Posted when the app is asked to open a `multisub://` URL while
     /// already running. `userInfo["url"]` carries the URL.
     static let multiSubOpenURL = Notification.Name("MultiSubOpenURL")
 }
 
-/// Entry point is `MultiSubApp` (Phase G); this is installed via
+/// Entry point is `MultiSubApp`; this is installed via
 /// `@NSApplicationDelegateAdaptor` for lifecycle hooks SwiftUI's `Scene`
 /// doesn't cover (URL opens arriving before `AppRouter` can observe them).
 class AppDelegate: NSObject, NSApplicationDelegate {
 
-    /// D1: holds a `multisub://` URL that arrived before `AppRouter`
+    /// Holds a `multisub://` URL that arrived before `AppRouter`
     /// finished initializing and could start observing `.multiSubOpenURL` —
     /// macOS can call `application(_:open:)` either before or after
     /// `applicationDidFinishLaunching` depending on whether the app was just
@@ -28,7 +28,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         startIdleUnloadTimer()
     }
 
-    /// M5: the App target also loads the shared `Translator` model
+    /// The App target also loads the shared `Translator` model
     /// (vocabulary extraction, test-translation in Settings), so it needs
     /// the same `idleUnloadMinutes` policy as the appex. Unlike the appex
     /// (an `NSExtensionRequestHandling` host the OS suspends between

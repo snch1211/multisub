@@ -2,14 +2,14 @@
 //  DesignSystem.swift
 //  MultiSub
 //
-//  Style guide v2 §3: the *only* place `if #available(macOS 26.0, *)` may
+//  The *only* place `if #available(macOS 26.0, *)` may
 //  appear. Feature views call these wrappers instead of branching themselves.
 //
 
 import SwiftUI
 
 enum MSBrand {
-    /// Style guide v2 §2.1 hardcode exception #1 — brand accent, only ever
+    /// Hardcoded-color exception #1 — brand accent, only ever
     /// used for the sidebar logo's lower bar, never on buttons/controls.
     static let accent = Color(red: 0.898, green: 0.137, blue: 0.184)
 
@@ -23,7 +23,7 @@ enum MSBrand {
 
 enum DesignSystem {
     /// `MULTISUB_FORCE_LEGACY_UI=1` forces the macOS 15.0 fallback path even
-    /// on a macOS 26 dev machine, per style guide §3.3 (no 15.x hardware to
+    /// on a macOS 26 dev machine (no 15.x hardware to
     /// test on otherwise). DEBUG-only so a Release build can't be forced.
     static var forceLegacyUI: Bool {
         #if DEBUG
@@ -33,17 +33,16 @@ enum DesignSystem {
         #endif
     }
 
-    /// Style guide v2 §2.1 hardcode exception #2 — the subtitle-styles tab's
-    /// fake player background (G3). Must render as a dark player frame
+    /// Hardcoded-color exception #2 — the subtitle-styles tab's
+    /// fake player background. Must render as a dark player frame
     /// regardless of system light/dark mode, so it's exempt from the
     /// semantic-color rule (same exception `ViewController.buildStylesTab`
-    /// used via `NSColor(calibratedWhite:alpha:)`). C6 follow-up (2026-07-05):
-    /// raised from 0.1 to 0.32 — the user found near-black too dark to
+    /// used via `NSColor(calibratedWhite:alpha:)`). Raised from 0.1 to 0.32 — the user found near-black too dark to
     /// distinguish a black/semi-transparent overlay background against it.
     static let previewPlayerBackground = Color(white: 0.32)
 }
 
-/// Style guide v2 §4 "狀態指示": a semantic-colored 8pt dot + label.
+/// Status indicator: a semantic-colored 8pt dot + label.
 @MainActor
 struct StatusDot: View {
     let color: Color
@@ -64,7 +63,7 @@ struct StatusDot: View {
 
 /// A search field that lives in view content rather than the window
 /// toolbar — for panel-local search (e.g. filtering one list among several
-/// in a split view), where style guide v2 §4's `.searchable()` mandate
+/// in a split view), where the usual `.searchable()` toolbar field
 /// doesn't apply because only one `.searchable()` can occupy the window's
 /// toolbar at a time. Mirrors System Settings' sidebar-list search field
 /// (magnifying glass + clear button in a rounded, materialed capsule)
@@ -97,7 +96,7 @@ struct MSInlineSearchField: View {
     }
 }
 
-/// Style guide v2 §4 Badge: CEFR level pill. Colors per vocab-design.md §7.
+/// CEFR level pill, colored from easy (green) to hard (red).
 @MainActor
 struct CEFRBadge: View {
     let level: String
