@@ -162,7 +162,7 @@
     // set-engine refuses a cloud provider the user hasn't agreed to send
     // subtitles to yet (App Review 5.1.2(i)); the popup turns this into its
     // confirmation step, so the text mostly shows up in the overlay.
-    'consent-required': '還沒同意把字幕送到這個 AI 服務，點 Safari 工具列的 MultiSub 圖示確認'
+    'consent-required': '還沒同意把字幕送到這個 AI 服務，請到 MultiSub App 的 AI 引擎設定確認'
   });
 
   const NETFLIX_ORIGINS = Object.freeze(['*://*.netflix.com/*']);

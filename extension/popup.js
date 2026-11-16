@@ -703,7 +703,7 @@ function organizeVocabErrorText(code, detail) {
     case 'tab-unreachable': return '連不到 Netflix 分頁';
     case 'native-unavailable': return MS.errorText(code);
     // From the app's status (see VocabExtractionManager).
-    case 'engine-not-ready': return '還沒設定 AI 引擎。切到「AI 翻譯」就能設定，設好後' + again;
+    case 'engine-not-ready': return '還沒設定 AI 引擎。在 MultiSub App 設定好後' + again;
     case 'model-not-ready': return '本機模型還沒下載。在 App 下載或改用 API Key 後' + again;
     case 'auth-failed':
     case 'rate-limited':

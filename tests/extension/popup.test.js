@@ -124,7 +124,7 @@ test('opening on an episode with a recent status shows it; polls only while queu
 test('a failed run shows the reason and what to do, from the code (or the app\'s message for an unknown one)', () => {
   const text = (status) => run(vocabBase('vocab-on-open', { vocabInitial: Object.assign({ ok: true, state: 'failed', accepted: true }, status) })).first;
   const engine = text({ code: 'engine-not-ready', message: '尚未設定 AI 引擎' });
-  assert.equal(engine.text, '還沒設定 AI 引擎。切到「AI 翻譯」就能設定，設好後再整理一次');
+  assert.equal(engine.text, '還沒設定 AI 引擎。在 MultiSub App 設定好後再整理一次');
   assert.equal(engine.cls, 'vocab-status-text err');
   assert.equal(engine.disabled, false); // pressing it again is the retry
   assert.equal(engine.open, false);
