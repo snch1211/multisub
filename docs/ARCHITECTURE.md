@@ -145,7 +145,10 @@ glosses from drifting away from what the scene means.
   disk) ends the download at once with 「磁碟空間不足，清出空間後再試一次」
   rather than retrying, and keeps the bytes written for 繼續下載
   (`StreamingDownloadDelegate` uses FileHandle's throwing calls; the older
-  ones raise an exception Swift can't catch, which quit the app). For a model that isn't
+  ones raise an exception Swift can't catch, which quit the app). A
+  download whose remaining bytes exceed the volume's
+  `volumeAvailableCapacityForImportantUsage` is refused with the same
+  message before it fetches anything. For a model that isn't
   complete, 一般設定 shows what its repo folder and partial folder hold as
   「下載未完成（佔用 …）」 (`MultiSubPaths.unfinishedDownloadBytes`; hidden
   files, the expected-files list among them, don't count, so a download that

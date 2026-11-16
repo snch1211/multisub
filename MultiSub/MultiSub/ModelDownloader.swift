@@ -128,17 +128,36 @@ enum ModelDownloader {
         let tempDir = MultiSubPaths.modelPartialDirectory(for: modelID)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
+        func isStored(_ path: String) -> Bool {
+            cache.cachedFilePath(repo: repo, kind: .model, revision: commitHash, filename: path) != nil
+        }
+        func partialFile(etag: String) -> URL {
+            tempDir.appendingPathComponent(cache.normalizeEtag(etag) + ".partial")
+        }
+
+        // Refuse up front what the disk can't hold, rather than fill it to
+        // the last byte and fail partway (the write then fails with the
+        // same message). Counts only what is left to fetch. A volume that
+        // doesn't say, or says 0, is left to that first write.
+        let bytesLeft = files.reduce(Int64(0)) { sum, file in
+            isStored(file.entry.path) ? sum : sum + max(0, file.size - fileSize(at: partialFile(etag: file.etag)))
+        }
+        if let available = try? tempDir.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            .volumeAvailableCapacityForImportantUsage, available > 0, bytesLeft > available {
+            throw DownloadWriteError(underlying: CocoaError(.fileWriteOutOfSpace))
+        }
+
         let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
         let tracker = ProgressTracker(totalBytes: totalBytes, onFraction: progress)
 
         for file in files {
             // Already cached from an earlier attempt (this run or a prior one).
-            if cache.cachedFilePath(repo: repo, kind: .model, revision: commitHash, filename: file.entry.path) != nil {
+            if isStored(file.entry.path) {
                 tracker.fileCompleted(bytes: file.size)
                 continue
             }
 
-            let partialURL = tempDir.appendingPathComponent(cache.normalizeEtag(file.etag) + ".partial")
+            let partialURL = partialFile(etag: file.etag)
             try await downloadResumable(
                 repo: repo, filePath: file.entry.path, revision: commitHash,
                 to: partialURL, expectedSize: file.size, verifySHA256: file.isLFS ? file.etag : nil
