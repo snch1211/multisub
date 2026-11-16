@@ -78,12 +78,12 @@ enum SafariLauncher {
         SFSafariApplication.showPreferencesForExtension(withIdentifier: extensionBundleIdentifier) { _ in }
     }
 
-    /// Opens Netflix in Safari even when another browser is the default:
-    /// MultiSub only exists as a Safari extension, so the default browser
-    /// would show Netflix without any of it. Falls back to the default
-    /// browser only if Safari can't be located at all.
+    /// Opens Netflix's home page in Safari even when another browser is the
+    /// default: MultiSub only exists as a Safari extension, so the default
+    /// browser would show Netflix without any of it. Falls back to the
+    /// default browser only if Safari can't be located at all.
     static func openNetflix() {
-        guard let url = URL(string: "https://www.netflix.com") else { return }
+        guard let url = URL(string: "https://www.netflix.com/browse") else { return }
         guard let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari") else {
             NSWorkspace.shared.open(url)
             return

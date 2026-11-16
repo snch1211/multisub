@@ -2,11 +2,18 @@
 //  OnboardingView.swift
 //  MultiSub
 //
-//  「開始使用」: one scrollable page that walks a new user from a fresh
-//  install to subtitles on Netflix. Each step shows its live state (the
-//  extension's enabled flag is polled while the page is visible), so the
-//  page doubles as a checklist when the user comes back later to see why
-//  something isn't working.
+//  「開始使用」: the two things only the user can do, as two numbered
+//  steps. (1) Turn the extension on in Safari's settings and allow it on
+//  netflix.com. (2) Open Netflix in Safari. Nothing else is required:
+//  until the user picks something, the mode is Netflix's own second-language
+//  subtitles and the second language follows the system language
+//  (SharedPrefs' defaults, the same ones shared.js uses). The mode cards,
+//  the language picker and the AI engine setup sit in one optional section
+//  below, collapsed by default.
+//
+//  Step 1 shows the extension's live state (polled while the page is
+//  visible), so the page doubles as a checklist when the user comes back
+//  later to see why something isn't working.
 //
 //  Built as a grouped Form with a custom header per step rather than custom
 //  cards, so it matches 一般設定 and can host EngineSetupView's Form rows
@@ -50,28 +57,31 @@ enum SubtitleMode: String, CaseIterable, Identifiable {
 }
 
 /// Language and level choices, with the codes extension/shared.js uses.
+/// The defaults live in `SharedPrefs`.
 enum SubtitleChoices {
     struct Option: Identifiable, Hashable {
         let id: String
+        /// What the pickers show (each language in its own script).
         let label: String
+        /// The name in Traditional Chinese, for sentences such as
+        /// 「第二語言是日文」 (`name` in shared.js's LANGUAGES).
+        var name: String = ""
     }
 
-    static let defaultTargetLang = "zh-TW"
-    static let defaultLevel = "B1"
-
+    /// Same codes, in the same order, as `LanguageNames.supportedCodes`.
     static let languages: [Option] = [
-        Option(id: "zh-TW", label: "繁體中文"),
-        Option(id: "zh-CN", label: "简体中文"),
-        Option(id: "en", label: "English"),
-        Option(id: "ja", label: "日本語"),
-        Option(id: "ko", label: "한국어"),
-        Option(id: "es", label: "Español"),
-        Option(id: "fr", label: "Français"),
-        Option(id: "de", label: "Deutsch"),
-        Option(id: "pt", label: "Português"),
-        Option(id: "vi", label: "Tiếng Việt"),
-        Option(id: "th", label: "ไทย"),
-        Option(id: "id", label: "Bahasa Indonesia"),
+        Option(id: "zh-TW", label: "繁體中文", name: "繁體中文"),
+        Option(id: "zh-CN", label: "简体中文", name: "簡體中文"),
+        Option(id: "en", label: "English", name: "英文"),
+        Option(id: "ja", label: "日本語", name: "日文"),
+        Option(id: "ko", label: "한국어", name: "韓文"),
+        Option(id: "es", label: "Español", name: "西班牙文"),
+        Option(id: "fr", label: "Français", name: "法文"),
+        Option(id: "de", label: "Deutsch", name: "德文"),
+        Option(id: "pt", label: "Português", name: "葡萄牙文"),
+        Option(id: "vi", label: "Tiếng Việt", name: "越南文"),
+        Option(id: "th", label: "ไทย", name: "泰文"),
+        Option(id: "id", label: "Bahasa Indonesia", name: "印尼文"),
     ]
 
     static let levels: [Option] = [
@@ -80,6 +90,11 @@ enum SubtitleChoices {
         Option(id: "B2", label: "B2 中高級"),
         Option(id: "C1", label: "C1 高級"),
     ]
+
+    /// 「日文」 for "ja"; the code itself for one this list doesn't have.
+    static func languageName(_ code: String) -> String {
+        languages.first { $0.id == code }?.name ?? code
+    }
 }
 
 @MainActor
@@ -88,22 +103,26 @@ struct OnboardingView: View {
 
     @State private var extensionState: SafariExtensionState = .checking
     @State private var engineReady = false
+    /// The optional section. Collapsed by default; it opens on its own only
+    /// for someone who already picked an AI mode that has no working engine
+    /// yet, since that's the one thing still in the way of subtitles.
+    @State private var showsOptions = false
+    @State private var didChooseInitialExpansion = false
 
-    private var prefs: SharedPrefs? { configStore.config.prefs }
-    private var mode: SubtitleMode? { prefs?.mode.flatMap(SubtitleMode.init(rawValue:)) }
-    private var needsEngine: Bool { mode?.needsEngine ?? false }
-    private var targetLang: String { prefs?.targetLang ?? SubtitleChoices.defaultTargetLang }
-    private var level: String { prefs?.annotateLevel ?? SubtitleChoices.defaultLevel }
+    /// Unset fields read as the defaults (`effective…`); only `setPrefs`
+    /// writes, and only what the user changed.
+    private var prefs: SharedPrefs { configStore.config.prefs ?? SharedPrefs() }
+    private var mode: SubtitleMode { SubtitleMode(rawValue: prefs.effectiveMode) ?? .netflix }
+    private var needsEngine: Bool { mode.needsEngine }
+    private var targetLang: String { prefs.effectiveTargetLang }
+    private var level: String { prefs.effectiveAnnotateLevel }
 
-    /// The last step counts as done only when the steps before it are, so
-    /// its check never sits above 「還有步驟沒完成」. `onboardingCompleted`
-    /// alone just means the button was pressed once (AppRouter uses it to
-    /// pick the launch tab).
+    /// Step 2 counts as done once Netflix was opened from here
+    /// (`onboardingCompleted`, which AppRouter also uses to pick the launch
+    /// tab) and nothing it depends on is missing, so its check never shows
+    /// while subtitles can't appear.
     private var stepDone: [Bool] {
-        var steps = [extensionState.isEnabled, mode != nil]
-        if needsEngine { steps.append(engineReady) }
-        steps.append(readyToWatch && configStore.config.onboardingCompleted)
-        return steps
+        [extensionState.isEnabled, readyToWatch && configStore.config.onboardingCompleted]
     }
 
     /// The first unfinished step gets the accent badge; later ones stay gray.
@@ -115,7 +134,7 @@ struct OnboardingView: View {
     /// netflix.com isn't among them (it only reports the checkbox), so the
     /// page never promises subtitles outright; see `websiteAccessRow`.
     private var readyToWatch: Bool {
-        extensionState.isEnabled && mode != nil && (!needsEngine || engineReady)
+        extensionState.isEnabled && (!needsEngine || engineReady)
     }
 
     var body: some View {
@@ -133,45 +152,64 @@ struct OnboardingView: View {
             }
 
             Section {
-                HStack(alignment: .top, spacing: 12) {
-                    ForEach(SubtitleMode.allCases) { option in
-                        ModeCard(mode: option, isSelected: mode == option) {
-                            setPrefs { $0.mode = option.rawValue }
+                openNetflixRow
+            } header: {
+                stepHeader(2, "打開 Netflix")
+            }
+
+            Section {
+                DisclosureGroup(isExpanded: $showsOptions) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(SubtitleMode.allCases) { option in
+                            ModeCard(mode: option, isSelected: mode == option) {
+                                setPrefs { $0.mode = option.rawValue }
+                            }
                         }
                     }
-                }
-                // Equal-height cards: each card fills the row's height, and
-                // the row is as tall as the tallest card's text.
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.vertical, 4)
+                    // Equal-height cards: each card fills the row's height, and
+                    // the row is as tall as the tallest card's text.
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 4)
 
-                Picker("第二語言", selection: targetLangBinding) {
-                    ForEach(languageOptions) { option in
-                        Text(option.label).tag(option.id)
-                    }
-                }
-
-                if mode == .annotate {
-                    Picker("程度", selection: levelBinding) {
-                        ForEach(SubtitleChoices.levels) { option in
+                    Picker("第二語言", selection: targetLangBinding) {
+                        ForEach(languageOptions) { option in
                             Text(option.label).tag(option.id)
                         }
                     }
-                    .pickerStyle(.segmented)
+
+                    if mode == .annotate {
+                        Picker("程度", selection: levelBinding) {
+                            ForEach(SubtitleChoices.levels) { option in
+                                Text(option.label).tag(option.id)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("想用 AI 翻譯或生字標註？")
+                            .font(.headline)
+                        Text("也可以在這裡換第二語言，目前是\(SubtitleChoices.languageName(targetLang))。")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
                 }
-            } header: {
-                stepHeader(2, "選擇字幕模式")
             } footer: {
-                Text(modeFooter)
+                if showsOptions {
+                    Text(modeFooter)
+                }
             }
 
-            if needsEngine {
+            // The route to AI engine setup, part of the optional section:
+            // shown with it, and only for the modes that need an engine.
+            if showsOptions && needsEngine {
                 Section {
                     EngineSetupView(showsLocalModelHint: true) { status in
                         engineReady = status.active != nil
                     }
                 } header: {
-                    stepHeader(3, "設定 AI 引擎")
+                    Text("AI 引擎")
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("API Key 只存在這台 Mac 的鑰匙圈裡。用 API Key 時，字幕文字只會送到你選的 AI 服務。")
@@ -181,35 +219,17 @@ struct OnboardingView: View {
                     }
                 }
             }
-
-            Section {
-                HStack(alignment: .center, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(readyToWatch ? "這頁的步驟都完成了" : "還有步驟沒完成")
-                            .font(.headline)
-                        Text(readyToWatch
-                             ? "打開任一部影片試試。字幕沒出現的話，點 Safari 工具列的 MultiSub 按鈕，允許存取 netflix.com。之後也可以從這個按鈕切換模式。"
-                             : "也可以先打開 Netflix 看看，之後再回來這裡完成設定。")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                    Button {
-                        finish()
-                    } label: {
-                        Label("在 Safari 開啟 Netflix", systemImage: "safari")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                }
-                .padding(.vertical, 4)
-            } header: {
-                stepHeader(needsEngine ? 4 : 3, "完成")
-            }
         }
         .formStyle(.grouped)
+        // The popup's mode or engine changes arrive here through
+        // ConfigStore.reload() when the app becomes active.
+        .onChange(of: configStore.config) { _, _ in refreshEngineReady() }
         .task {
+            refreshEngineReady()
+            if !didChooseInitialExpansion {
+                didChooseInitialExpansion = true
+                showsOptions = needsEngine && !engineReady
+            }
             // Polled while the page is visible: Safari has no notification
             // for "the user ticked the checkbox", and the user flips over to
             // Safari's settings and back while this page is open.
@@ -231,7 +251,7 @@ struct OnboardingView: View {
                 .foregroundStyle(.primary)
             // Two deliberate lines: left to wrap on its own, the second
             // sentence broke mid-word at common window widths.
-            Text("在 Netflix 同時看兩種語言的字幕，或幫較難的單字標上意思。\n照著下面幾步設定就能開始。")
+            Text("在 Netflix 同時看兩種語言的字幕，或幫較難的單字標上意思。\n照著下面兩個步驟就能開始。")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -261,6 +281,44 @@ struct OnboardingView: View {
         }
     }
 
+    private var openNetflixRow: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(watchSummary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if needsEngine && !engineReady {
+                    HStack(spacing: 6) {
+                        Label("「\(mode.title)」需要 AI 引擎", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Button("設定 AI 引擎") { showsOptions = true }
+                            .buttonStyle(.link)
+                    }
+                    .font(.callout)
+                }
+            }
+            Spacer(minLength: 0)
+            Button {
+                openNetflix()
+            } label: {
+                Label("在 Safari 打開 Netflix", systemImage: "safari")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// What happens on Netflix with the current settings, and where to
+    /// change the language.
+    private var watchSummary: String {
+        let language = SubtitleChoices.languageName(targetLang)
+        let change = "要換語言，可以在下方設定，或點 Safari 工具列的 MultiSub 按鈕。"
+        if mode == .annotate {
+            return "播放任一部影片，難字後面就會自動標上\(language)的意思。" + change
+        }
+        return "播放任一部影片，雙語字幕就會自動出現，第二語言是\(language)。" + change
+    }
+
     private func stepHeader(_ number: Int, _ title: String) -> some View {
         StepHeader(number: number, title: title,
                    isDone: stepDone.indices.contains(number - 1) && stepDone[number - 1],
@@ -269,9 +327,8 @@ struct OnboardingView: View {
 
     private var modeFooter: String {
         switch mode {
-        case .netflix?: return "片子沒有你選的第二語言字幕時，可以改用 AI 翻譯。之後隨時能從 Safari 工具列的 MultiSub 按鈕切換模式。"
-        case .some: return "之後隨時能從 Safari 工具列的 MultiSub 按鈕切換模式。"
-        case nil: return "選一種模式，之後隨時能從 Safari 工具列的 MultiSub 按鈕切換。"
+        case .netflix: return "片子沒有你選的第二語言字幕時，可以改用 AI 翻譯。之後隨時能從 Safari 工具列的 MultiSub 按鈕切換模式。"
+        case .translate, .annotate: return "之後隨時能從 Safari 工具列的 MultiSub 按鈕切換模式。"
         }
     }
 
@@ -280,7 +337,11 @@ struct OnboardingView: View {
     private var languageOptions: [SubtitleChoices.Option] {
         let known = SubtitleChoices.languages
         guard !known.contains(where: { $0.id == targetLang }) else { return known }
-        return known + [SubtitleChoices.Option(id: targetLang, label: targetLang)]
+        return known + [SubtitleChoices.Option(id: targetLang, label: targetLang, name: targetLang)]
+    }
+
+    private func refreshEngineReady() {
+        engineReady = (try? Translator.resolveEngine(config: configStore.config)) != nil
     }
 
     // MARK: - Writes
@@ -293,21 +354,22 @@ struct OnboardingView: View {
         Binding(get: { level }, set: { newValue in setPrefs { $0.annotateLevel = newValue } })
     }
 
-    /// Writes a complete prefs set stamped now, so the extension adopts it on
-    /// its next `ping` (newest `updatedAt` wins). Unset fields are filled with
-    /// what the page shows, so the extension never adopts a half-empty set.
+    /// Records an explicit choice, stamped now, so the extension adopts it on
+    /// its next `ping` (newest `updatedAt` wins). Only what the user changed
+    /// is written: a field still nil stays nil and keeps meaning "default",
+    /// and the extension keeps its own value for a field absent from the
+    /// app's prefs. So a default shown on this page can never override a
+    /// choice made in the popup.
     private func setPrefs(_ change: (inout SharedPrefs) -> Void) {
         configStore.update { config in
             var prefs = config.prefs ?? SharedPrefs()
             change(&prefs)
-            if prefs.targetLang == nil { prefs.targetLang = SubtitleChoices.defaultTargetLang }
-            if prefs.annotateLevel == nil { prefs.annotateLevel = SubtitleChoices.defaultLevel }
             prefs.updatedAt = SharedPrefs.nowMs
             config.prefs = prefs
         }
     }
 
-    private func finish() {
+    private func openNetflix() {
         if !configStore.config.onboardingCompleted {
             configStore.update { $0.onboardingCompleted = true }
         }
