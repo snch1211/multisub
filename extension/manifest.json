@@ -18,10 +18,7 @@
     "*://*.netflix.com/*"
   ],
   "background": {
-    "scripts": [
-      "shared.js",
-      "background.js"
-    ],
+    "page": "background.html",
     "persistent": false
   },
   "content_scripts": [

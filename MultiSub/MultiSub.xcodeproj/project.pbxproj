@@ -87,6 +87,7 @@
 		4D58000000000000000E0008 /* icon-256.png in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000E0007 /* icon-256.png */; };
 		4D58000000000000000E000A /* icon-512.png in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000E0009 /* icon-512.png */; };
 		4D58000000000000000E000C /* toolbar-icon.svg in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000E000B /* toolbar-icon.svg */; };
+		4D58000000000000000E000E /* background.html in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000E000D /* background.html */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -177,6 +178,7 @@
 		4D58000000000000000E0007 /* icon-256.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon-256.png; path = ../../extension/icon-256.png; sourceTree = "<group>"; };
 		4D58000000000000000E0009 /* icon-512.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon-512.png; path = ../../extension/icon-512.png; sourceTree = "<group>"; };
 		4D58000000000000000E000B /* toolbar-icon.svg */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = toolbar-icon.svg; path = ../../extension/toolbar-icon.svg; sourceTree = "<group>"; };
+		4D58000000000000000E000D /* background.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = background.html; path = ../../extension/background.html; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -325,6 +327,7 @@
 				4D58000000000000000E0007 /* icon-256.png */,
 				4D58000000000000000E0009 /* icon-512.png */,
 				4D58000000000000000E000B /* toolbar-icon.svg */,
+				4D58000000000000000E000D /* background.html */,
 				4D58000000000000000B1101 /* shared.js */,
 			);
 			name = Resources;
@@ -461,6 +464,7 @@
 				4D58000000000000000E0008 /* icon-256.png in Resources */,
 				4D58000000000000000E000A /* icon-512.png in Resources */,
 				4D58000000000000000E000C /* toolbar-icon.svg in Resources */,
+				4D58000000000000000E000E /* background.html in Resources */,
 				22F5F6892FF6D34F00A10F74 /* overlay.css in Resources */,
 				22F5F68C2FF6D34F00A10F74 /* popup.css in Resources */,
 				22F5F6872FF6D34F00A10F74 /* background.js in Resources */,

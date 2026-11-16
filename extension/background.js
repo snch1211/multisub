@@ -16,6 +16,37 @@
 // Loaded after shared.js (globalThis.MS).
 'use strict';
 
+// Load diagnostics. If anything below throws while this page loads (an API
+// Safari lacks, shared.js missing or mis-decoded), the real message listener never gets
+// registered and the popup would only learn that nobody answered. This
+// responder is registered first and, until the whole file has run, answers
+// with the error that stopped it, so the popup can show the actual cause.
+const bootErrors = [];
+(function installBootDiagnostics() {
+  const api0 = typeof browser !== 'undefined' ? browser : chrome;
+  const where = (file, line) => (file ? String(file).split('/').pop() + ':' + line : '');
+  if (typeof globalThis.addEventListener === 'function') {
+    globalThis.addEventListener('error', (e) => {
+      bootErrors.push([e.message, where(e.filename, e.lineno)].filter(Boolean).join(' @ '));
+    });
+    globalThis.addEventListener('unhandledrejection', (e) => {
+      bootErrors.push('unhandled: ' + String((e.reason && e.reason.message) || e.reason));
+    });
+  }
+  // shared.js is loaded by background.html just before this file. If it
+  // isn't there, check that background.html still declares UTF-8.
+  if (typeof MS === 'undefined') bootErrors.push('shared.js did not load');
+  api0.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (globalThis.__multisubBackgroundReady) return false;
+    sendResponse({
+      ok: false,
+      error: 'native-unavailable',
+      detail: '背景程式載入失敗：' + (bootErrors.join('；') || '原因不明')
+    });
+    return false;
+  });
+})();
+
 const api = typeof browser !== 'undefined' ? browser : chrome;
 
 // Set to true, reload the extension, and check the *background page's* Web
@@ -1008,3 +1039,6 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   return false;
 });
+
+// Everything above ran: let the real listeners answer from now on.
+globalThis.__multisubBackgroundReady = true;

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<!--
+  The background page. It exists only to pin the scripts' encoding.
+
+  With "background.scripts" Safari generates this page itself, without a
+  charset, so the scripts are decoded in the system's legacy default encoding
+  rather than UTF-8: Big5 on a Traditional Chinese Mac, GBK on a Simplified
+  Chinese one, Shift_JIS on a Japanese one. The Chinese text in shared.js then
+  decodes into bytes that swallow the next ASCII character, shared.js stops
+  parsing, and nothing in the extension can reach the app. Keep the meta tag
+  above and keep loading the scripts from here.
+-->
+<script src="shared.js"></script>
+<script src="background.js"></script>
+</head>
+<body></body>
+</html>
