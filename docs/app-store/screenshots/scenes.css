@@ -1,0 +1,37 @@
+/* Out-of-focus "film still" backdrops drawn with CSS only, so the store
+   screenshots contain no third-party footage. Each scene is a stack of
+   blurred light sources and silhouettes. */
+.scene { position: absolute; inset: 0; overflow: hidden; background: #0b0b10; }
+.scene > i { position: absolute; border-radius: 50%; filter: blur(var(--b, 60px)); }
+.scene::after { content: ""; position: absolute; inset: 0;
+  background: radial-gradient(120% 90% at 50% 40%, transparent 55%, rgba(0,0,0,.65) 100%),
+              linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(0,0,0,.55) 100%); }
+
+/* Night city café: teal shadows, warm practical lights, two figures. */
+.scene.cafe { background: linear-gradient(160deg, #0e1b22 0%, #17262b 40%, #2a1d17 100%); }
+.scene.cafe .l1 { left: 6%;  top: 10%; width: 22%; height: 30%; background: #ffb35c; opacity: .55; --b: 70px; }
+.scene.cafe .l2 { left: 70%; top: 6%;  width: 18%; height: 22%; background: #ffd08a; opacity: .45; --b: 60px; }
+.scene.cafe .l3 { left: 40%; top: 18%; width: 9%;  height: 12%; background: #ffe2b0; opacity: .6;  --b: 30px; }
+.scene.cafe .l4 { left: 84%; top: 40%; width: 8%;  height: 10%; background: #7fd3ff; opacity: .35; --b: 30px; }
+.scene.cafe .l5 { left: 15%; top: 52%; width: 7%;  height: 9%;  background: #ff8a5c; opacity: .35; --b: 26px; }
+.scene.cafe .p1 { left: 18%; top: 30%; width: 26%; height: 90%; background: #05080a; border-radius: 45% 45% 10% 10%; opacity: .92; --b: 22px; }
+.scene.cafe .p2 { left: 58%; top: 26%; width: 24%; height: 95%; background: #070706; border-radius: 45% 45% 10% 10%; opacity: .9;  --b: 22px; }
+.scene.cafe .t  { left: -10%; top: 78%; width: 120%; height: 40%; background: #1a120c; border-radius: 0; opacity: .9; --b: 30px; }
+
+/* Rainy street at dusk: blue hour with neon. */
+.scene.street { background: linear-gradient(180deg, #121a33 0%, #1d2547 45%, #2b1830 100%); }
+.scene.street .l1 { left: 10%; top: 20%; width: 10%; height: 14%; background: #ff4f7a; opacity: .5; --b: 40px; }
+.scene.street .l2 { left: 28%; top: 30%; width: 8%;  height: 10%; background: #5ce1ff; opacity: .45; --b: 34px; }
+.scene.street .l3 { left: 62%; top: 16%; width: 14%; height: 18%; background: #ffcf6b; opacity: .45; --b: 50px; }
+.scene.street .l4 { left: 80%; top: 34%; width: 9%;  height: 12%; background: #b07cff; opacity: .45; --b: 36px; }
+.scene.street .l5 { left: 46%; top: 44%; width: 6%;  height: 8%;  background: #ffffff; opacity: .35; --b: 20px; }
+.scene.street .p1 { left: 38%; top: 34%; width: 20%; height: 90%; background: #06070d; border-radius: 45% 45% 12% 12%; opacity: .9; --b: 20px; }
+.scene.street .t  { left: -10%; top: 82%; width: 120%; height: 30%; background: linear-gradient(90deg,#ff4f7a33,#5ce1ff33,#ffcf6b33); border-radius: 0; opacity: .8; --b: 40px; }
+
+/* Warm living room, golden hour. */
+.scene.room { background: linear-gradient(135deg, #2b1a10 0%, #3b2414 45%, #120d0b 100%); }
+.scene.room .l1 { left: 62%; top: -6%; width: 40%; height: 60%; background: #ffcf8a; opacity: .5; --b: 90px; }
+.scene.room .l2 { left: 8%;  top: 22%; width: 12%; height: 16%; background: #ffa25c; opacity: .5; --b: 40px; }
+.scene.room .l3 { left: 30%; top: 12%; width: 6%;  height: 8%;  background: #fff0cc; opacity: .5; --b: 22px; }
+.scene.room .p1 { left: 26%; top: 28%; width: 22%; height: 90%; background: #0a0604; border-radius: 45% 45% 12% 12%; opacity: .92; --b: 20px; }
+.scene.room .p2 { left: 54%; top: 36%; width: 20%; height: 85%; background: #0c0805; border-radius: 45% 45% 12% 12%; opacity: .85; --b: 26px; }
