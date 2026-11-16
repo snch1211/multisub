@@ -353,11 +353,26 @@
     return h * 3600 + m * 60 + (+secParts[0]) + (+(secParts[1] || 0)) / Math.pow(10, (secParts[1] || '').length || 1);
   }
 
+  // Netflix's WebVTT uses named entities beyond the basic five, notably
+  // &lrm;/&rlm; (left-to-right / right-to-left marks) in front of most lines,
+  // which used to show up literally as "&lrm;". A <textarea> decodes every
+  // named and numeric entity without parsing any markup. The marks themselves
+  // (and other invisible bidi controls) are then removed: the overlay sets its
+  // own direction and the AI prompts don't need them.
+  const entityDecoder = document.createElement('textarea');
+  const BIDI_CONTROLS = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+  // Netflix's files sometimes encode the mark twice ("&amp;lrm;"), so decode
+  // up to two rounds, then drop any direction-mark entity still left as text.
+  const LITERAL_MARKS = /&(?:lrm|rlm|#x200[ef]|#820[67]);/gi;
   function decodeEntities(s) {
-    return s
-      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
-      .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n));
+    let out = s;
+    for (let round = 0; round < 2 && out.indexOf('&') !== -1; round++) {
+      // Entity names are case-sensitive in HTML, but "&LRM;" also appears.
+      out = out.replace(/&(lrm|rlm);/gi, (_, m) => '&' + m.toLowerCase() + ';');
+      entityDecoder.innerHTML = out;
+      out = entityDecoder.value;
+    }
+    return out.replace(LITERAL_MARKS, '').replace(BIDI_CONTROLS, '').replace(/\u00A0/g, ' ');
   }
 
   function stripTags(s) {
