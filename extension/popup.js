@@ -646,7 +646,7 @@ function onProviderChanged(draft) {
   fillModelSelect(p, model);
   // The privacy policy promises the provider is named before any subtitle
   // text goes to it; the confirmation step after the test names it again.
-  $('engineDisclosure').textContent = '儲存後，要翻譯或標註的字幕文字會從這台 Mac 直接送到 ' +
+  $('engineDisclosure').textContent = '儲存後，翻譯、標註和整理生詞本時，字幕文字會從這台 Mac 直接送到 ' +
     destinationName(p, '') + '，不經過 MultiSub。';
   setEngineResult('');
 }
@@ -826,7 +826,7 @@ function showConsentStep() {
   if (!pending) return;
   const sec = (pending.latencyMs / 1000).toFixed(1);
   $('consentTitle').textContent = '測試成功（' + sec + ' 秒）';
-  $('consentText').textContent = '按「同意並使用」後，要翻譯或標註的字幕文字會從這台 Mac 直接送到 ' +
+  $('consentText').textContent = '按「同意並使用」後，翻譯、標註和整理生詞本時，字幕文字會從這台 Mac 直接送到 ' +
     destinationName(pending.provider, pending.candidate.baseURL) + '，不經過 MultiSub。';
   $('consentStep').hidden = false;
   $('saveEngine').hidden = true;

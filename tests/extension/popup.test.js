@@ -53,7 +53,7 @@ test('儲存並測試: candidate test first, then the consent step (from consent
     { type: 'set-engine', engine: 'cloud', provider: 'openai', model: 'gpt-6-luna', apiKey: 'sk-typed' }
   ]);
   assert.equal(r.step.title, '測試成功（0.9 秒）');
-  assert.equal(r.step.text, '按「同意並使用」後，要翻譯或標註的字幕文字會從這台 Mac 直接送到 OpenAI，不經過 MultiSub。');
+  assert.equal(r.step.text, '按「同意並使用」後，翻譯、標註和整理生詞本時，字幕文字會從這台 Mac 直接送到 OpenAI，不經過 MultiSub。');
   assert.equal(r.step.saveHidden, true);
   assert.deepEqual(r.sent.slice(2), [
     { type: 'set-engine', engine: 'cloud', provider: 'openai', model: 'gpt-6-luna', apiKey: 'sk-typed', consent: true }
@@ -66,7 +66,7 @@ test('儲存並測試: candidate test first, then the consent step (from consent
 
 test('consent step for a custom endpoint names the address; 取消 saves nothing', () => {
   const r = run(base('save-consent-cancel', { providers: providers({ custom: { hasConsent: false } }) }));
-  assert.equal(r.text, '按「同意並使用」後，要翻譯或標註的字幕文字會從這台 Mac 直接送到 你填的 API 網址（localhost:1234），不經過 MultiSub。');
+  assert.equal(r.text, '按「同意並使用」後，翻譯、標註和整理生詞本時，字幕文字會從這台 Mac 直接送到 你填的 API 網址（localhost:1234），不經過 MultiSub。');
   assert.deepEqual(r.sent, [{ type: 'test-engine', provider: 'custom', model: 'qwen3', baseURL: 'http://localhost:1234/v1' }]);
   assert.equal(r.stepHidden, true);
   assert.equal(r.result, '沒有儲存，原本的設定不變');

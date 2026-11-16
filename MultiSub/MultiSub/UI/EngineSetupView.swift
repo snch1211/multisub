@@ -297,7 +297,7 @@ struct EngineSetupView: View {
     }
 
     private var sendDisclosure: String {
-        "儲存後，要翻譯或標註的字幕文字會從這台 Mac 直接送到 \(provider.consentRecipient)，不經過 MultiSub。"
+        "儲存後，翻譯、標註和整理生詞本時，字幕文字會從這台 Mac 直接送到 \(provider.consentRecipient)，不經過 MultiSub。"
     }
 
     private var consentAlertShown: Binding<Bool> {
@@ -314,7 +314,7 @@ struct EngineSetupView: View {
         let recipient = candidate.provider == .custom
             ? "你填的 API 網址（\(candidate.baseURL)）"
             : candidate.provider.consentRecipient
-        var message = "之後翻譯或標註時，字幕文字會從這台 Mac 直接送到 \(recipient)，不經過 MultiSub。"
+        var message = "之後翻譯、標註或整理生詞本時，字幕文字會從這台 Mac 直接送到 \(recipient)，不經過 MultiSub。"
         if candidate.provider != .custom {
             message += "資料怎麼處理，以這個服務的隱私權政策為準。"
         }

@@ -22,7 +22,7 @@ MultiSub 沒有帳號、沒有分析工具、也沒有開發者自己的伺服�
 |---|---|---|
 | 「Netflix 雙語字幕」模式 | 不會額外連線（字幕本來就由 Netflix 提供） | 無 |
 | 在 App 展開「可下載的模型」、在 AI 引擎設定查看還沒下載的本機模型、下載本機模型 | Hugging Face（huggingface.co） | 查詢模型檔案大小、下載模型，不含字幕 |
-| 使用雲端 AI（你自己選的） | 你選的服務：Anthropic、OpenAI、OpenRouter、Google Gemini，或你自己填的網址 | 要翻譯或標註的字幕文字、同一段的 Netflix 官方字幕（作為用詞參考）、目標語言，以及你的 API Key |
+| 使用雲端 AI（你自己選的） | 你選的服務：Anthropic、OpenAI、OpenRouter、Google Gemini，或你自己填的網址 | 要翻譯、標註或整理成生詞本的字幕文字、同一段的 Netflix 官方字幕（作為用詞參考）、目標語言，以及你的 API Key |
 | 檢查更新（只有從 GitHub 下載的版本） | GitHub Releases 公開 API | 一般的 HTTP 請求 |
 
 使用雲端 AI 時，字幕文字由你的 Mac 直接送到該服務，MultiSub 開發者不會經手。這些服務怎麼處理資料，依照各自的隱私權政策：
@@ -65,7 +65,7 @@ MultiSub is a Safari extension for macOS that shows bilingual subtitles on Netfl
 
 - "Netflix bilingual subtitles" mode makes no extra connections.
 - Expanding “Downloadable models” (可下載的模型) in the app, viewing an on-device model that isn't downloaded yet in the AI engine settings, or downloading a model contacts Hugging Face to check model sizes and download files (no subtitle data).
-- The optional cloud AI engine sends the subtitle lines being translated or annotated, the matching official Netflix subtitle lines (as a terminology reference), the target language and your API key to the provider you selected (Anthropic, OpenAI, OpenRouter, Google Gemini, or a custom endpoint you enter). Their own privacy policies apply. The first time you save a provider, the app or the toolbar popup names it (or shows the custom URL you entered) and asks you to agree; MultiSub sends no subtitle text to a provider you haven't agreed to. Testing a setup sends one fixed English sentence, not subtitles, and nothing is saved unless the test succeeds.
+- The optional cloud AI engine sends the subtitle lines being translated, annotated or organized into a vocabulary list, the matching official Netflix subtitle lines (as a terminology reference), the target language and your API key to the provider you selected (Anthropic, OpenAI, OpenRouter, Google Gemini, or a custom endpoint you enter). Their own privacy policies apply. The first time you save a provider, the app or the toolbar popup names it (or shows the custom URL you entered) and asks you to agree; MultiSub sends no subtitle text to a provider you haven't agreed to. Testing a setup sends one fixed English sentence, not subtitles, and nothing is saved unless the test succeeds.
 - The update check in the GitHub-distributed build contacts the public GitHub Releases API. The Mac App Store build has no update check.
 
 **We don't** collect usage statistics, crash reports or tracking data; use advertising or analytics SDKs; sell or share your data; or download or store Netflix video.
