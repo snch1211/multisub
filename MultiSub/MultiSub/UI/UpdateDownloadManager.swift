@@ -88,6 +88,7 @@ private final class DMGDownloadDelegate: NSObject, URLSessionDataDelegate, @unch
     private var written: Int64 = 0
     private var expected: Int64 = 0
     private var statusCode: Int?
+    private var writeError: DownloadWriteError?
     var completion: ((Result<Void, Error>) -> Void)?
 
     init(destination: URL, progress: @escaping (Double) -> Void) {
@@ -115,14 +116,25 @@ private final class DMGDownloadDelegate: NSObject, URLSessionDataDelegate, @unch
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        handle?.write(data)
+        // The throwing write, as in `StreamingDownloadDelegate`: the older
+        // `write(_:)` quits the app when the disk is full.
+        guard writeError == nil, let handle else { return }
+        do {
+            try handle.write(contentsOf: data)
+        } catch {
+            writeError = DownloadWriteError(underlying: error)
+            dataTask.cancel()
+            return
+        }
         written += Int64(data.count)
         if expected > 0 { progress(Double(written) / Double(expected)) }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         try? handle?.close()
-        if let error {
+        if let writeError {
+            completion?(.failure(writeError))
+        } else if let error {
             completion?(.failure(error))
         } else if let statusCode, (200..<300).contains(statusCode) {
             completion?(.success(()))

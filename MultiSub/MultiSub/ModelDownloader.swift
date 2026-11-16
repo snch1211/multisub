@@ -212,7 +212,8 @@ enum ModelDownloader {
 
     /// Downloads a single file to `destination`, resuming via `Range` headers
     /// against whatever `destination` already contains, retrying transient
-    /// failures. `verifySHA256`, when given (LFS files only — the etag *is*
+    /// failures (a file it can't write, `DownloadWriteError`, is reported at
+    /// once). `verifySHA256`, when given (LFS files only — the etag *is*
     /// the sha256 for those, unlike small git-native files), is checked
     /// against the fully-downloaded bytes before returning.
     private static func downloadResumable(
@@ -242,6 +243,10 @@ enum ModelDownloader {
                 try await runDownload(request: request, to: destination, resumeOffset: existing, onBytes: onBytes)
                 lastError = nil
                 break
+            } catch let error as DownloadWriteError {
+                // A full disk stays full: say so now, not 20 attempts
+                // later. What was written waits for 繼續下載.
+                throw error
             } catch {
                 lastError = error
                 if attempt == maxAttempts { break }
@@ -269,8 +274,9 @@ enum ModelDownloader {
     }
 
     /// One attempt: streams the response body directly into `destination` via
-    /// a data-task delegate — never through a system-managed temp file, which
-    /// is exactly the mechanism that loses partial downloads on disconnect.
+    /// a data-task delegate (`StreamingDownloadDelegate`) — never through a
+    /// system-managed temp file, which is exactly the mechanism that loses
+    /// partial downloads on disconnect.
     private static func runDownload(
         request: URLRequest, to destination: URL, resumeOffset: Int64,
         onBytes: @escaping @Sendable (Int64) -> Void
@@ -302,70 +308,5 @@ enum ModelDownloader {
             hasher.update(data: chunk)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
-    }
-}
-
-/// Streams a data task's response body straight to a file handle we control,
-/// resuming an existing `.partial` file when the server honors our `Range`
-/// request (HTTP 206). If it ignores `Range` and returns 200 instead, we
-/// truncate and restart that file fresh rather than risk appending full
-/// content onto a partial one.
-private final class StreamingDownloadDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    private let destination: URL
-    private let resumeOffset: Int64
-    private let onBytes: (Int64) -> Void
-    private var handle: FileHandle?
-    private var written: Int64 = 0
-    private var statusCode: Int?
-    var completion: ((Result<Void, Error>) -> Void)?
-
-    init(destination: URL, resumeOffset: Int64, onBytes: @escaping (Int64) -> Void) {
-        self.destination = destination
-        self.resumeOffset = resumeOffset
-        self.onBytes = onBytes
-    }
-
-    func urlSession(
-        _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
-        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
-    ) {
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            statusCode = (response as? HTTPURLResponse)?.statusCode
-            completionHandler(.cancel)
-            return
-        }
-        statusCode = http.statusCode
-        let isResuming = resumeOffset > 0 && http.statusCode == 206
-        if !isResuming {
-            FileManager.default.createFile(atPath: destination.path, contents: nil)
-            written = 0
-        } else {
-            written = resumeOffset
-        }
-        guard let handle = try? FileHandle(forWritingTo: destination) else {
-            completionHandler(.cancel)
-            return
-        }
-        if isResuming { handle.seekToEndOfFile() }
-        self.handle = handle
-        completionHandler(.allow)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        handle?.write(data)
-        written += Int64(data.count)
-        onBytes(written)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        try? handle?.close()
-        if let error {
-            completion?(.failure(error))
-        } else if let statusCode, (200..<300).contains(statusCode) {
-            completion?(.success(()))
-        } else {
-            completion?(.failure(ModelDownloader.DownloadError(message: "HTTP \(statusCode ?? -1)")))
-        }
-        completion = nil
     }
 }

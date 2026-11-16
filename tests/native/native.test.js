@@ -1,9 +1,12 @@
 'use strict';
 // Builds the Swift files in MultiSub/Shared that the checks need (the app
-// and the extension both compile them) together with tests/native/main.swift,
-// and runs the result. The checks cover what decides, on disk alone, whether
-// a local model is downloaded, which model folders the app lists and what an
-// unfinished download left, partial folders included (MultiSubPaths), which
+// and the extension both compile them), the app's StreamingDownloadDelegate
+// (Foundation only), and tests/native/main.swift, and runs the result. The
+// checks cover what decides, on disk alone, whether a local model is
+// downloaded, which model folders the app lists and what an unfinished
+// download left, partial folders included (MultiSubPaths), how a download
+// writes its file (a write that fails, as on a full disk, ends it with an
+// error instead of quitting the app, and keeps what can be resumed), which
 // custom server addresses can be saved (CloudSettings.baseURLProblem), and
 // how consent is keyed per custom address, older "custom" records included
 // (CloudSettings.normalizedBaseURL, MultiSubConfig.consentKey). For each
@@ -20,7 +23,8 @@ const SHARED = path.resolve(HERE, '../../MultiSub/Shared');
 // Paths.swift needs AppIdentity.swift; Config.swift needs CloudLLM.swift
 // (CloudProvider) and LanguageNames.swift.
 const SOURCES = ['AppIdentity.swift', 'CloudLLM.swift', 'Config.swift', 'LanguageNames.swift', 'Paths.swift']
-  .map((f) => path.join(SHARED, f));
+  .map((f) => path.join(SHARED, f))
+  .concat(path.resolve(HERE, '../../MultiSub/MultiSub/StreamingDownloadDelegate.swift'));
 const OUT = path.join(HERE, '.build', 'checks');
 
 function skip(why) {

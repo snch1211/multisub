@@ -141,7 +141,11 @@ glosses from drifting away from what the scene means.
   the model's partial folder `models/.download-tmp/<org>--<name>/`
   (`MultiSubPaths.modelPartialDirectory`). That folder is removed once every
   file is stored; per-attempt folders named by a UUID, left by older builds,
-  are removed when the next download starts. For a model that isn't
+  are removed when the next download starts. A write that fails (a full
+  disk) ends the download at once with 「磁碟空間不足，清出空間後再試一次」
+  rather than retrying, and keeps the bytes written for 繼續下載
+  (`StreamingDownloadDelegate` uses FileHandle's throwing calls; the older
+  ones raise an exception Swift can't catch, which quit the app). For a model that isn't
   complete, 一般設定 shows what its repo folder and partial folder hold as
   「下載未完成（佔用 …）」 (`MultiSubPaths.unfinishedDownloadBytes`; hidden
   files, the expected-files list among them, don't count, so a download that

@@ -265,6 +265,120 @@ func unwrap<T>(_ value: T?, line: Int = #line) throws -> T {
     return value
 }
 
+// MARK: - Writing a download
+
+/// StreamingDownloadDelegate.swift reports an unexpected HTTP status as a
+/// `ModelDownloader.DownloadError`. ModelDownloader.swift needs the Hugging
+/// Face package, so the checks build this stand-in for it instead.
+enum ModelDownloader {
+    struct DownloadError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+}
+
+/// Hands `StreamingDownloadDelegate` a response and chunks the way
+/// URLSession does, with no network: the task is never resumed.
+final class FakeDownload {
+    let session = URLSession(configuration: .ephemeral)
+    let task: URLSessionDataTask
+    let delegate: StreamingDownloadDelegate
+    var result: Result<Void, Error>?
+
+    init(to file: URL, resumeOffset: Int64 = 0) {
+        task = session.dataTask(with: URL(string: "http://127.0.0.1:9/model.safetensors")!)
+        delegate = StreamingDownloadDelegate(destination: file, resumeOffset: resumeOffset) { _ in }
+        delegate.completion = { [unowned self] in self.result = $0 }
+    }
+
+    func respond(_ status: Int) -> URLSession.ResponseDisposition? {
+        let response = HTTPURLResponse(url: task.originalRequest!.url!, statusCode: status,
+                                       httpVersion: "HTTP/1.1", headerFields: nil)!
+        var disposition: URLSession.ResponseDisposition?
+        delegate.urlSession(session, dataTask: task, didReceive: response) { disposition = $0 }
+        return disposition
+    }
+
+    func receive(_ data: Data) { delegate.urlSession(session, dataTask: task, didReceive: data) }
+
+    func finish(_ error: Error?) throws -> Error? {
+        delegate.urlSession(session, task: task, didCompleteWithError: error)
+        session.invalidateAndCancel()
+        switch try unwrap(result) {
+        case .success: return nil
+        case .failure(let error): return error
+        }
+    }
+}
+
+/// Runs `body` with files capped at `bytes`, so a write past that fails
+/// (EFBIG) the way a write to a full disk does (ENOSPC). With the older
+/// FileHandle calls that write raises an exception and this process
+/// aborts; native.test.js then reports that the checks stopped early.
+func withFileSizeLimit(_ bytes: rlim_t, _ body: () throws -> Void) rethrows {
+    let handler = signal(SIGXFSZ, SIG_IGN)
+    var saved = rlimit()
+    getrlimit(RLIMIT_FSIZE, &saved)
+    var capped = saved
+    capped.rlim_cur = bytes
+    setrlimit(RLIMIT_FSIZE, &capped)
+    defer {
+        setrlimit(RLIMIT_FSIZE, &saved)
+        signal(SIGXFSZ, handler)
+    }
+    try body()
+}
+
+let downloadsRoot = modelsRoot.appendingPathComponent("streaming", isDirectory: true)
+try? fm.createDirectory(at: downloadsRoot, withIntermediateDirectories: true)
+
+test("a write that fails (a full disk) ends the download with that error, keeping the bytes before it") {
+    let file = downloadsRoot.appendingPathComponent("cut.partial")
+    let first = Data(repeating: 1, count: 600), second = Data(repeating: 2, count: 4096)
+    let download = FakeDownload(to: file)
+    try expect(download.respond(200), .allow)
+    withFileSizeLimit(1024) {
+        download.receive(first)
+        download.receive(second)
+        download.receive(Data(repeating: 3, count: 100))
+    }
+    try expect(download.task.state == .suspended, false, "the task is cancelled")
+    let error = try unwrap(try download.finish(URLError(.cancelled)))
+    try expect(error is DownloadWriteError, true, "reported instead of the cancellation: \(error)")
+    let kept = try Data(contentsOf: file)
+    try expect(kept.count >= first.count && kept.count <= 1024, true, "\(kept.count) bytes kept")
+    try expect(kept, Data((first + second).prefix(kept.count)), "the file's first bytes, nothing after the failure")
+
+    // Once there is room, 繼續下載 asks for the rest (206) and appends it.
+    let resumed = FakeDownload(to: file, resumeOffset: Int64(kept.count))
+    try expect(resumed.respond(206), .allow)
+    resumed.receive(Data((first + second).dropFirst(kept.count)))
+    try expect(try resumed.finish(nil) == nil, true, "resumed download succeeds")
+    try expect(try Data(contentsOf: file), first + second)
+}
+
+test("a file that can't be opened ends the download with that error") {
+    let download = FakeDownload(to: downloadsRoot.appendingPathComponent("missing-folder/x.partial"))
+    try expect(download.respond(200), .cancel)
+    let error = try unwrap(try download.finish(URLError(.cancelled)))
+    try expect(error is DownloadWriteError, true, "\(error)")
+}
+
+test("a full disk says so; any other write error keeps Foundation's text") {
+    let full = "磁碟空間不足，清出空間後再試一次"
+    func wrapped(_ code: Int32) -> NSError {
+        NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError,
+                userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(code))])
+    }
+    // What `write(contentsOf:)` throws on a full disk.
+    try expect(DownloadWriteError(underlying: CocoaError(.fileWriteOutOfSpace)).errorDescription, full)
+    try expect(DownloadWriteError(underlying: wrapped(ENOSPC)).errorDescription, full)
+    try expect(DownloadWriteError(underlying: POSIXError(.ENOSPC)).errorDescription, full)
+    try expect(DownloadWriteError(underlying: POSIXError(.EDQUOT)).errorDescription, full, "over quota")
+    try expect(DownloadWriteError(underlying: wrapped(EFBIG)).isOutOfSpace, false)
+    try expect(DownloadWriteError(underlying: wrapped(EIO)).errorDescription, wrapped(EIO).localizedDescription)
+}
+
 try? fm.removeItem(at: modelsRoot)
 
 // MARK: - Custom server addresses

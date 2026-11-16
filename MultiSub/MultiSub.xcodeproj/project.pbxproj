@@ -32,6 +32,7 @@
 		4D580000000000000000AB0D /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = 4D580000000000000000AB06 /* HuggingFace */; };
 		4D580000000000000000AB0E /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = 4D580000000000000000AB08 /* Tokenizers */; };
 		4D580000000000000000AA0F /* ModelDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA0E /* ModelDownloader.swift */; };
+		4D580000000000000000AA21 /* StreamingDownloadDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA20 /* StreamingDownloadDelegate.swift */; };
 		4D580000000000000000AA11 /* stopwords-en.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA10 /* stopwords-en.txt */; };
 		4D580000000000000000AA13 /* cefr-wordlist-en.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA12 /* cefr-wordlist-en.txt */; };
 		4D580000000000000000AC11 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AC01 /* DesignSystem.swift */; };
@@ -136,6 +137,7 @@
 		22F5F6842FF6D34F00A10F74 /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = popup.css; path = ../../extension/popup.css; sourceTree = "<group>"; };
 		22F5F6852FF6D34F00A10F74 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = ../../extension/content.js; sourceTree = "<group>"; };
 		4D580000000000000000AA0E /* ModelDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloader.swift; sourceTree = "<group>"; };
+		4D580000000000000000AA20 /* StreamingDownloadDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingDownloadDelegate.swift; sourceTree = "<group>"; };
 		4D580000000000000000AA10 /* stopwords-en.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "stopwords-en.txt"; sourceTree = "<group>"; };
 		4D580000000000000000AA12 /* cefr-wordlist-en.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "cefr-wordlist-en.txt"; sourceTree = "<group>"; };
 		4D580000000000000000AC01 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
@@ -232,6 +234,7 @@
 			children = (
 				22F5F6542FF6D34D00A10F74 /* AppDelegate.swift */,
 				4D580000000000000000AA0E /* ModelDownloader.swift */,
+				4D580000000000000000AA20 /* StreamingDownloadDelegate.swift */,
 				4D580000000000000000AC00 /* UI */,
 				22F5F6652FF6D34E00A10F74 /* Assets.xcassets */,
 				22F5F6672FF6D34E00A10F74 /* Info.plist */,
@@ -498,6 +501,7 @@
 				4D58000000000000000B0A02 /* Translator.swift in Sources */,
 				4D580000000000000000AF02 /* HubBridges.swift in Sources */,
 				4D580000000000000000AA0F /* ModelDownloader.swift in Sources */,
+				4D580000000000000000AA21 /* StreamingDownloadDelegate.swift in Sources */,
 				4D580000000000000000AC18 /* MultiSubApp.swift in Sources */,
 				4D580000000000000000AC12 /* AppRouter.swift in Sources */,
 				4D580000000000000000AC11 /* DesignSystem.swift in Sources */,
