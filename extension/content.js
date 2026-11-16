@@ -1821,7 +1821,8 @@
   //    both sides, so exactly one survives however close they started.
   //  - An instance whose extension context is gone (the extension turned
   //    off, or reloaded before the new instance has started) tears itself
-  //    down and gives Netflix's own subtitles back.
+  //    down and gives Netflix's own subtitles back, unless a build from
+  //    before all this has taken the page over (nativeClassHeldByOlderBuild()).
 
   // Ids of the elements any version of content.js attaches to the page
   // itself (#multisub-original, #multisub-text and #multisub-hint live
@@ -1834,6 +1835,9 @@
   // then on the first tick after this long: WebKit may slow a page's timers
   // down to one a second).
   const STYLESHEET_CHECK_MS = 1000;
+  // The z-index every version of overlay.css gives #multisub-overlay; see
+  // nativeClassHeldByOlderBuild().
+  const OVERLAY_Z_INDEX = '2147483000';
 
   let instanceStyle = null;
   let stylesheetCheckedAt = -Infinity;
@@ -1941,6 +1945,28 @@
     }
   }
 
+  // Whether html.multisub-native-hidden now belongs to an instance of an
+  // older build, which won't set it again if this one takes it off. That is
+  // a reload onto a build from before instances knew of each other: it never
+  // announces itself, so this instance sees its own stylesheet go and steps
+  // aside as if the extension were off, and those versions set the class
+  // only when their own idea of it changes. Told by the overlay.css styling
+  // the page: some version's still applies (every one gives
+  // #multisub-overlay OVERLAY_Z_INDEX), but not one with STYLESHEET_MARKER.
+  // Both instances read the same settings, so the class as this one leaves
+  // it is what that one wants. With no overlay.css left the class hides
+  // nothing (its only rule is there), and one with the marker is this
+  // build's (an engine that keeps a dead context's stylesheet) or a newer
+  // one's, which checks the class on every tick: then the class comes off.
+  // Read before this instance's overlay leaves the page.
+  function nativeClassHeldByOlderBuild() {
+    const probe = overlay && overlay.parentElement ? overlay : document.querySelector('#multisub-overlay');
+    if (!probe) return false;
+    let zIndex;
+    try { zIndex = getComputedStyle(probe).zIndex; } catch (e) { return false; }
+    return String(zIndex) === OVERLAY_Z_INDEX && stylesheetPresent() === false;
+  }
+
   // Stops everything this instance does and takes what it put on the page
   // off it. `reason` is 'replaced' (a newer instance, `by`, took over) or
   // 'context' (the extension context is gone).
@@ -1956,6 +1982,7 @@
     // context is still there to hear it).
     try { stopJob(); } catch (e) { /* port already gone */ }
     state.pendingTitleRequests.clear();
+    const keepNativeClass = by ? !!by.managesNative : nativeClassHeldByOlderBuild();
     window.removeEventListener('message', onWindowMessage);
     try { api.storage.onChanged.removeListener(onStorageChanged); } catch (e) { /* context gone */ }
     try { api.runtime.onMessage.removeListener(onRuntimeMessage); } catch (e) { /* context gone */ }
@@ -1963,8 +1990,9 @@
     if (overlay) overlay.remove();
     if (instanceStyle) instanceStyle.remove();
     // Netflix's own subtitles come back, unless a newer instance decides
-    // about them from now on.
-    if (!(by && by.managesNative)) document.documentElement.classList.remove('multisub-native-hidden');
+    // about them from now on, or an older build's does (see
+    // nativeClassHeldByOlderBuild()).
+    if (!keepNativeClass) document.documentElement.classList.remove('multisub-native-hidden');
   }
 
   keepInstanceStyle();

@@ -83,8 +83,10 @@ function makePage(path) {
   const fromPage = (msg) => winListeners.slice().forEach((f) => f({ source: window, data: Object.assign({ __multisub: true }, msg) }));
   // The root element's computed custom properties (overlay.css's marker).
   const rootStyle = {};
+  // overlaySheet: some version of overlay.css styles the page (its rule for
+  // #multisub-overlay, z-index included, applies).
   return { html, container, video, timedtext, document, window, winListeners, pageCommands, fromPage, rootStyle,
-    location: { pathname: path } };
+    overlaySheet: false, location: { pathname: path } };
 }
 
 // One content-script instance (shared.js + content.js in a world of its own)
@@ -128,6 +130,7 @@ function boot({ stored, ping, path = '/watch/81', scale = 1, extraStore = {}, na
     ...(clock != null ? { performance: { timeOrigin: 0, now: () => clock } } : {}),
     location: locationObj,
     getComputedStyle: (el) => ({ position: 'relative',
+      zIndex: el.id === 'multisub-overlay' && el.parentElement && page.overlaySheet ? '2147483000' : 'auto',
       getPropertyValue: (k) => (el === html && page.rootStyle[k] != null ? String(page.rootStyle[k]) : '') }),
     // scale < 1 shortens the long delays (retries, timeouts) so tests can
     // walk through them; the 100 ms tick and short waits stay real.
@@ -1043,17 +1046,75 @@ async function test(name, fn) {
     t2.stop();
 
     // WebKit: runtime.id stays, but the context's stylesheet leaves the page.
-    const t3 = boot({ stored: settingsWith({ mode: 'netflix' }), ping });
-    t3.page.rootStyle['--multisub-stylesheet'] = ' 1';
-    await netflixReady(t3);
-    await sleep(1000); // the stylesheet is looked at once a second
-    const own3 = overlaysOn(t3.page)[0];
-    assert.equal(own3.parentElement, t3.container);
+    const withStylesheet = async () => {
+      const page = makePage('/watch/81');
+      page.rootStyle['--multisub-stylesheet'] = ' 1';
+      page.overlaySheet = true;
+      const t = boot({ page, stored: settingsWith({ mode: 'netflix' }), ping });
+      await netflixReady(t);
+      await sleep(1000); // the stylesheet is looked at once a second
+      const own = overlaysOn(t.page)[0];
+      assert.equal(own.parentElement, t.container);
+      assert.ok(t.html.classList.contains('multisub-native-hidden'));
+      return { t, own };
+    };
+    const { t: t3, own: own3 } = await withStylesheet();
     delete t3.page.rootStyle['--multisub-stylesheet'];
+    t3.page.overlaySheet = false;
     await sleep(1150);
     assertTornDown(t3, own3);
     assert.ok(!t3.html.classList.contains('multisub-native-hidden'));
     t3.stop();
+
+    // A runtime that says the context is gone while its stylesheet stays
+    // (marker and all): no other instance to leave the class to.
+    const { t: t4, own: own4 } = await withStylesheet();
+    t4.browser.runtime.id = undefined;
+    await sleep(150);
+    assertTornDown(t4, own4);
+    assert.ok(!t4.html.classList.contains('multisub-native-hidden'));
+    t4.stop();
+  });
+
+  await test('reloaded onto an older build (no marker, no hello): the class is left to it', async () => {
+    const ping = () => ({ ok: true, engine: null });
+    const page = makePage('/watch/81');
+    page.rootStyle['--multisub-stylesheet'] = ' 1';
+    page.overlaySheet = true;
+    const t = boot({ page, stored: settingsWith({ mode: 'netflix' }), ping });
+    await netflixReady(t);
+    await sleep(1000);
+    const own = overlaysOn(page)[0];
+    // Safari swaps this build's overlay.css for the older one's, which has
+    // no marker, and the older content.js draws its own overlay. It set the
+    // class when its cues came and, like the versions already shipped, sets
+    // it again only when its own idea of it changes.
+    delete page.rootStyle['--multisub-stylesheet'];
+    const older = new Node('div'); older.id = 'multisub-overlay';
+    page.container.appendChild(older);
+    await sleep(1150);
+    assertTornDown(t, own);
+    assert.deepEqual(overlaysOn(page), [older]);
+    assert.ok(t.html.classList.contains('multisub-native-hidden'), "Netflix's line stays hidden under the older build's");
+    t.stop();
+
+    // Same, with this instance's overlay never attached (no video yet): the
+    // older build's overlay tells which stylesheet is on the page.
+    const page2 = makePage('/watch/81');
+    page2.rootStyle['--multisub-stylesheet'] = ' 1';
+    page2.overlaySheet = true;
+    page2.video.remove();
+    const t2 = boot({ page: page2, stored: settingsWith({ mode: 'netflix' }), ping });
+    await sleep(1150);
+    assert.equal(overlaysOn(page2).length, 0);
+    delete page2.rootStyle['--multisub-stylesheet'];
+    const older2 = new Node('div'); older2.id = 'multisub-overlay';
+    page2.container.appendChild(older2);
+    page2.html.classList.add('multisub-native-hidden');
+    await sleep(1150);
+    assert.equal(t2.onMessage.l.length, 0, 'torn down');
+    assert.ok(page2.html.classList.contains('multisub-native-hidden'));
+    t2.stop();
   });
 
   await test('a torn-down instance opens no port when a late engine-changed ping answers', async () => {

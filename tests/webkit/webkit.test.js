@@ -8,7 +8,8 @@
 //    over https (data: URL fixtures), one again in ja, one over http
 //    (loopback server), one with the manifest read through JSON.parse;
 //  - the extension reloaded under the open tab, over a build whose content
-//    script doesn't step aside (as the versions already shipped don't);
+//    script doesn't step aside (as the versions already shipped don't), and
+//    the other way round, onto such a build;
 //  - copies of the extension with a known mistake (no cue text cleanup, none
 //    for TTML, a forced-narrative second line, no world: "MAIN" inject.js, a
 //    content script that doesn't announce itself, no stylesheet marker) that
@@ -312,14 +313,18 @@ test('watch fails when inject.js is no longer a world: "MAIN" content script (fa
 // --- the extension reloaded under an open tab --------------------------------
 
 // content.js patched so that it neither steps aside nor marks or hides
-// anything, like the versions shipped before instances knew of each other.
+// anything, and sets html.multisub-native-hidden only when its own idea of
+// it changes (starting from "not hidden"), like the versions shipped before
+// instances knew of each other.
 function uncooperative(src) {
   const patches = [
     [/function announce\(\) \{/, 'function announce() { return;'],
     [/function teardown\(reason, by\) \{/, 'function teardown(reason, by) { return;'],
     [/function keepInstanceStyle\(\) \{/, 'function keepInstanceStyle() { return;'],
     [/function removeForeignElements\(\) \{/, 'function removeForeignElements() { return;'],
-    [/overlay\.setAttribute\(INSTANCE_ATTR, INSTANCE_ID\);/, '']
+    [/overlay\.setAttribute\(INSTANCE_ATTR, INSTANCE_ID\);/, ''],
+    [/if \(classes\.contains\('multisub-native-hidden'\) !== hide\) (classes\.toggle\('multisub-native-hidden', hide\);)/,
+      'if (hide === !!state.shippedNativeHidden) return; state.shippedNativeHidden = hide; $1']
   ];
   for (const [re, to] of patches) {
     const next = src.replace(re, to);
@@ -329,13 +334,29 @@ function uncooperative(src) {
   return src;
 }
 
+// overlay.css without the --multisub-stylesheet marker in extension copy `dir`.
+function withoutMarker(dir) {
+  const file = path.join(dir, 'overlay.css');
+  const src = fs.readFileSync(file, 'utf8');
+  const patched = src.replace(/--multisub-stylesheet:\s*1;/, '');
+  assert.notEqual(patched, src, 'overlay.css has no --multisub-stylesheet marker any more; update this test');
+  fs.writeFileSync(file, patched);
+}
+
+// A build from before instances knew of each other: uncooperative()'s
+// content.js and an overlay.css without the marker.
+function shippedLikeBuild(tag) {
+  return extensionVariant(tag, (d) => {
+    const file = path.join(d, 'content.js');
+    fs.writeFileSync(file, uncooperative(fs.readFileSync(file, 'utf8')));
+    withoutMarker(d);
+  });
+}
+
 // What Safari did to a viewer: a new build installed while Netflix was open
 // left the old content script drawing its own overlay under the new one's.
 test('watch reload over a build that doesn\'t step aside: its overlay is hidden, the new one draws alone', () => {
-  const old = extensionVariant('uncooperative', (d) => {
-    const file = path.join(d, 'content.js');
-    fs.writeFileSync(file, uncooperative(fs.readFileSync(file, 'utf8')));
-  });
+  const old = shippedLikeBuild('uncooperative');
   const reload = JSON.parse(fs.readFileSync(path.join(SCENARIOS, 'reload.json'), 'utf8'));
   const [first, second] = reload.checkpoints;
   const scenario = scenarioVariant('reload.json', 'over-old', {
@@ -343,6 +364,30 @@ test('watch reload over a build that doesn\'t step aside: its overlay is hidden,
       expect: Object.assign({}, second.expect, { overlaysInDOM: 2 }) })]
   });
   const res = harness(['watch', old, scenario]);
+  assertPassed(res);
+});
+
+// The other way round, as when switching between builds: an older build is
+// installed while this one runs. It never says hello, so this instance sees
+// its stylesheet go and steps aside as if the extension were off. Netflix's
+// own line must stay hidden under the older build's overlay: that build set
+// the class when its cues came, and sets it again only when its own idea of
+// it changes.
+test('watch reload onto a build from before instances: it draws alone and Netflix\'s own line stays hidden', () => {
+  const older = shippedLikeBuild('shipped-onto');
+  const reload = JSON.parse(fs.readFileSync(path.join(SCENARIOS, 'reload.json'), 'utf8'));
+  const netflix = JSON.parse(fs.readFileSync(path.join(SCENARIOS, 'netflix.json'), 'utf8'));
+  const linesAt = (time) => {
+    const cp = netflix.checkpoints.find((c) => c.time === time);
+    assert.ok(cp, 'netflix.json has no checkpoint at ' + time + ' s any more; update this test');
+    return { original: cp.expect.original, text: cp.expect.text };
+  };
+  const alone = { overlays: 1, overlaysInDOM: 1, nativeHidden: true, nativeVisible: false };
+  const checkpoints = [reload.checkpoints[0],
+    { time: 6, action: 'reload-extension', extension: older, waitMs: 8000, expect: Object.assign(linesAt(6), alone) },
+    { time: 14, waitMs: 4000, expect: Object.assign(linesAt(14), alone) },
+    { time: 18, waitMs: 4000, expect: Object.assign(linesAt(18), alone) }];
+  const res = harness(['watch', EXT, scenarioVariant('reload.json', 'onto-shipped', { checkpoints, native: undefined })]);
   assertPassed(res);
 });
 
@@ -363,13 +408,7 @@ test('watch reload fails when content.js doesn\'t announce itself (the old insta
 });
 
 test('watch fails when overlay.css has no marker (a turned-off extension keeps drawing)', () => {
-  const dir = extensionVariant('no-marker', (d) => {
-    const file = path.join(d, 'overlay.css');
-    const src = fs.readFileSync(file, 'utf8');
-    const patched = src.replace(/--multisub-stylesheet:\s*1;/, '');
-    assert.notEqual(patched, src, 'overlay.css has no --multisub-stylesheet marker any more; update this test');
-    fs.writeFileSync(file, patched);
-  });
+  const dir = extensionVariant('no-marker', withoutMarker);
   const reload = JSON.parse(fs.readFileSync(path.join(SCENARIOS, 'reload.json'), 'utf8'));
   const [first, , off] = reload.checkpoints;
   const res = harness(['watch', dir, scenarioVariant('reload.json', 'no-marker', { checkpoints: [first, off], native: undefined })]);

@@ -134,9 +134,15 @@ known mistake fail:
   extension's content script keeps drawing and keeps Netflix's own
   subtitles hidden.
 
-`reload.json` also runs over a copy of the extension whose `content.js`
-neither steps aside nor marks its elements, as the versions already shipped
-do: after the reload its overlay stays in the page but must be hidden.
+`reload.json` also runs over a copy of the extension that behaves like the
+versions already shipped: its `content.js` neither steps aside nor marks its
+elements, and sets `html.multisub-native-hidden` only when its own idea of
+it changes; its `overlay.css` has no marker. Reloading from that copy to
+this build, its overlay stays in the page but must be hidden. Reloading from
+this build onto that copy (as when switching to an older build), this
+build's instance sees its stylesheet go and steps aside as if the extension
+were off; the copy must then draw alone, with Netflix's own line still
+hidden.
 
 ### Reloading the extension under an open tab
 
