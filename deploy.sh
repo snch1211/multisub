@@ -87,6 +87,10 @@ echo "▶︎ (4/5) 驗證簽章 + 只登錄 /Applications 這一份（移除 Der
 codesign --verify --deep --strict /Applications/MultiSub.app \
   && echo "  ✓ 簽章有效" || { echo "✗ 簽章驗證失敗"; exit 1; }
 "$LSREGISTER" -u "$BUILT_APP" >/dev/null 2>&1 || true   # unregister the temp copy
+# Delete it too: if anything launches the DerivedData copy later (Xcode's Run,
+# a script, Spotlight), LaunchServices registers it again and Safari lists a
+# second MultiSub that can't reach its app. The next build recreates it.
+rm -rf "$BUILT_APP"
 "$LSREGISTER" -f /Applications/MultiSub.app             # register the real one
 
 echo "▶︎ (5/5) 完成 ✓"

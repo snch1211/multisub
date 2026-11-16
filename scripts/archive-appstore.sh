@@ -44,6 +44,20 @@ xcodebuild -project "$PROJECT" -scheme MultiSub -configuration Release \
   || { echo "✗ Archive failed — see $LOG"; tail -20 "$LOG"; exit 1; }
 echo "  ✓ $ARCHIVE"
 
+# Archiving leaves signed copies of the app in DerivedData and inside the
+# .xcarchive, and LaunchServices registers them. Safari then may launch the
+# extension's native handler from one of those copies, which the sandbox
+# refuses, and the extension reports it can't reach the app. Keep only the
+# installed copy registered.
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+for app in "$ARCHIVE/Products/Applications/MultiSub.app" \
+           "$(ls -d ~/Library/Developer/Xcode/DerivedData/MultiSub-*/Build/Intermediates.noindex/ArchiveIntermediates/MultiSub/InstallationBuildProductsLocation/Applications/MultiSub.app 2>/dev/null | head -1)"; do
+  [ -d "$app" ] || continue
+  "$LSREGISTER" -u "$app" >/dev/null 2>&1 || true
+  pluginkit -r "$app/Contents/PlugIns/MultiSub Extension.appex" >/dev/null 2>&1 || true
+done
+[ -d /Applications/MultiSub.app ] && "$LSREGISTER" -f /Applications/MultiSub.app >/dev/null 2>&1 || true
+
 cat >"$OUT_DIR/ExportOptions.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
