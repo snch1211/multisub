@@ -267,7 +267,12 @@ function renderStatus() {
   if (!view.hasPermission) { setStatus('允許存取 Netflix 後就會開始'); return; }
   if (!view.isNetflix) { setStatus('打開 Netflix 播放影片就會開始'); return; }
   const st = view.status;
-  if (!st) { setStatus(view.statusFailed ? '這個分頁還沒啟用 MultiSub' : '—'); return; }
+  if (!st) {
+    setStatus(view.statusFailed
+      ? '這個分頁還沒啟用 MultiSub' + (view.statusDetail ? '（' + view.statusDetail + '）' : '')
+      : '—');
+    return;
+  }
   if (!st.onWatchPage) { setStatus('播放影片後就會顯示字幕'); return; }
   const lang = MS.languageName(settings.targetLang);
   const progress = st.totalCues ? ' ' + st.translatedCount + ' / ' + st.totalCues + ' 句' : '';
@@ -397,9 +402,19 @@ async function refreshTab() {
   view.tab = tab;
   view.hasPermission = await hasNetflixAccess();
   let status = null;
+  let detail = '';
   if (tab) {
-    try { status = await api.tabs.sendMessage(tab.id, { type: 'get-status' }); } catch (e) { status = null; }
+    try {
+      status = await api.tabs.sendMessage(tab.id, { type: 'get-status' });
+      if (!status) detail = '分頁沒有回應';
+    } catch (e) {
+      status = null;
+      detail = String((e && e.message) || e);
+    }
   }
+  // Shown after 「這個分頁還沒啟用 MultiSub」 so a report from the field says
+  // why the tab didn't answer.
+  view.statusDetail = status ? '' : detail;
   // tab.url is only visible with host access; an answering content script
   // proves it's Netflix either way.
   view.isNetflix = !!status || !!(tab && tab.url && NETFLIX_URL.test(tab.url));
