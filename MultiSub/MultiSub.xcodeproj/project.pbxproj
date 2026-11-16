@@ -81,6 +81,12 @@
 		4D58000000000000000B1001 /* stopwords-en.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA10 /* stopwords-en.txt */; };
 		4D58000000000000000B1002 /* cefr-wordlist-en.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AA12 /* cefr-wordlist-en.txt */; };
 		4D58000000000000000B1102 /* shared.js in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B1101 /* shared.js */; };
+		4D58000000000000000E0002 /* icon-48.png in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000E0001 /* icon-48.png */; };
+		4D58000000000000000E0004 /* icon-96.png in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000E0003 /* icon-96.png */; };
+		4D58000000000000000E0006 /* icon-128.png in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000E0005 /* icon-128.png */; };
+		4D58000000000000000E0008 /* icon-256.png in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000E0007 /* icon-256.png */; };
+		4D58000000000000000E000A /* icon-512.png in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000E0009 /* icon-512.png */; };
+		4D58000000000000000E000C /* toolbar-icon.svg in Resources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000E000B /* toolbar-icon.svg */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -165,6 +171,12 @@
 		4D58000000000000000B0901 /* SecretStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretStore.swift; sourceTree = "<group>"; };
 		4D58000000000000000B0A01 /* Translator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Translator.swift; sourceTree = "<group>"; };
 		4D58000000000000000B1101 /* shared.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = shared.js; path = ../../extension/shared.js; sourceTree = "<group>"; };
+		4D58000000000000000E0001 /* icon-48.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon-48.png; path = ../../extension/icon-48.png; sourceTree = "<group>"; };
+		4D58000000000000000E0003 /* icon-96.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon-96.png; path = ../../extension/icon-96.png; sourceTree = "<group>"; };
+		4D58000000000000000E0005 /* icon-128.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon-128.png; path = ../../extension/icon-128.png; sourceTree = "<group>"; };
+		4D58000000000000000E0007 /* icon-256.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon-256.png; path = ../../extension/icon-256.png; sourceTree = "<group>"; };
+		4D58000000000000000E0009 /* icon-512.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon-512.png; path = ../../extension/icon-512.png; sourceTree = "<group>"; };
+		4D58000000000000000E000B /* toolbar-icon.svg */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = toolbar-icon.svg; path = ../../extension/toolbar-icon.svg; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -307,6 +319,12 @@
 				22F5F6832FF6D34F00A10F74 /* inject.js */,
 				22F5F6842FF6D34F00A10F74 /* popup.css */,
 				22F5F6852FF6D34F00A10F74 /* content.js */,
+				4D58000000000000000E0001 /* icon-48.png */,
+				4D58000000000000000E0003 /* icon-96.png */,
+				4D58000000000000000E0005 /* icon-128.png */,
+				4D58000000000000000E0007 /* icon-256.png */,
+				4D58000000000000000E0009 /* icon-512.png */,
+				4D58000000000000000E000B /* toolbar-icon.svg */,
 				4D58000000000000000B1101 /* shared.js */,
 			);
 			name = Resources;
@@ -437,6 +455,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				22F5F68D2FF6D34F00A10F74 /* content.js in Resources */,
+				4D58000000000000000E0002 /* icon-48.png in Resources */,
+				4D58000000000000000E0004 /* icon-96.png in Resources */,
+				4D58000000000000000E0006 /* icon-128.png in Resources */,
+				4D58000000000000000E0008 /* icon-256.png in Resources */,
+				4D58000000000000000E000A /* icon-512.png in Resources */,
+				4D58000000000000000E000C /* toolbar-icon.svg in Resources */,
 				22F5F6892FF6D34F00A10F74 /* overlay.css in Resources */,
 				22F5F68C2FF6D34F00A10F74 /* popup.css in Resources */,
 				22F5F6872FF6D34F00A10F74 /* background.js in Resources */,
