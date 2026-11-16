@@ -1,0 +1,25 @@
+WEBVTT
+
+NOTE Netflix-style WebVTT (webvtt-lssdh-ios8). Netflix puts &lrm; in front
+NOTE of most lines and sometimes encodes it twice as &amp;lrm;.
+
+1
+00:00:01.000 --> 00:00:04.000 position:50.00%,middle align:middle size:80.00% line:84.67%
+&lrm;Welcome back to the laboratory.
+
+2
+00:00:05.000 --> 00:00:08.000 position:50.00%,middle align:middle size:80.00% line:84.67%
+&amp;lrm;Everything depends on this experiment.
+
+3
+00:00:09.000 --> 00:00:12.000 position:50.00%,middle align:middle size:80.00% line:79.33%
+<c.bg_transparent>&lrm;Nobody understands</c>
+<c.bg_transparent>&lrm;the instructions.</c>
+
+4
+00:00:13.000 --> 00:00:16.000 position:50.00%,middle align:middle size:80.00% line:84.67%
+Stay calm.
+
+5
+00:00:17.000 --> 00:00:20.000 position:50.00%,middle align:middle size:80.00% line:84.67%
+&AMP;LRM;Don&#39;t touch anything.

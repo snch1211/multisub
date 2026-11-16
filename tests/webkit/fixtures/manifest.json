@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "result": {
+    "movieId": {{MOVIE_ID}},
+    "duration": 30000,
+    "audio_tracks": [
+      { "language": "en", "languageDescription": "English [Original]", "rawTrackType": "primary", "new_track_id": "A:1:1;2;en;0;0;0;" }
+    ],
+    "timedtexttracks": [
+      {
+        "language": "en", "languageDescription": "English", "rawTrackType": "subtitles", "trackType": "PRIMARY",
+        "isForcedNarrative": false, "isNoneTrack": false, "new_track_id": "T:2:1;1;en;0;0;0;",
+        "ttDownloadables": {
+          "webvtt-lssdh-ios8": { "size": 1024, "urls": [{ "cdn_id": 1, "url": "{{URL:/subs/en.vtt}}" }] },
+          "dfxp-ls-sdh": { "size": 2048, "urls": [{ "cdn_id": 1, "url": "{{URL:/subs/en.dfxp}}" }] }
+        }
+      },
+      {
+        "language": "zh-Hant", "languageDescription": "中文（繁體）", "rawTrackType": "subtitles", "trackType": "PRIMARY",
+        "isForcedNarrative": false, "isNoneTrack": false, "new_track_id": "T:2:1;1;zh-Hant;0;0;0;",
+        "ttDownloadables": {
+          "dfxp-ls-sdh": { "size": 2048, "downloadUrls": { "5521": "{{URL:/subs/zh-Hant.dfxp}}" } }
+        }
+      },
+      {
+        "language": "zh-Hant", "languageDescription": "中文（繁體）[Forced]", "rawTrackType": "subtitles", "trackType": "PRIMARY",
+        "isForcedNarrative": true, "isNoneTrack": false, "new_track_id": "T:2:1;1;zh-Hant;1;0;0;",
+        "ttDownloadables": {
+          "dfxp-ls-sdh": { "size": 512, "downloadUrls": { "5521": "{{URL:/subs/zh-Hant-forced.dfxp}}" } }
+        }
+      },
+      {
+        "language": null, "languageDescription": "Off", "rawTrackType": "subtitles", "isNoneTrack": true,
+        "new_track_id": "T:2:0;1;none;0;0;0;", "ttDownloadables": {}
+      }
+    ]
+  }
+}

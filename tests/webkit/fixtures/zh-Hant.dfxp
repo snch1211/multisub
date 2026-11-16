@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" xmlns:tts="http://www.w3.org/ns/ttml#styling" ttp:tickRate="10000000" xml:lang="zh-Hant">
+<head>
+<styling><style xml:id="style0" tts:fontSize="100%" tts:color="white"/></styling>
+<layout><region xml:id="region0" tts:origin="10% 80%" tts:extent="80% 20%"/></layout>
+</head>
+<body>
+<div xml:space="preserve">
+<p begin="10000000t" end="40000000t" region="region0" style="style0">歡迎回到實驗室。</p>
+<p begin="50000000t" end="80000000t" region="region0" style="style0">一切都取決於這個實驗。</p>
+<p begin="90000000t" end="120000000t" region="region0" style="style0">沒有人看得懂<br/>這些說明。</p>
+<p begin="130000000t" end="160000000t" region="region0" style="style0">保持冷靜。</p>
+<p begin="170000000t" end="200000000t" region="region0" style="style0">什麼都別碰。</p>
+</div>
+</body>
+</tt>
