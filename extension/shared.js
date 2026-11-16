@@ -50,13 +50,25 @@
   // LANGUAGES. Same as LanguageNames.fallbackTargetLang in Swift.
   const FALLBACK_TARGET_LANG = 'zh-TW';
 
+  // Chinese, plus the Chinese languages macOS lists on their own (yue
+  // Cantonese, wuu Shanghainese), each with the code its tag maps to when it
+  // names neither a script nor a region: CLDR's likely subtags (zh →
+  // zh-Hans-CN, yue → yue-Hant-HK, wuu → wuu-Hans-CN).
+  const CHINESE_DEFAULTS = Object.freeze({ zh: 'zh-CN', yue: 'zh-TW', wuu: 'zh-CN' });
+
   // Maps one BCP 47 tag ("zh-Hant-TW", "ja-JP", "en_US") to a LANGUAGES
-  // code, or '' when we don't offer that language. Chinese goes by its
-  // script subtag when there is one (zh-Hans-HK is Simplified), else by its
-  // region (TW, HK and MO are Traditional), and a bare "zh" is Simplified,
-  // as in CLDR's likely subtags. Every other language matches on its
-  // primary subtag, so pt-BR is pt and es-419 is es. Extensions ("-u-...",
-  // "-x-...") and ICU keywords ("@...") are ignored.
+  // code, or '' when we don't offer that language. Chinese (see
+  // CHINESE_DEFAULTS) goes by its script subtag when there is one
+  // (zh-Hans-HK is Simplified), else by its region (TW, HK and MO are
+  // Traditional; CN, SG and MY Simplified), else by CHINESE_DEFAULTS. Every
+  // other language matches on its primary subtag, so pt-BR is pt and es-419
+  // is es. Extensions ("-u-...", "-x-...") and ICU keywords ("@...") are
+  // ignored.
+  //
+  // yue and wuu count as Chinese because Safari's navigator.language
+  // already folds them into zh-* (a yue-Hans-CN system gives "zh-CN", a
+  // yue-Hant-HK one "zh-HK"), while the app's Locale.preferredLanguages
+  // keeps "yue-Hans-CN"; mapping them here lands both sides on one code.
   //
   // Must behave exactly like LanguageNames.supportedLanguage(for:) in
   // Shared/LanguageNames.swift: the app and the extension each work out the
@@ -66,12 +78,13 @@
     const singleton = parts.findIndex((p) => p.length === 1);
     if (singleton >= 0) parts = parts.slice(0, singleton);
     if (!parts.length) return '';
-    if (parts[0] === 'zh') {
+    if (Object.prototype.hasOwnProperty.call(CHINESE_DEFAULTS, parts[0])) {
       const rest = parts.slice(1);
       if (rest.includes('hant')) return 'zh-TW';
       if (rest.includes('hans')) return 'zh-CN';
       if (rest.some((p) => p === 'tw' || p === 'hk' || p === 'mo')) return 'zh-TW';
-      return 'zh-CN';
+      if (rest.some((p) => p === 'cn' || p === 'sg' || p === 'my')) return 'zh-CN';
+      return CHINESE_DEFAULTS[parts[0]];
     }
     const hit = LANGUAGES.find((l) => l.code === parts[0]);
     return hit ? hit.code : '';

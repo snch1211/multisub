@@ -242,13 +242,18 @@ test('supportedLanguageFor: system language tags to LANGUAGES codes', () => {
     // Simplified Chinese; a bare zh is Simplified (CLDR likely subtags)
     'zh-Hans-CN': 'zh-CN', 'zh-CN': 'zh-CN', 'zh-SG': 'zh-CN', 'zh-Hans': 'zh-CN', 'zh-Hans-HK': 'zh-CN',
     'zh-Hans-TW': 'zh-CN', 'zh-MY': 'zh-CN', 'zh': 'zh-CN',
+    // Cantonese and Shanghainese count as Chinese (Safari's navigator.language
+    // already turns them into zh-*): script, then region, then their usual script
+    'yue-Hans-CN': 'zh-CN', 'yue-Hant-HK': 'zh-TW', 'yue-Hant-MO': 'zh-TW', 'yue_Hans': 'zh-CN',
+    'yue-HK': 'zh-TW', 'yue-CN': 'zh-CN', 'yue': 'zh-TW',
+    'wuu-Hans-CN': 'zh-CN', 'wuu-Hant-TW': 'zh-TW', 'wuu-TW': 'zh-TW', 'wuu': 'zh-CN',
     // everything else by primary subtag
     'ja-JP': 'ja', 'ja': 'ja', 'ko-KR': 'ko', 'en-US': 'en', 'en-GB': 'en', 'en_TW': 'en', 'es-419': 'es',
     'pt-BR': 'pt', 'fr-CA': 'fr', 'de-DE': 'de', 'vi-VN': 'vi', 'th-TH': 'th', 'id-ID': 'id',
     // extensions and ICU keywords don't count
     'zh-TW-u-ca-roc': 'zh-TW', 'en-US-x-private': 'en', 'en_US@calendar=japanese': 'en', 'zh-u-nu-hanidec-hk': 'zh-CN',
     // not offered
-    'fi-FI': '', 'yue-Hant-HK': '', 'nb-NO': '', 'x-klingon': '', '': '', '-': ''
+    'fi-FI': '', 'nan-Hant-TW': '', 'nb-NO': '', 'x-klingon': '', 'zhx': '', '': '', '-': ''
   };
   for (const [tag, want] of Object.entries(cases)) assert.equal(MS.supportedLanguageFor(tag), want, tag);
   assert.equal(MS.supportedLanguageFor(null), '');
@@ -265,6 +270,10 @@ test('defaultTargetLang: the first preferred language decides, else zh-TW', () =
   assert.equal(MS.defaultTargetLang(['ja-JP', 'zh-TW']), 'ja');
   assert.equal(MS.defaultTargetLang(['ko-KR']), 'ko');
   assert.equal(MS.defaultTargetLang(['en-US', 'ja-JP']), 'en');
+  // what Locale.preferredLanguages says on a Cantonese (Simplified) Mac,
+  // where Safari reports zh-CN: both land on zh-CN
+  assert.equal(MS.defaultTargetLang(['yue-Hans-CN']), 'zh-CN');
+  assert.equal(MS.defaultTargetLang(['zh-CN']), 'zh-CN');
   // only the first: Safari's navigator.languages has just that one
   assert.equal(MS.defaultTargetLang(['fi-FI', 'ja-JP']), 'zh-TW');
   assert.equal(MS.defaultTargetLang('ja-JP'), 'ja');

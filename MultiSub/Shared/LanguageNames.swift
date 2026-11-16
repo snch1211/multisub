@@ -36,14 +36,27 @@ enum LanguageNames {
     /// `supportedCodes`. Same as FALLBACK_TARGET_LANG in shared.js.
     static let fallbackTargetLang = "zh-TW"
 
+    /// Chinese, plus the Chinese languages macOS lists on their own (yue
+    /// Cantonese, wuu Shanghainese), each with the code its tag maps to when
+    /// it names neither a script nor a region: CLDR's likely subtags (zh →
+    /// zh-Hans-CN, yue → yue-Hant-HK, wuu → wuu-Hans-CN). Same as
+    /// CHINESE_DEFAULTS in shared.js.
+    private static let chineseDefaults = ["zh": "zh-CN", "yue": "zh-TW", "wuu": "zh-CN"]
+
     /// Maps one BCP 47 tag ("zh-Hant-TW", "ja-JP", "en_US") to a code in
     /// `supportedCodes`, or nil when we don't offer that language. Chinese
-    /// goes by its script subtag when there is one (zh-Hans-HK is
-    /// Simplified), else by its region (TW, HK and MO are Traditional), and
-    /// a bare "zh" is Simplified, as in CLDR's likely subtags. Every other
-    /// language matches on its primary subtag, so pt-BR is pt and es-419 is
-    /// es. Extensions ("-u-...", "-x-...") and ICU keywords ("@...") are
-    /// ignored.
+    /// (see `chineseDefaults`) goes by its script subtag when there is one
+    /// (zh-Hans-HK is Simplified), else by its region (TW, HK and MO are
+    /// Traditional; CN, SG and MY Simplified), else by `chineseDefaults`.
+    /// Every other language matches on its primary subtag, so pt-BR is pt
+    /// and es-419 is es. Extensions ("-u-...", "-x-...") and ICU keywords
+    /// ("@...") are ignored.
+    ///
+    /// yue and wuu count as Chinese because Safari's `navigator.language`
+    /// (what the extension sees) already folds them into zh-*: a Mac set to
+    /// Cantonese (Simplified) reports "yue-Hans-CN" in
+    /// `Locale.preferredLanguages` but "zh-CN" to web pages. Mapping them
+    /// here lands both sides on one code.
     ///
     /// Must behave exactly like `supportedLanguageFor` in extension/shared.js
     /// (nil here is '' there): the app and the extension each work out the
@@ -56,12 +69,13 @@ enum LanguageNames {
             parts = Array(parts[..<singleton])
         }
         guard let primary = parts.first else { return nil }
-        if primary == "zh" {
+        if let chineseDefault = chineseDefaults[primary] {
             let rest = parts.dropFirst()
             if rest.contains("hant") { return "zh-TW" }
             if rest.contains("hans") { return "zh-CN" }
             if rest.contains(where: { $0 == "tw" || $0 == "hk" || $0 == "mo" }) { return "zh-TW" }
-            return "zh-CN"
+            if rest.contains(where: { $0 == "cn" || $0 == "sg" || $0 == "my" }) { return "zh-CN" }
+            return chineseDefault
         }
         return supportedCodes.contains(primary) ? primary : nil
     }
