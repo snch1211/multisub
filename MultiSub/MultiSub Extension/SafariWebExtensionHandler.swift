@@ -250,8 +250,9 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         let savesKey = !(apiKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         let current = MultiSubConfig.load()
         let keyProvider = provider ?? current.cloud.provider
-        if keyProvider.needsBaseURL, let baseURL, !baseURL.isEmpty, !Self.isValidBaseURL(baseURL) {
-            return ["ok": false, "error": "bad-request", "detail": "API 網址格式不正確，請以 http:// 或 https:// 開頭。"]
+        if keyProvider.needsBaseURL, let baseURL, !baseURL.isEmpty,
+           let problem = CloudSettings.baseURLProblem(baseURL) {
+            return ["ok": false, "error": "bad-request", "detail": problem]
         }
 
         let configuresCloud = engine != nil || provider != nil || model != nil || baseURL != nil || savesKey
@@ -335,6 +336,9 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         if provider.needsBaseURL, baseURL.isEmpty {
             return ["ok": false, "error": "bad-request", "detail": "請先填寫 API 網址。"]
         }
+        if provider.needsBaseURL, let problem = CloudSettings.baseURLProblem(baseURL) {
+            return ["ok": false, "error": "bad-request", "detail": problem]
+        }
         let key = Self.requestKey(message, provider: provider)
         if provider.keyRequired, key == nil {
             return ["ok": false, "error": "engine-not-ready", "detail": "還沒儲存這個 AI 服務的 API Key。"]
@@ -370,9 +374,8 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             if baseURL.isEmpty {
                 return .invalid(["ok": false, "error": "bad-request", "detail": "請先填寫 API 網址。"])
             }
-            if !isValidBaseURL(baseURL) {
-                return .invalid(["ok": false, "error": "bad-request",
-                                 "detail": "API 網址格式不正確，請以 http:// 或 https:// 開頭。"])
+            if let problem = CloudSettings.baseURLProblem(baseURL) {
+                return .invalid(["ok": false, "error": "bad-request", "detail": problem])
             }
         }
         if model.isEmpty, provider.defaultModel.isEmpty {
@@ -568,13 +571,6 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         }
         logger.error("\(action, privacy: .public) failed: \(String(describing: error))")
         return ["ok": false, "error": "\(action)-failed", "detail": error.localizedDescription]
-    }
-
-    private static func isValidBaseURL(_ string: String) -> Bool {
-        guard let url = URL(string: string), let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https", url.host != nil
-        else { return false }
-        return true
     }
 
     private static func prefsDict(_ prefs: SharedPrefs) -> [String: Any] {

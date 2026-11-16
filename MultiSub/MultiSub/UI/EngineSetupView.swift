@@ -428,6 +428,12 @@ struct EngineSetupView: View {
             feedback = .failure("請輸入 API 網址。")
             return
         }
+        // The check set-engine and test-engine make, so the app and the
+        // popup accept the same addresses.
+        if provider.needsBaseURL, let problem = CloudSettings.baseURLProblem(trimmedBaseURL) {
+            feedback = .failure(problem)
+            return
+        }
         if model.isEmpty && provider.defaultModel.isEmpty {
             feedback = .failure("請輸入模型 ID。")
             return
@@ -511,6 +517,10 @@ struct EngineSetupView: View {
         }
         if provider.needsBaseURL && baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             feedback = .failure("請先輸入 API 網址。")
+            return
+        }
+        if provider.needsBaseURL, let problem = CloudSettings.baseURLProblem(baseURL) {
+            feedback = .failure(problem)
             return
         }
         let requestedProvider = provider

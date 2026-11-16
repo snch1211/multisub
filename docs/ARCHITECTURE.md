@@ -160,7 +160,18 @@ subtitle text leaves the Mac before the user has agreed. Consent is recorded
 by the app's confirmation alert or by `set-engine` with `consent: true` (the
 popup's confirmation step), and is never removed by switching away. Both
 confirmations name the provider, or 「你填的 API 網址」 plus the address for
-`custom`.
+`custom`. The popup names it with the WHATWG URL parser while Swift records
+the consent and sends with Foundation, so a custom address must be one both
+read as the same server (`CloudSettings.baseURLProblem`): http(s), a host of
+ASCII letters, digits, `.`, `-`, `_` (a numeric one as plain dotted IPv4) or
+a bracketed IPv6 address, an optional port, and no credentials, percent
+escapes, backslash, whitespace or control characters anywhere
+(`http://localhost:1234\@evil.example/v1` is localhost to WHATWG and
+evil.example to Foundation). `set-engine`, `test-engine`, `list-models` and
+the app refuse any other address with `bad-request` and a zh-TW `detail`,
+and `CloudLLMClient` sends nothing to one saved by an older build.
+tests/native checks that WHATWG and Foundation find the same host and port
+for the addresses it accepts.
 
 **Test before save.** Both UIs test what was typed before saving anything:
 the app with `Translator.testEngine(client:)`, the popup with `test-engine`

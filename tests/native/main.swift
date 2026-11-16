@@ -182,5 +182,91 @@ func unwrap<T>(_ value: T?, line: Int = #line) throws -> T {
 }
 
 try? fm.removeItem(at: modelsRoot)
-print("\n\(passed) tests passed" + (failed > 0 ? ", \(failed) FAILED" : ""))
+
+// MARK: - Custom server addresses
+
+let notHTTP = "API 網址格式不正確，請以 http:// 或 https:// 開頭。"
+let notPlain = "API 網址格式不正確。主機名稱請用英文字母、數字、點或連字號，網址裡不要有帳號密碼（@）、反斜線或空白。"
+
+let acceptedBaseURLs = [
+    "http://localhost:1234/v1", "https://api.example.com/v1", "http://127.0.0.1:8080",
+    "http://192.168.1.20:11434/v1/", "http://10.0.0.255/v1", "http://[::1]:1234/v1",
+    "http://[2001:db8::1]/v1", "HTTP://Host.Example:80/v1/", "http://a_b.example/v1",
+    "http://my-server.local:1234/v1", "http://host.example:1234/v1?x=1#f",
+    "http://host.example/v1/路徑", "  http://localhost:1234/v1  ", "http://host.example:/v1",
+    "http://xn--bcher-kva.example/v1", "https://openrouter.example:443/api/v1",
+]
+
+/// The address and the message it gets.
+let refusedBaseURLs: [(String, String)] = [
+    ("", notHTTP), ("ftp://host.example/v1", notHTTP), ("localhost:1234/v1", notHTTP),
+    ("http:evil.example/v1", notHTTP), ("http:/evil.example/v1", notHTTP),
+    ("javascript://evil.example/v1", notHTTP),
+    ("http:///evil.example/v1", notPlain),
+    // The review's case: localhost:1234 to WHATWG, evil.example to Foundation.
+    ("http://localhost:1234\\@evil.example/v1", notPlain),
+    ("http://evil.example\\.good.example/v1", notPlain),
+    ("http://localhost:1234\\evil.example/v1", notPlain),
+    ("http://user:pass@host.example/v1", notPlain), ("http://a@b@c.example/v1", notPlain),
+    ("http://@host.example/v1", notPlain),
+    ("http://evil%2Eexample/v1", notPlain), ("http://good.example%40evil.example/v1", notPlain),
+    ("http://ｅｖｉｌ.example/v1", notPlain), ("http://evil。example/v1", notPlain),
+    ("http://bücher.example/v1", notPlain), ("http://faß.de/v1", notPlain),
+    ("http://0x7f.0.0.1:1234/v1", notPlain), ("http://2130706433/v1", notPlain),
+    ("http://127.1/v1", notPlain), ("http://0177.0.0.1/v1", notPlain),
+    ("http://127.0.0.1./v1", notPlain), ("http://256.0.0.1/v1", notPlain),
+    ("http://example.123/v1", notPlain), ("http://example.0x10/v1", notPlain),
+    ("http://[evil.example]/v1", notPlain), ("http://[::1]evil.example/v1", notPlain),
+    ("http://[fe80::1%25en0]:1234/v1", notPlain),
+    ("http://host.example:99999/v1", notPlain), ("http://host.example:12a/v1", notPlain),
+    ("http://host.example:1234:80/v1", notPlain),
+    ("http://evil.exa\tmple/v1", notPlain), ("http://localhost:1234\n@evil.example/v1", notPlain),
+    ("http://local host/v1", notPlain), ("http://host.example/v 1", notPlain),
+    ("http://host.example/v\u{200B}1", notPlain), ("http://evil\u{200B}.example/v1", notPlain),
+    ("http://evil|.example/v1", notPlain), ("http://evil.example;good/v1", notPlain),
+]
+
+test("custom server addresses both URL parsers read the same way are accepted") {
+    for url in acceptedBaseURLs {
+        try expect(CloudSettings.baseURLProblem(url), nil, url.debugDescription)
+    }
+}
+
+test("addresses the popup could name as another server are refused, with what to fix") {
+    for (url, message) in refusedBaseURLs {
+        try expect(CloudSettings.baseURLProblem(url), message, url.debugDescription)
+    }
+}
+
+/// A custom address an older build saved: nothing is sent there.
+let savedBefore = CloudLLMClient(provider: .custom, model: "m",
+                                 baseURL: "http://localhost:1234\\@evil.example/v1", apiKey: nil)
+var savedBeforeError: String?
+do {
+    _ = try await savedBefore.listModels()
+} catch let error as CloudLLMError {
+    savedBeforeError = error.message
+} catch {
+    savedBeforeError = "\(error)"
+}
+test("a saved custom address that's refused now gets no request") {
+    try expect(savedBeforeError, "API 網址格式不正確，請檢查設定。")
+}
+
+// What Foundation, which sends the requests, connects to for each accepted
+// address; native.test.js checks that the WHATWG URL parser (the popup's)
+// finds the same host and port.
+for url in acceptedBaseURLs {
+    let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+    let parsed = URL(string: trimmed)
+    let probe: [String: Any] = [
+        "url": url,
+        "host": parsed?.host?.lowercased() ?? NSNull(),
+        "port": parsed?.port ?? NSNull(),
+    ]
+    let data = try JSONSerialization.data(withJSONObject: probe)
+    print("PROBE " + String(decoding: data, as: UTF8.self))
+}
+
+print("RESULT {\"passed\":\(passed),\"failed\":\(failed)}")
 exit(failed == 0 ? 0 : 1)

@@ -103,7 +103,8 @@ struct CloudSettings: Codable, Equatable, Sendable {
     /// host lowercased, the port only when it isn't the scheme's default,
     /// the path without trailing slashes, no credentials, query or
     /// fragment. Nil unless it's an http(s) URL with a host. popup.js's
-    /// `normalizedBaseURL` does the same with the WHATWG URL parser.
+    /// `normalizedBaseURL` does the same with the WHATWG URL parser; for an
+    /// address `baseURLProblem` accepts, both find the same server.
     static func normalizedBaseURL(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let components = URLComponents(string: trimmed),
@@ -117,6 +118,96 @@ struct CloudSettings: Codable, Equatable, Sendable {
         var path = components.percentEncodedPath
         while path.hasSuffix("/") { path.removeLast() }
         return normalized + path
+    }
+
+    /// Why `raw` can't be a custom server's address, as the message to
+    /// show, or nil when it can.
+    ///
+    /// Besides being an http(s) URL with a host, the address must be one
+    /// the popup's WHATWG URL parser, which names the server in the consent
+    /// step, and Foundation, which records the consent and sends the
+    /// requests, can't read as two different servers. WHATWG reads a
+    /// backslash as "/" and drops tabs and line breaks, where Foundation
+    /// escapes them: `http://localhost:1234\@evil.example/v1` is localhost
+    /// in the popup and evil.example here. So the host is ASCII letters,
+    /// digits, ".", "-" and "_" or a bracketed IPv6 address, with an
+    /// optional port (no credentials, percent escapes or international
+    /// names), and the whole address has no backslash, whitespace or
+    /// control character. A host WHATWG reads as an IPv4 address (its last
+    /// label a number) must be written the plain way, 192.168.1.20: WHATWG
+    /// turns 0x7f.1 or 2130706433 into 127.0.0.1, while Foundation asks DNS
+    /// for that name.
+    static func baseURLProblem(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let schemeEnd = trimmed.range(of: "://"),
+              ["http", "https"].contains(trimmed[..<schemeEnd.lowerBound].lowercased())
+        else { return "API 網址格式不正確，請以 http:// 或 https:// 開頭。" }
+        let authority = trimmed[schemeEnd.upperBound...].prefix { !"/?#".contains($0) }
+        let unsafe = CharacterSet.whitespacesAndNewlines.union(.controlCharacters)
+        guard !trimmed.contains("\\"),
+              !trimmed.unicodeScalars.contains(where: unsafe.contains),
+              isPlainAuthority(authority),
+              let url = URL(string: trimmed), url.host?.isEmpty == false,
+              normalizedBaseURL(trimmed) != nil
+        else {
+            return "API 網址格式不正確。主機名稱請用英文字母、數字、點或連字號，網址裡不要有帳號密碼（@）、反斜線或空白。"
+        }
+        return nil
+    }
+
+    /// `host` or `host:port`, the host ASCII letters, digits, ".", "-" and
+    /// "_" or a bracketed IPv6 address, the port at most 65535.
+    private static func isPlainAuthority(_ authority: Substring) -> Bool {
+        let host: Substring
+        var port: Substring = ""
+        if authority.hasPrefix("[") {
+            guard let close = authority.firstIndex(of: "]") else { return false }
+            host = authority[authority.index(after: authority.startIndex)..<close]
+            let rest = authority[authority.index(after: close)...]
+            if !rest.isEmpty {
+                guard rest.first == ":" else { return false }
+                port = rest.dropFirst()
+            }
+            guard !host.isEmpty,
+                  host.allSatisfy({ $0.isASCII && ($0.isHexDigit || $0 == ":" || $0 == ".") })
+            else { return false }
+        } else {
+            if let colon = authority.firstIndex(of: ":") {
+                host = authority[..<colon]
+                port = authority[authority.index(after: colon)...]
+            } else {
+                host = authority
+            }
+            guard !host.isEmpty,
+                  host.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-._".contains($0)) }),
+                  !endsInNumber(host) || isDottedDecimalIPv4(host)
+            else { return false }
+        }
+        guard port.allSatisfy({ $0.isASCII && $0.isNumber }) else { return false }
+        return port.isEmpty || (Int(port).map { $0 <= 65535 } ?? false)
+    }
+
+    /// WHATWG's "ends in a number": the last label (before a trailing dot)
+    /// is decimal digits or "0x" and hex digits, which sends the host
+    /// through its IPv4 parser.
+    private static func endsInNumber(_ host: Substring) -> Bool {
+        var labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        if labels.count > 1, labels.last?.isEmpty == true { labels.removeLast() }
+        guard let last = labels.last?.lowercased(), !last.isEmpty else { return false }
+        if last.allSatisfy({ $0.isASCII && $0.isNumber }) { return true }
+        return last.hasPrefix("0x") && last.dropFirst(2).allSatisfy { $0.isASCII && $0.isHexDigit }
+    }
+
+    /// Four decimal numbers up to 255, no leading zeros: what both parsers
+    /// read as the same IPv4 address.
+    private static func isDottedDecimalIPv4(_ host: Substring) -> Bool {
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 4 && parts.allSatisfy { part in
+            guard (1...3).contains(part.count), part.allSatisfy({ $0.isASCII && $0.isNumber }),
+                  part == "0" || !part.hasPrefix("0"), let value = Int(part)
+            else { return false }
+            return value <= 255
+        }
     }
 }
 
