@@ -16,7 +16,7 @@ MultiSub 沒有帳號、沒有分析工具、也沒有開發者自己的伺服�
 
 翻譯快取在 App 的「快取管理」刪除，生詞本在「生詞本」刪除，本機模型在「一般設定」刪除，API Key 在 AI 引擎設定按「移除」。macOS 刪除 App 時，不會一併清掉共享資料夾和鑰匙圈裡的 API Key，想完全清除，請先在 App 裡刪掉這些資料再刪除 App。
 
-**API Key。** 如果你使用雲端 AI，API Key 存在 macOS 鑰匙圈，只會附在送往你選的 AI 服務的請求裡，不會送到開發者手上。在 Safari 工具列選單貼上的 Key，會經過延伸功能交給 MultiSub 的原生程式。測試設定、載入模型清單時只用那一次，測試成功、設定存下來時才存進鑰匙圈，之後不會再傳回延伸功能。（自行從原始碼建置、而且簽章時沒有鑰匙圈權限的版本，會改存在只有 MultiSub 能讀取的共享資料夾。App Store 版一律使用鑰匙圈。）
+**API Key。** 如果你使用雲端 AI，API Key 在 MultiSub App 裡輸入，存在 macOS 鑰匙圈，只會附在送往你選的 AI 服務的請求裡。Netflix 網頁拿不到，也不會送到開發者手上。按「儲存並測試」後，測試成功才會存進鑰匙圈。（自行從原始碼建置、而且簽章時沒有鑰匙圈權限的版本，會改存在只有 MultiSub 能讀取的共享資料夾。App Store 版一律使用鑰匙圈。）
 
 ## 什麼時候會連上網路
 
@@ -34,7 +34,7 @@ MultiSub 沒有帳號、沒有分析工具、也沒有開發者自己的伺服�
 - OpenRouter：https://openrouter.ai/privacy
 - Google：https://policies.google.com/privacy
 
-第一次用某個雲端服務按「儲存並測試」時，App 和 Safari 工具列選單都會寫明字幕會送到哪個服務（自訂網址就列出你填的網址），要你按下同意。自訂網址換成沒同意過的網址時，會再問一次。沒同意過的服務，MultiSub 不會送任何字幕過去。測試只送一句固定的英文例句，不含字幕。測試沒成功的話，設定和 Key 都不會存。
+第一次用某個雲端服務按「儲存並測試」時，App 會寫明字幕會送到哪個服務（自訂網址就列出你填的網址），要你按下同意。自訂網址換成沒同意過的網址時，會再問一次。沒同意過的服務，MultiSub 不會送任何字幕過去。測試只送一句固定的英文例句，不含字幕。測試沒成功的話，設定和 Key 都不會存。
 
 AI 引擎改用本機模型，就不會再送出任何字幕。只用「Netflix 雙語字幕」看片也不會送出字幕，但按「整理本集單字」時，字幕還是會交給你設定的 AI 引擎整理。
 
@@ -65,14 +65,14 @@ MultiSub is a Safari extension for macOS that shows bilingual subtitles on Netfl
 
 **Data processed on your Mac:** the subtitles of what you are watching (to display and annotate them), your settings, translation caches (which record show and episode titles) and vocabulary lists. When you click “Organize this episode's words” (整理本集單字), the episode's English subtitles are handed to the MultiSub app and staged in its shared folder until the word list is built. A failed run keeps them for Retry until you remove it, or for about a day. Delete caches in Cache Management (快取管理), word lists in Vocabulary (生詞本), on-device models in General Settings (一般設定) and API keys with Remove (移除) in the AI engine settings. Deleting the app does not remove its shared folder or its Keychain items, so delete them in the app first.
 
-**API keys** are stored in the macOS Keychain. A key is attached only to requests to the AI provider you chose and is never sent to the developers. A key pasted into the toolbar popup passes through the extension to MultiSub's native code. Testing a setup or loading the model list uses it for that one request only; it is stored in the Keychain only when a setup that passed its test is saved, and it is never handed back to the extension. (A self-built copy signed without the keychain entitlement stores them in a file only MultiSub can read; the App Store version always uses the Keychain.)
+**API keys** are entered in the MultiSub app and stored in the macOS Keychain. A key is attached only to requests to the AI provider you chose; Netflix pages can't read it, and it is never sent to the developers. After Save and test (儲存並測試), it is stored only if the test succeeds. (A self-built copy signed without the keychain entitlement stores them in a file only MultiSub can read; the App Store version always uses the Keychain.)
 
 **Network connections:**
 
 - “Netflix bilingual subtitles” mode connects only to Netflix, to fetch the episode's original and second-language subtitle files, and sends nothing else.
 - Expanding “Downloadable models” (可下載的模型) in the app, viewing an on-device model that isn't downloaded yet in the AI engine settings, or downloading a model contacts Hugging Face to check model sizes and download files (no subtitle data). A model that is already downloaded loads from your Mac without connecting.
 - The optional cloud AI engine receives, for AI translation and Word Notes, the episode's subtitle lines (the whole episode in batches, starting where you are watching) with the matching official Netflix lines when there are any (as a terminology reference) and the target language; and, when you click “Organize this episode's words”, all of the episode's English subtitle lines with the target language. Every request carries your API key. Providers: Anthropic, OpenAI, OpenRouter, Google Gemini, or a custom endpoint you enter. Their own privacy policies apply.
-- The first time you save a provider, the app or the toolbar popup names it (or shows the custom URL you entered) and asks you to agree. Changing a custom URL to one you haven't agreed to asks again. MultiSub sends no subtitle text to a provider you haven't agreed to. Testing a setup sends one fixed English sentence, not subtitles, and nothing is saved unless the test succeeds.
+- The first time you save a provider, the app names it (or shows the custom URL you entered) and asks you to agree. Changing a custom URL to one you haven't agreed to asks again. MultiSub sends no subtitle text to a provider you haven't agreed to. Testing a setup sends one fixed English sentence, not subtitles, and nothing is saved unless the test succeeds.
 - With the on-device model as the AI engine, no subtitles are sent anywhere. Watching with Netflix bilingual subtitles sends none either, but “Organize this episode's words” still uses the AI engine you set up.
 - The update check in the GitHub-distributed build contacts the public GitHub Releases API. The Mac App Store build has no update check.
 

@@ -155,7 +155,7 @@
     'native-unavailable': '連不到 MultiSub App，請打開 App 再試一次',
     'engine-not-ready': '還沒設定 AI 引擎，點 Safari 工具列的 MultiSub 圖示設定',
     'model-not-ready': '本機模型還沒下載，請到 MultiSub App 下載',
-    'auth-failed': 'API Key 無效或已過期，請重新貼上',
+    'auth-failed': 'API Key 無效或已過期，請到 MultiSub App 重新貼上',
     'rate-limited': 'AI 服務的額度用完或請求太頻繁，請稍後再試',
     'network': '連不上 AI 服務，請檢查網路',
     'provider-error': 'AI 服務暫時出錯，請稍後再試',

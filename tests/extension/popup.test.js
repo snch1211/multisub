@@ -138,7 +138,7 @@ test('a failed run shows the reason and what to do, from the code (or the app\'s
   assert.equal(openFailed.text, '打不開 MultiSub App，請確認已安裝');
   assert.equal(openFailed.spinner, false);
   assert.equal(openFailed.disabled, false);
-  assert.equal(text({ code: 'auth-failed' }).text, '整理失敗：API Key 無效或已過期，請重新貼上');
+  assert.equal(text({ code: 'auth-failed' }).text, '整理失敗：API Key 無效或已過期，請到 MultiSub App 重新貼上');
   assert.equal(text({ code: 'vocab-failed', message: '整理失敗：伺服器沒有回應。' }).text, '整理失敗：伺服器沒有回應。');
 });
 

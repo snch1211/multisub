@@ -327,7 +327,7 @@ async function test(name, fn) {
     assert.equal(t.port().posted[0].type, 'job');
     t.port().onMessage.fire({ type: 'error', kind: 'translate', code: 'auth-failed', detail: '401' });
     await sleep(150);
-    assert.equal(t.hint().textContent, 'MultiSub：API Key 無效或已過期，請重新貼上');
+    assert.equal(t.hint().textContent, 'MultiSub：API Key 無效或已過期，請到 MultiSub App 重新貼上');
     const st = await t.status();
     assert.equal(st.status, 'error');
     assert.equal(st.errorCode, 'auth-failed');
