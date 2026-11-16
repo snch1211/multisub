@@ -48,6 +48,10 @@
   // subtitle the viewer has selected, so we don't start a job on the wrong
   // track and pay for it twice.
   const ACTIVE_TRACK_WAIT_MS = 1500;
+  // How long a page with nothing chosen in the extension waits for the first
+  // native ping before running the default mode (see waitingForAppPrefs). A
+  // cold app extension can take a couple of seconds; same as popup.js.
+  const FIRST_PING_WAIT_MS = 3000;
   const NOTICE_MS = 8000;
   // Each term is glossed for its first few annotated cues only, so repeated
   // words stop cluttering the line.
@@ -146,7 +150,11 @@
     // enabled across page reloads; the popup reads it back via get-status.
     dragModeEnabled: false,
     // --- native
+    // The first ping answered (or FIRST_PING_WAIT_MS passed without one).
     startupPingDone: false,
+    // startPipeline() was called while waitingForAppPrefs() held, so the
+    // pipeline still has to start once the wait is over.
+    pipelineHeld: false,
     nativeOk: null,
     engine: null,
     engineSig: null,
@@ -197,13 +205,13 @@
   // 2. Settings and native sync
   // ===========================================================================
 
-  // Writes settings and lets the storage.onChanged listener below apply them,
-  // so local and remote (popup) changes take the same path. The explicit
-  // apply afterwards is a no-op when the listener already ran.
+  // Applies settings right away, so the caller can rely on them being in
+  // effect when this returns (onNativePing does), then writes them. The
+  // storage.onChanged listener below applies the written copy once more;
+  // that's a no-op, since nothing compared there has changed.
   function saveSettings(next) {
-    return api.storage.local.set({ settings: MS.storedSettings(next) })
-      .catch(() => {})
-      .then(() => applySettingsChange(next));
+    applySettingsChange(next);
+    return api.storage.local.set({ settings: MS.storedSettings(next) }).catch(() => {});
   }
 
   function applySettingsChange(next) {
@@ -215,18 +223,29 @@
       if (next.enabled) renderToastText();
       else removeToast();
     }
-    if (prev.targetLang !== next.targetLang) {
+    const langChanged = prev.targetLang !== next.targetLang;
+    const modeChanged = prev.mode !== next.mode;
+    if (langChanged || modeChanged) {
+      // A notice about the old mode or language (no official track in it,
+      // some lines of the old job missing) no longer applies.
+      state.notice = null;
+      state.lastRenderedKey = null;
+    }
+    if (langChanged) {
       // The second-language track depends on the target language, and so
       // does the primary (it avoids the target language), so re-select both.
       clearFallbackResults();
       state.noSecondHintShown = false;
       if (state.tracks.length && !state.fallback) selectTracks({ restart: true });
       else startPipeline();
-      return;
+    } else {
+      const levelChanged = prev.annotateLevel !== next.annotateLevel && next.mode === 'annotate';
+      if (levelChanged) clearFallbackResults();
+      if (prev.enabled !== next.enabled || modeChanged || levelChanged) startPipeline();
     }
-    const levelChanged = prev.annotateLevel !== next.annotateLevel && next.mode === 'annotate';
-    if (levelChanged) clearFallbackResults();
-    if (prev.enabled !== next.enabled || prev.mode !== next.mode || levelChanged) startPipeline();
+    // Something picked in the popup (stamped) ends the wait for the app's
+    // preferences.
+    resumeHeldPipeline();
   }
 
   api.storage.onChanged.addListener((changes, area) => {
@@ -249,12 +268,37 @@
     return Promise.resolve(p).then(onNativePing, () => onNativePing(null));
   }
 
+  // Whether the pipeline waits for the app's preferences before running
+  // anything: nothing has been chosen in the extension, so the mode and
+  // language in `settings` are only defaults, and the first native ping
+  // hasn't answered yet. The app may well hold a choice (say, AI 翻譯 picked
+  // during onboarding right before opening Netflix); running the default
+  // mode meanwhile would draw the wrong subtitles, hide Netflix's own, and
+  // could put up the netflix-mode hint suggesting the very mode the app
+  // chose. Bounded by FIRST_PING_WAIT_MS.
+  function waitingForAppPrefs() {
+    return !state.startupPingDone && !settings.prefsUpdatedAt;
+  }
+
+  // Starts a pipeline that was held back by waitingForAppPrefs(), once the
+  // wait is over. A no-op otherwise, including when a settings change
+  // already restarted it.
+  function resumeHeldPipeline() {
+    if (state.pipelineHeld && !waitingForAppPrefs()) startPipeline();
+  }
+
+  function endStartupWait() {
+    state.startupPingDone = true;
+    resumeHeldPipeline();
+  }
+
   // Applies a native `ping` reply: subtitle styles (owned by the app), the
   // shared preferences (newest updatedAt wins) and the engine status.
   function onNativePing(res) {
     state.startupPingDone = true;
     if (!res || !res.ok) {
       state.nativeOk = false;
+      endStartupWait();
       return;
     }
     const nativeCameBack = state.nativeOk === false;
@@ -269,8 +313,11 @@
     }
     const rec = MS.reconcilePrefs(next, res.prefs);
     if (rec.adopt) next = Object.assign({}, rec.adopt, { styles: next.styles });
+    // Applied synchronously: a mode the app chose restarts the pipeline in
+    // there, and endStartupWait() below only starts it when nothing did.
     if (next !== settings) saveSettings(next);
     if (rec.push) sendPrefs(next);
+    endStartupWait();
 
     // A job that failed for lack of a working engine gets another go once
     // the engine setup changed (e.g. a key was pasted in the app).
@@ -289,11 +336,13 @@
 
   // Startup: settings first, then ask native right away so styles,
   // preferences and the engine status apply without waiting for the
-  // periodic ping.
+  // periodic ping. A ping that never answers (the app's extension stuck or
+  // missing) must not keep the default mode from running.
   api.storage.local.get('settings')
     .then((res) => applySettingsChange(MS.mergeSettings(res && res.settings)))
     .catch(() => applySettingsChange(MS.mergeSettings(null)))
     .then(() => pingNative());
+  setTimeout(endStartupWait, FIRST_PING_WAIT_MS);
 
   // The native side's idle-unload check for the local model only runs when a
   // native message wakes that process (it has no reliable timer of its own),
@@ -546,6 +595,7 @@
 
   function onSecondSettled() {
     state.lastRenderedKey = null;
+    if (waitingForAppPrefs()) return; // the held pipeline reads secondState when it starts
     if (settings.mode === 'netflix' && !state.fallback && state.cues.length) {
       state.status = state.secondState === 'loading' ? 'fetching' : 'ready';
       maybeShowNoSecondHint();
@@ -623,9 +673,16 @@
     state.errorHint = '';
     state.partialMissing = 0;
     resetItems(null);
+    state.pipelineHeld = false;
     const mode = settings.mode;
     if (!state.urlMovieId) { state.status = 'idle'; return; }
     if (!settings.enabled) { state.status = 'off'; return; }
+    if (waitingForAppPrefs()) {
+      // Nothing mode-specific yet; resumeHeldPipeline() comes back here.
+      state.pipelineHeld = true;
+      state.status = state.activeTrackId || state.fallback ? 'fetching' : 'waiting-tracks';
+      return;
+    }
     if (state.fallback) {
       state.status = 'fallback';
       if (mode === 'netflix' && !state.noDataHintShown) {
@@ -842,6 +899,7 @@
 
   function maybeShowNoSecondHint() {
     if (settings.mode !== 'netflix' || state.secondState !== 'none' || state.noSecondHintShown) return;
+    if (waitingForAppPrefs()) return; // the mode may not be netflix after all
     state.noSecondHintShown = true;
     showNotice(TEXT.noSecond(settings.targetLang), NOTICE_MS);
   }
@@ -1055,9 +1113,10 @@
   // Netflix's subtitles are hidden only while we have something to draw in
   // their place: cues of our own, or (outside netflix mode) the DOM-fallback
   // text we mirror. Hiding them earlier would leave the viewer with no
-  // subtitles at all while tracks load, or for good if capture fails.
+  // subtitles at all while tracks load, or for good if capture fails. Same
+  // while waiting for the app's preferences, when we draw nothing.
   function shouldHideNative() {
-    if (!settings.enabled || !state.urlMovieId) return false;
+    if (!settings.enabled || !state.urlMovieId || waitingForAppPrefs()) return false;
     const canDraw = state.fallback ? settings.mode !== 'netflix' : state.cues.length > 0;
     return canDraw && mergedLayout();
   }
@@ -1392,7 +1451,9 @@
     const container = ensureOverlayAttached(video);
     updateNativeHidden();
     updateToast(container, video);
-    if (!settings.enabled) {
+    // Nothing of ours until the mode is known (see waitingForAppPrefs);
+    // Netflix's own subtitles stay up meanwhile.
+    if (!settings.enabled || waitingForAppPrefs()) {
       render(EMPTY_FRAME);
       return;
     }

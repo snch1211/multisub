@@ -353,6 +353,83 @@ async function test(name, fn) {
     t2.stop();
   });
 
+  await test('nothing chosen yet: the default mode waits for the first ping, which may bring the app\'s choice', async () => {
+    // AI 翻譯 picked in the app's onboarding, then Netflix opened from there:
+    // the cues arrive before the (cold) native ping answers.
+    let answer;
+    const pinged = new Promise((r) => { answer = r; });
+    const t = boot({ stored: undefined, navigator: { languages: ['ja-JP'] },
+      ping: () => pinged.then(() => ({ ok: true, engine: cloudEngine, prefs: { mode: 'translate', targetLang: 'ja', updatedAt: 5 } })) });
+    await toFetch(t);
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    await sleep(150);
+    let st = await t.status();
+    assert.equal(st.status, 'fetching');
+    assert.equal(st.secondState, 'none'); // no full Japanese track: netflix mode would hint at AI 翻譯
+    assert.equal(t.overlayOriginal().style.display, 'none');
+    assert.equal(t.overlayText().style.display, 'none');
+    assert.equal(t.hint().textContent, '');
+    assert.ok(!t.html.classList.contains('multisub-native-hidden'), "Netflix's subtitles stay up meanwhile");
+    assert.equal(t.ports.length, 0);
+    answer();
+    await sleep(150);
+    st = await t.status();
+    assert.equal(st.mode, 'translate');
+    assert.equal(st.status, 'translating');
+    assert.equal(t.hint().textContent, '');
+    assert.equal(t.ports.length, 1);
+    assert.equal(t.port().posted.filter((m) => m.type === 'job').length, 1);
+    assert.equal(t.port().posted[0].targetLang, 'ja');
+    t.stop();
+
+    // The app has nothing chosen either: the default mode starts once it says so.
+    let answer2;
+    const pinged2 = new Promise((r) => { answer2 = r; });
+    const t2 = boot({ stored: undefined, ping: () => pinged2.then(() => ({ ok: true, engine: null, prefs: { updatedAt: 0 } })) });
+    await toFetch(t2);
+    t2.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    t2.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cues: ZH_CUES });
+    await sleep(150);
+    assert.equal(t2.overlayText().style.display, 'none');
+    answer2();
+    await sleep(150);
+    assert.equal((await t2.status()).status, 'ready');
+    assert.equal(t2.overlayOriginal().textContent, 'line 7');
+    assert.equal(t2.overlayText().textContent, '第 7 句');
+    assert.ok(t2.html.classList.contains('multisub-native-hidden'));
+    t2.stop();
+
+    // Something already chosen in the extension doesn't wait at all.
+    const t3 = boot({ stored: settingsWith({ mode: 'netflix' }), ping: () => new Promise(() => {}) });
+    await toFetch(t3);
+    t3.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    t3.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cues: ZH_CUES });
+    await sleep(150);
+    assert.equal(t3.overlayText().textContent, '第 7 句');
+    t3.stop();
+  });
+
+  await test('nothing chosen yet, ping never answers: the default mode runs after the wait; a late choice clears its hint', async () => {
+    let answer;
+    const late = new Promise((r) => { answer = r; });
+    // scale 0.01: FIRST_PING_WAIT_MS (3 s) passes in 30 ms.
+    const t = boot({ stored: undefined, navigator: { languages: ['ja-JP'] }, scale: 0.01,
+      ping: () => late.then(() => ({ ok: true, engine: cloudEngine, prefs: { mode: 'translate', updatedAt: 5 } })) });
+    await toFetch(t);
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    await sleep(150);
+    assert.equal((await t.status()).status, 'ready');
+    assert.equal(t.overlayOriginal().textContent, 'line 7');
+    assert.equal(t.hint().textContent, '這部片沒有 Netflix 官方的日文字幕，可在 MultiSub 選單改用「AI 翻譯」');
+    answer();
+    await sleep(150);
+    const st = await t.status();
+    assert.equal(st.mode, 'translate');
+    assert.equal(st.status, 'translating');
+    assert.equal(t.hint().textContent, '', 'the netflix-mode hint went with the mode');
+    t.stop();
+  });
+
   await test('saving with nothing chosen leaves mode, language and level out of storage', async () => {
     const t = boot({ stored: undefined, navigator: { languages: ['ja-JP'] },
       ping: () => ({ ok: true, engine: null, prefs: { updatedAt: 0 }, styles: { textColor: '#ffff00' } }) });
