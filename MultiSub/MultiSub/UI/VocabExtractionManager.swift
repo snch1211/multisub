@@ -164,7 +164,7 @@ final class VocabExtractionManager {
         guard let job = job(movieId), !job.isActive else { return }
         guard let pending = PendingTranscriptStore.load(movieId: movieId) else {
             fail(movieId, code: Self.failedCode,
-                 message: "找不到這集的字幕了，請回到 Netflix 播放頁再按一次「整理本集單字」。")
+                 message: "找不到這集的字幕，請回到 Netflix 再整理一次。")
             return
         }
         enqueue(pending)
@@ -195,7 +195,7 @@ final class VocabExtractionManager {
         // popup or any other caller that gets past them.
         guard LanguageNames.isEnglish(pending.sourceLang) else {
             fail(movieId, code: Self.nonEnglishCode,
-                 message: "這集的原文字幕語言是「\(pending.sourceLang)」，生詞本只支援英文字幕。")
+                 message: "這集的原文是「\(pending.sourceLang)」，生詞本只支援英文字幕。")
             return
         }
         // Checked up front so a run that would fail on its first request
@@ -204,7 +204,7 @@ final class VocabExtractionManager {
             let engineName = try Self.engineDescription()
             if let i = index(movieId) { jobs[i].engineName = engineName }
         } catch {
-            fail(movieId, code: Self.code(for: error), message: Self.message(for: error) + "設定好後按「重試」。")
+            fail(movieId, code: Self.code(for: error), message: Self.message(for: error) + "設好後重試。")
             return
         }
         transcripts[movieId] = pending
@@ -218,7 +218,7 @@ final class VocabExtractionManager {
         guard worker == nil, let i = jobs.firstIndex(where: { $0.phase == .queued }) else { return }
         let movieId = jobs[i].movieId
         guard let pending = transcripts[movieId] else {
-            fail(movieId, code: Self.failedCode, message: "找不到這集的字幕了，請回到 Netflix 播放頁再按一次「整理本集單字」。")
+            fail(movieId, code: Self.failedCode, message: "找不到這集的字幕，請回到 Netflix 再整理一次。")
             pump()
             return
         }
@@ -259,7 +259,7 @@ final class VocabExtractionManager {
             // retry instead of saving an empty list over it.
             guard !words.isEmpty else {
                 fail(movieId, code: Self.emptyCode,
-                     message: "沒有整理出任何單字，可能是 AI 引擎連線失敗。請到「一般設定」測試翻譯，再按「重試」。")
+                     message: "沒整理出單字，可能是 AI 引擎連不上。到「一般設定」測試翻譯後再重試。")
                 return
             }
             let file = VocabFile(
@@ -329,9 +329,8 @@ final class VocabExtractionManager {
         heartbeatTask = nil
         if quitWhenIdle {
             quitWhenIdle = false
-            if !NSApp.windows.contains(where: { $0.isVisible || $0.isMiniaturized }) {
-                NSApp.terminate(nil)
-            }
+            // Not while a model is still downloading; that one quits when done.
+            AppDelegate.quitIfIdle()
         }
     }
 
@@ -346,7 +345,7 @@ final class VocabExtractionManager {
     func markInterrupted() {
         for job in jobs where job.isActive {
             fail(job.movieId, code: VocabStatusStore.interruptedCode,
-                 message: "整理到一半 MultiSub App 就關掉了。按「重試」重新整理。")
+                 message: "整理到一半 App 就關掉了，請重試。")
         }
     }
 
@@ -370,8 +369,8 @@ final class VocabExtractionManager {
                 failed.state = .failed
                 failed.code = status.accepted ? VocabStatusStore.interruptedCode : VocabStatusStore.notStartedCode
                 failed.message = status.accepted
-                    ? "整理到一半 MultiSub App 就關掉了。按「重試」重新整理。"
-                    : "MultiSub App 沒有開始整理這集。按「重試」開始整理。"
+                    ? "整理到一半 App 就關掉了，請重試。"
+                    : "App 沒有開始整理這集，請重試。"
                 failed.updatedAt = now
                 VocabStatusStore.write(failed)
                 restoreFailed(failed)
@@ -399,7 +398,7 @@ final class VocabExtractionManager {
         upsert(Job(movieId: status.movieId, seriesTitle: pending.seriesTitle,
                    episodeTitle: pending.episodeTitle, seasonNumber: pending.seasonNumber,
                    phase: .failed(code: status.code ?? Self.failedCode,
-                                  message: status.message ?? "整理失敗，請按「重試」。"),
+                                  message: status.message ?? "整理失敗，請重試。"),
                    done: status.done, total: status.total))
     }
 
@@ -459,10 +458,10 @@ final class VocabExtractionManager {
     /// short Chinese message.
     static func message(for error: Error) -> String {
         if case .engineNotReady? = error as? TranslatorError {
-            return "尚未設定 AI 引擎，請到「一般設定」設定 API Key 或下載本機模型。"
+            return "還沒設定 AI 引擎，請到「一般設定」設定。"
         }
         if case .modelNotDownloaded? = error as? TranslatorError {
-            return "目前設定用本機模型，但模型還沒下載。請到「一般設定」下載模型，或改用 API Key。"
+            return "本機模型還沒下載，請到「一般設定」下載或改用 API Key。"
         }
         if error is CancellationError {
             return "整理中斷了。"

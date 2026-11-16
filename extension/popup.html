@@ -44,81 +44,53 @@
     </div>
   </section>
 
-  <!-- AI engine (translate / annotate only) -->
+  <!-- AI engine (translate / annotate only): what it is, or a way to the
+       app to set one up. The setup itself lives in the app. -->
   <section id="engineCard" class="card" hidden aria-labelledby="engineTitle">
     <h2 id="engineTitle" class="card-title">AI 引擎</h2>
     <div id="engineSummary" class="engine-summary" hidden>
       <span id="engineSummaryText" class="engine-summary-text"></span>
-      <button type="button" id="engineChange" class="link-button">變更</button>
+      <button type="button" id="engineChange" class="link-button" title="在 MultiSub App 變更 AI 引擎">到 App 變更</button>
+    </div>
+    <div id="engineSetup" class="engine-setup" hidden>
+      <p id="engineSetupText" class="engine-setup-text"></p>
+      <button type="button" id="engineOpenApp" class="primary-button">打開 MultiSub App 設定</button>
     </div>
     <p id="engineNotice" class="engine-notice" role="status" aria-live="polite" hidden></p>
-    <form id="engineForm" class="engine-form" hidden novalidate>
-      <div class="field">
-        <label for="provider">AI 服務</label>
-        <select id="provider"></select>
-      </div>
-      <div class="field" id="apiKeyField">
-        <div class="label-row">
-          <label for="apiKey">API Key</label>
-          <button type="button" id="keyLink" class="link-button small">取得 API Key</button>
-        </div>
-        <input type="password" id="apiKey" autocomplete="off" spellcheck="false" autocapitalize="off">
-      </div>
-      <div class="field" id="baseURLField" hidden>
-        <label for="baseURL">API 網址</label>
-        <input type="url" id="baseURL" placeholder="http://localhost:1234/v1" spellcheck="false" autocapitalize="off">
-      </div>
-      <div class="field">
-        <div class="label-row">
-          <label for="model">模型</label>
-          <button type="button" id="loadModels" class="link-button small">載入完整清單</button>
-        </div>
-        <select id="model"></select>
-        <input type="text" id="modelCustom" class="model-custom" placeholder="輸入模型 ID" spellcheck="false" autocapitalize="off" aria-label="模型 ID" hidden>
-      </div>
-      <p id="engineDisclosure" class="hint"></p>
-      <button type="submit" id="saveEngine" class="primary-button">儲存並測試</button>
-      <!-- Shown after a successful test, before anything is saved. -->
-      <div id="consentStep" class="consent-step" role="group" aria-labelledby="consentTitle" aria-describedby="consentText" hidden>
-        <p id="consentTitle" class="consent-title"></p>
-        <p id="consentText" class="consent-text"></p>
-        <div class="consent-actions">
-          <button type="button" id="consentCancel" class="secondary-button">取消</button>
-          <button type="button" id="consentAccept" class="primary-button">同意並使用</button>
-        </div>
-      </div>
-      <p id="engineResult" class="engine-result" role="status" aria-live="polite"></p>
-      <div class="engine-links">
-        <button type="button" id="useLocal" class="link-button small">改用本機模型</button>
-        <button type="button" id="engineCancel" class="link-button small" hidden>取消</button>
-      </div>
-    </form>
   </section>
 
   <details id="displaySettings" class="card details">
     <summary>顯示設定</summary>
+    <!-- One row per setting: open, this section still has to fit in Safari's
+         popover (about 600 px tall) together with everything above it. -->
     <div class="details-body">
-      <div class="field">
-        <label for="fontScale">字幕大小 <span id="fontScaleValue" class="value"></span></label>
+      <div class="slider-row">
+        <label for="fontScale">字幕大小</label>
         <input type="range" id="fontScale" min="0.5" max="2" step="0.05">
+        <span id="fontScaleValue" class="value" aria-hidden="true"></span>
       </div>
-      <div class="field">
-        <label for="bottomOffset">垂直位置（距底部）<span id="bottomOffsetValue" class="value"></span></label>
+      <div class="slider-row" title="字幕離影片底部的距離">
+        <label for="bottomOffset">垂直位置</label>
         <input type="range" id="bottomOffset" min="0" max="40" step="1">
+        <span id="bottomOffsetValue" class="value" aria-hidden="true"></span>
       </div>
-      <label class="check-row"><input type="checkbox" id="mergedMode"> 雙語合併顯示</label>
-      <label class="check-row"><input type="checkbox" id="dragMode"> 在影片上拖曳字幕定位</label>
-      <div class="field" id="trackField" hidden>
+      <div class="check-group">
+        <label class="check-row"><input type="checkbox" id="mergedMode"> 雙語合併顯示</label>
+        <label class="check-row"><input type="checkbox" id="dragMode"> 拖曳字幕調整位置</label>
+      </div>
+      <div class="field-row" id="trackField" hidden>
         <label for="sourceTrack">原文字幕</label>
         <select id="sourceTrack"></select>
       </div>
-      <button type="button" id="openStyles" class="secondary-button">進階樣式設定…</button>
+      <div class="details-links">
+        <button type="button" id="openStyles" class="link-button small">更多字幕樣式…</button>
+      </div>
       <p id="openStylesHint" class="hint"></p>
     </div>
   </details>
 
   <section id="vocabSection" class="vocab">
-    <button type="button" id="organizeVocab" class="secondary-button" disabled>整理本集單字</button>
+    <button type="button" id="organizeVocab" class="secondary-button" title="把這集的英文生字整理進 App 的生詞本" disabled>整理本集單字</button>
     <p id="organizeVocabHint" class="hint"></p>
     <!-- Where the app's organizing stands for this episode (vocab-status). -->
     <div id="vocabStatus" class="vocab-status" role="status" aria-live="polite" hidden>

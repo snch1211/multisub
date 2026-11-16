@@ -53,6 +53,17 @@ final class ModelDownloadManager {
 
     func isDownloading(_ modelID: String) -> Bool { tasks[modelID] != nil }
 
+    var hasActiveDownloads: Bool { !tasks.isEmpty }
+
+    /// Set when the last window closed mid-download
+    /// (`AppDelegate.applicationShouldTerminateAfterLastWindowClosed`): the
+    /// app stays up for the download and quits once it's over.
+    @ObservationIgnored var quitWhenIdle = false
+    /// Keeps App Nap from throttling the app while anything downloads. The
+    /// viewer usually goes back to Safari meanwhile, leaving this window
+    /// behind it, and a napping app's network transfers slow to a crawl.
+    @ObservationIgnored private var activity: NSObjectProtocol?
+
     /// No-op if `modelID` already has a task running — selecting the same
     /// not-yet-downloaded model twice (e.g. re-opening the picker) shouldn't
     /// spawn a second concurrent download of the same files.
@@ -64,8 +75,10 @@ final class ModelDownloadManager {
     func start(modelID: String, onFinished: (@MainActor () -> Void)? = nil) {
         guard tasks[modelID] == nil else { return }
         downloads[modelID] = DownloadState()
+        defer { updateKeepAlive() }
 
         tasks[modelID] = Task { [weak self] in
+            defer { self?.updateKeepAlive() }
             do {
                 // Pre-populate the HF cache ourselves with a resumable
                 // downloader (see ModelDownloader.swift) instead of letting
@@ -95,6 +108,24 @@ final class ModelDownloadManager {
                 self?.downloads[modelID]?.errorDescription = error.localizedDescription
                 self?.tasks[modelID] = nil
             }
+        }
+    }
+
+    private func updateKeepAlive() {
+        if !tasks.isEmpty {
+            if activity == nil {
+                activity = ProcessInfo.processInfo.beginActivity(
+                    options: .userInitiated, reason: "Downloading a local model")
+            }
+            return
+        }
+        if let activity {
+            ProcessInfo.processInfo.endActivity(activity)
+            self.activity = nil
+        }
+        if quitWhenIdle {
+            quitWhenIdle = false
+            AppDelegate.quitIfIdle()
         }
     }
 

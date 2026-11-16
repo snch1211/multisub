@@ -78,7 +78,7 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("AI 引擎")
             } footer: {
-                Text("「AI 翻譯雙語字幕」、「生字標註」和生詞本都用這裡的引擎。用 API Key 時，字幕文字會送到你選的 AI 服務。本機模型完全在這台 Mac 上執行。")
+                Text("AI 翻譯、生字標註和生詞本都用這個引擎。")
             }
 
             Section {
@@ -102,6 +102,7 @@ struct GeneralSettingsView: View {
 
                 HStack {
                     Button("在 Finder 中打開模型資料夾") { openModelsFolderInFinder() }
+                        .help("也可以自己把 MLX 格式的模型放進這個資料夾。")
                     Button("重新整理", systemImage: "arrow.clockwise") { refreshAll() }
                         .labelStyle(.iconOnly)
                 }
@@ -121,7 +122,9 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("本機模型")
             } footer: {
-                Text("模型越大通常翻譯品質越好，但需要更多記憶體與下載時間。下載完成後存在本機，翻譯時不會重新下載。模型下載自 Hugging Face（MLX 格式），也可以自行在模型資料夾放入符合 MLX 格式的權重。展開「可下載的模型」時才會向 Hugging Face 查詢模型大小，查到大小後才能下載。\n此裝置實體記憶體 \(ModelCatalog.formatBytes(Int64(ProcessInfo.processInfo.physicalMemory)))。紅燈表示模型磁碟大小超出建議上限（仍可強制選用），橘燈是警告。")
+                // The Hugging Face line is a privacy note as much as a
+                // pointer: opening the list is what contacts it.
+                Text("模型越大翻得越好，也越吃記憶體。這台 Mac 有 \(ModelCatalog.formatBytes(Int64(ProcessInfo.processInfo.physicalMemory))) 記憶體，橘燈表示偏大，紅燈表示可能跑不動。\n模型從 Hugging Face 下載，展開清單時才會查詢大小。")
             }
             .alert(ModelMemoryAdvisor.confirmationTitle(sizeKnown: pendingSizeKnown), isPresented: $showForceConfirm) {
                 Button(pendingIsDownload ? "仍要下載" : "仍要使用", role: .destructive) {
@@ -143,10 +146,13 @@ struct GeneralSettingsView: View {
             }
 
             Section {
-                TextField("測試輸入", text: $testInput)
-                Button("測試翻譯（\(testLanguageLabel)）") { runTest() }
-                    .disabled(testRunning)
-                LabeledContent("測試輸出") {
+                TextField("測試句子", text: $testInput)
+                // Button and result on one row: the result is what the
+                // button just did.
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Button("翻成\(testLanguageName)") { runTest() }
+                        .disabled(testRunning)
+                    Spacer(minLength: 8)
                     Text(testOutput)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.trailing)
@@ -154,8 +160,6 @@ struct GeneralSettingsView: View {
                 }
             } header: {
                 Text("測試翻譯")
-            } footer: {
-                Text("用目前的 AI 引擎，翻成你選的第二語言。")
             }
 
             Section {
@@ -165,30 +169,34 @@ struct GeneralSettingsView: View {
                 // updates on blur/return, never per keystroke), so this
                 // doesn't need its own focus-loss/onSubmit handling.
                 Stepper(value: $idleUnloadMinutes, in: -1...999) {
-                    TextField("閒置卸載時間（分鐘）", value: $idleUnloadMinutes, format: .number)
+                    TextField("閒置多久後卸載（分鐘）", value: $idleUnloadMinutes, format: .number)
                 }
             } header: {
                 Text("記憶體")
             } footer: {
-                Text("本機模型閒置超過這段時間，就會從記憶體卸載。App 與 Safari 延伸功能都適用，填 0 或負數表示不自動卸載。")
+                Text("本機模型閒置這麼久就釋放記憶體，填 0 表示不自動卸載。")
             }
 
             #if !APP_STORE
             Section {
-                LabeledContent("目前版本") { Text(updateChecker.currentVersion) }
-                StatusDot(color: updateStatusColor, text: updateStatusText)
-                if let lastCheckedAt = updateChecker.lastCheckedAt {
-                    Text("上次檢查：\(lastCheckedAt.formatted(date: .abbreviated, time: .shortened))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                HStack {
-                    Button("檢查更新") { Task { await updateChecker.check() } }
-                        .disabled(updateChecker.status == .checking)
+                // Status on the left, the buttons on the right. The version
+                // itself is under 關於.
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        StatusDot(color: updateStatusColor, text: updateStatusText)
+                        if updateChecker.status != .idle, let lastChecked = lastCheckedText {
+                            Text(lastChecked)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 8)
                     if case .updateAvailable(let version, let htmlURL, let downloadURL) = updateChecker.status,
                        !updateDownloadManager.isDownloading {
                         Button("開始更新") { startUpdate(version: version, htmlURL: htmlURL, downloadURL: downloadURL) }
                     }
+                    Button("檢查更新") { Task { await updateChecker.check() } }
+                        .disabled(updateChecker.status == .checking)
                 }
                 if let downloadState = updateDownloadManager.state {
                     if downloadState.failed {
@@ -196,7 +204,7 @@ struct GeneralSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.red)
                     } else if downloadState.completedFileURL != nil {
-                        Text("下載完成，已打開安裝檔。請把 App 拖進「應用程式」資料夾取代舊版，第一次打開新版時，到「系統設定 › 隱私權與安全性」選「仍要打開」。")
+                        Text("安裝檔已打開，把 App 拖進「應用程式」取代舊版。新版打不開的話，到「系統設定 › 隱私權與安全性」按「仍要打開」。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
@@ -211,7 +219,7 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("軟體更新")
             } footer: {
-                Text("檢查更新會連線 GitHub Releases 公開 API，只帶一般 HTTP 連線資訊，不含任何個人或使用資料。")
+                Text("只會連到 GitHub 查詢新版，不會送出個人資料。")
             }
             #endif
 
@@ -424,8 +432,8 @@ struct GeneralSettingsView: View {
         }
         switch tier(for: entry.id) {
         case .ok?, nil: break
-        case .warning?: parts.append("警告")
-        case .blocked?: parts.append("阻擋")
+        case .warning?: parts.append("偏大")
+        case .blocked?: parts.append("過大")
         }
         // Only a model `Translator` actually has resident in memory right
         // now earns "使用中" — `config.modelID` alone (even if its files
@@ -450,12 +458,12 @@ struct GeneralSettingsView: View {
     private func deleteModel(_ entry: ModelCatalogEntry) {
         Task {
             if await Translator.shared.isBusy {
-                deleteBlockedMessage = "此模型正在翻譯或建立生詞本，請稍後再試。"
+                deleteBlockedMessage = "這個模型正在翻譯或整理生詞本，請稍後再試。"
                 showDeleteBlocked = true
                 return
             }
             if await Translator.shared.currentlyLoadedModelID == entry.id {
-                deleteBlockedMessage = "此模型目前已載入記憶體中，請先等待閒置卸載或切換到其他模型後再刪除。"
+                deleteBlockedMessage = "這個模型正在記憶體裡。換成其他模型，或等它閒置卸載後再刪除。"
                 showDeleteBlocked = true
                 return
             }
@@ -475,9 +483,20 @@ struct GeneralSettingsView: View {
 
     #if !APP_STORE
 
+    private var lastCheckedText: String? {
+        // zh_TW like 快取管理's times, so the date reads with the rest of the
+        // page even on a Mac set to another region.
+        updateChecker.lastCheckedAt.map {
+            "上次檢查：" + $0.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened)
+                .locale(Locale(identifier: "zh_TW")))
+        }
+    }
+
     private var updateStatusText: String {
         switch updateChecker.status {
-        case .idle: return "尚未檢查"
+        // Not checked since launch: the last check (an earlier launch's)
+        // says more than 「尚未檢查」 would.
+        case .idle: return lastCheckedText ?? "尚未檢查"
         case .checking: return "檢查中…"
         case .upToDate: return "已是最新版"
         case .updateAvailable(let version, _, _): return "有新版 v\(version) 可用"
@@ -514,8 +533,9 @@ struct GeneralSettingsView: View {
         (configStore.config.prefs ?? SharedPrefs()).effectiveTargetLang
     }
 
-    private var testLanguageLabel: String {
-        SubtitleChoices.languages.first { $0.id == testTargetLang }?.label ?? testTargetLang
+    /// 「繁體中文」, 「日文」: the name for a sentence, not the picker label.
+    private var testLanguageName: String {
+        SubtitleChoices.languageName(testTargetLang)
     }
 
     private func runTest() {
@@ -525,7 +545,7 @@ struct GeneralSettingsView: View {
         // Only the local engine has a slow first call (loading the model).
         if case .local(let modelID)? = try? Translator.resolveEngine(config: configStore.config),
            modelID != loadedModelID {
-            testOutput = "翻譯中…（第一次要先載入模型，約 10–30 秒）"
+            testOutput = "翻譯中…（首次要載入模型，約 10–30 秒）"
         } else {
             testOutput = "翻譯中…"
         }

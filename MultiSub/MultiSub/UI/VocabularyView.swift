@@ -143,7 +143,8 @@ struct VocabularyView: View {
     var body: some View {
         Group {
             if episodes.isEmpty && extractionManager.jobs.isEmpty {
-                ContentUnavailableView("尚無生詞本，請到 Netflix 播放頁整理", systemImage: "book")
+                ContentUnavailableView("還沒有生詞本", systemImage: "book",
+                                       description: Text("看英文字幕的片時，在 Safari 工具列的 MultiSub 選單按「整理本集單字」。"))
             } else {
                 HSplitView {
                     episodeList
@@ -273,16 +274,14 @@ struct VocabularyView: View {
                 Text(job.displayTitle)
                     .font(.title3.weight(.semibold))
                     .multilineTextAlignment(.center)
-                Text(job.phase == .queued ? "排隊中，等前一集整理完就開始" : job.statusLine)
+                Text(job.phase == .queued ? "排隊中，前一集整理完就開始" : job.statusLine)
                     .font(.headline)
-                Text(job.phase == .queued
-                     ? "輪到這集時，MultiSub 會讀英文字幕，挑出值得學的單字，附上翻譯和例句。通常要幾分鐘，可以繼續看影片，整理好會自動出現在左邊的清單。"
-                     : "MultiSub 正在讀這集的英文字幕，挑出值得學的單字，附上翻譯和例句。通常要幾分鐘，可以繼續看影片，整理好會自動出現在左邊的清單。")
+                Text("從英文字幕挑出值得學的單字，附上翻譯和例句。約需幾分鐘，好了會出現在左邊。")
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 400)
                 if !job.engineName.isEmpty {
-                    Text("使用的 AI 引擎：\(job.engineName)")
+                    Text("AI 引擎：\(job.engineName)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -98,6 +98,9 @@
   // words stop cluttering the line.
   const GLOSS_REPEAT_LIMIT = 3;
   const FALLBACK_CACHE_MAX = 2000;
+  // How many results of modes left earlier in the episode stay in memory
+  // (state.kept): one per mode, language and level the viewer went through.
+  const KEPT_RESULTS_MAX = 4;
   const FALLBACK_ERROR_PAUSE_MS = 10000;
   const AUTO_RETRY_MS = 30000;
   const AUTO_RETRY_MAX = 5;
@@ -115,13 +118,11 @@
   const AUTO_RETRY_CODES = new Set(['rate-limited', 'network', 'provider-error', 'native-unavailable']);
 
   const TEXT = {
-    noData: '沒有抓到字幕資料，請重新整理頁面（⌘R）',
-    noSecond: (lang) => '這部片沒有 Netflix 官方的' + MS.languageName(lang) + '字幕，可在 MultiSub 選單改用「AI 翻譯」',
+    noData: '沒抓到字幕資料，請重新整理頁面（⌘R）',
+    noSecond: (lang) => '這部片沒有官方' + MS.languageName(lang) + '字幕，可在 MultiSub 選單改用 AI 翻譯',
     toastTitle: 'MultiSub 已開啟',
-    // The two bilingual modes' labels start with Latin letters, hence the space.
-    toastBody: (mode, lang) => mode === 'annotate'
-      ? '目前使用生字標註，難字後面會標上' + MS.languageName(lang) + '的意思。'
-      : '目前使用 ' + MS.modeById(mode).label + '，第二語言是' + MS.languageName(lang) + '。',
+    // Mode and language, e.g. 「Netflix 雙語字幕・繁體中文」.
+    toastBody: (mode, lang) => MS.modeById(mode).label + '・' + MS.languageName(lang),
     toastHint: '點 Safari 工具列的 MultiSub 按鈕可以換模式。',
     toastClose: '關閉',
     // A job that finished with some chunks failed (see background.js runJob).
@@ -162,6 +163,12 @@
     itemsKind: null,
     items: [], // per cue: translation (string) or annotations ([{term, gloss}]); null = pending
     readyCount: 0,
+    itemsSig: null, // jobSignature() of what `items` holds
+    // jobSignature() -> { items, readyCount }: what an AI mode had when the
+    // viewer switched away from it in this episode, so switching back shows
+    // it at once instead of blanking the overlay and waiting for
+    // background.js to replay its cache (see startJob).
+    kept: new Map(),
     glossPlan: null,
     glossPlanDirty: true,
     segMemo: null,
@@ -687,7 +694,39 @@
   // 5. Pipelines and the job port
   // ===========================================================================
 
+  // What a job's results depend on. Two jobs with the same signature get
+  // the same lines back (background.js caches them under the same key).
+  function jobSignature(kind) {
+    return [kind, state.urlMovieId, state.activeTrackId, state.cues.length, settings.targetLang,
+      kind === 'annotate' ? settings.annotateLevel : ''].join('\u0000');
+  }
+
+  function keepItems() {
+    if (!state.itemsKind || !state.itemsSig || !state.readyCount) return;
+    state.kept.delete(state.itemsSig); // re-inserted last: the most recent
+    state.kept.set(state.itemsSig, { items: state.items, readyCount: state.readyCount });
+    while (state.kept.size > KEPT_RESULTS_MAX) state.kept.delete(state.kept.keys().next().value);
+  }
+
+  // Puts back what this mode had when the viewer last left it. Returns true
+  // when that's every line, so there is nothing left to ask for.
+  function restoreKept(kind) {
+    const sig = jobSignature(kind);
+    state.itemsSig = sig;
+    const kept = state.kept.get(sig);
+    if (!kept) return false;
+    state.kept.delete(sig); // `items` is that array now, and keeps changing
+    if (kept.items.length !== state.items.length) return false;
+    state.items = kept.items;
+    state.readyCount = kept.readyCount;
+    return state.readyCount === state.items.length;
+  }
+
+  // Drops the results on screen, setting them aside for a later switch back
+  // to the same mode (keepItems).
   function resetItems(kind) {
+    keepItems();
+    state.itemsSig = null;
     state.itemsKind = kind;
     state.items = kind ? new Array(state.cues.length).fill(null) : [];
     state.readyCount = 0;
@@ -804,6 +843,12 @@
   }
 
   function startJob(kind) {
+    resetItems(kind);
+    if (restoreKept(kind)) {
+      // Switched back to a mode that had finished: show it, ask nothing.
+      state.status = 'done';
+      return;
+    }
     const referenceLines = state.secondState === 'ready'
       ? MS.alignCues(state.cues, state.secondCues)
       : new Array(state.cues.length).fill(null);
@@ -819,7 +864,8 @@
       startIndex: currentCueIndex()
     };
     if (kind === 'annotate') msg.level = settings.annotateLevel;
-    resetItems(kind);
+    // Lines kept from earlier (restoreKept) stay on screen; the job's replay
+    // from background.js's cache fills in the rest.
     state.job = { kind: kind, msg: msg, finished: false };
     state.status = kind === 'translate' ? 'translating' : 'annotating';
     sendJob();
@@ -1606,6 +1652,7 @@
     state.secondCues = [];
     state.secondTimedOut = false;
     resetItems(null);
+    state.kept.clear(); // another episode
     state.errorCode = null;
     state.errorHint = '';
     state.autoRetries = 0;
@@ -1767,7 +1814,8 @@
         secondaryTrackFound: secondaryTrackFound(),
         secondState: state.secondState,
         engineActive: state.engine ? state.engine.active || null : null,
-        jobKind: state.job ? state.job.kind : null,
+        // A mode restored from state.kept has no job.
+        jobKind: state.job ? state.job.kind : state.itemsKind,
         dragMode: state.dragModeEnabled
       });
     } else if (msg.type === 'set-track') {
@@ -1779,6 +1827,16 @@
       state.sourceMode = 'auto';
       state.manualTrackId = null;
       selectTracks();
+      sendResponse({ ok: true });
+    } else if (msg.type === 'preview-display') {
+      // A size or position slider moving in the popup: shown right away.
+      // The popup stores the value once the slider settles, and the
+      // storage.onChanged copy that follows changes nothing more.
+      const patch = {};
+      if (Number(msg.fontScale) > 0) patch.fontScale = Number(msg.fontScale);
+      if (msg.bottomOffset != null && Number.isFinite(Number(msg.bottomOffset))) patch.bottomOffset = Number(msg.bottomOffset);
+      settings = Object.assign({}, settings, patch);
+      applySettingsToOverlay();
       sendResponse({ ok: true });
     } else if (msg.type === 'set-drag-mode') {
       state.dragModeEnabled = !!msg.enabled;

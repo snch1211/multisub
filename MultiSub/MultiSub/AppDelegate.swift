@@ -28,6 +28,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// app in the middle of 「整理本集單字」.
     static weak var vocabExtraction: VocabExtractionManager?
 
+    /// Set by `MultiSubApp.init`, so closing the window doesn't quit the
+    /// app in the middle of a model download.
+    static weak var modelDownloads: ModelDownloadManager?
+
     /// Opens the main window again, or brings it back if it's already
     /// open. This delegate has no SwiftUI environment of its own, so
     /// `MultiSubApp` hands over the window's `openWindow` action once the
@@ -64,13 +68,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Quits with the last window, except while vocabulary extraction is
-    /// queued or running: that work doesn't need a window and can take
-    /// minutes, so the app stays up until it's done and then quits
-    /// (`VocabExtractionManager.quitWhenIdle`).
+    /// queued or running or a model is downloading: neither needs a window
+    /// and both can take minutes, so the app stays up until they're done
+    /// and then quits (each manager's `quitWhenIdle`, then `quitIfIdle`).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        guard let vocab = Self.vocabExtraction, vocab.hasActiveWork else { return true }
-        vocab.quitWhenIdle = true
-        return false
+        var busy = false
+        if let vocab = Self.vocabExtraction, vocab.hasActiveWork {
+            vocab.quitWhenIdle = true
+            busy = true
+        }
+        if let downloads = Self.modelDownloads, downloads.hasActiveDownloads {
+            downloads.quitWhenIdle = true
+            busy = true
+        }
+        return !busy
+    }
+
+    /// Called by a manager whose work kept the app up after its last window
+    /// closed, once that work is over: quits unless the window is back or
+    /// the other kind of work is still going (that one calls again when
+    /// it's done).
+    @MainActor
+    static func quitIfIdle() {
+        if NSApp.windows.contains(where: { $0.isVisible || $0.isMiniaturized }) { return }
+        if vocabExtraction?.hasActiveWork == true || modelDownloads?.hasActiveDownloads == true { return }
+        NSApp.terminate(nil)
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {

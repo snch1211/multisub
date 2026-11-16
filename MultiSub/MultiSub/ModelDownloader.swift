@@ -94,19 +94,18 @@ enum ModelDownloader {
             throw DownloadError(message: "無法解析 \(modelID) 的版本")
         }
 
-        // Unique per call (not a shared ".download-tmp"): with concurrent
-        // downloads of different models now possible (ModelDownloadManager),
-        // a shared temp dir meant one model finishing would `defer`-delete
-        // the *other* model's still-in-flight partial files out from under
-        // it — and two models that happen to share an identical small file
-        // (e.g. the same tokenizer config) would race on the same
-        // etag-named partial path. Verified against the real symptom: two
-        // concurrent downloads, one file in the second model ends up with
-        // actual size 0.
-        let tempDir = MultiSubPaths.modelsRoot.appendingPathComponent(".download-tmp", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        // One folder per model, kept from one attempt (and one app run) to
+        // the next: a download that failed, or an app that quit halfway,
+        // picks up where it stopped, since `downloadResumable` resumes
+        // whatever `.partial` file is already there. It goes once every
+        // file is in the cache. Per model, not shared: one model finishing
+        // must not delete another's files still in flight, and two models
+        // with an identical small file (the same tokenizer config) must not
+        // write the same etag-named partial. ModelDownloadManager never runs
+        // two downloads of the same model at once.
+        removeAbandonedTempDirs()
+        let tempDir = partialDirectory(for: modelID)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
         let tracker = ProgressTracker(totalBytes: totalBytes, onFraction: progress)
@@ -133,6 +132,37 @@ enum ModelDownloader {
             try? FileManager.default.removeItem(at: partialURL)
 
             tracker.fileCompleted(bytes: file.size)
+        }
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    private static var tempRoot: URL {
+        MultiSubPaths.modelsRoot.appendingPathComponent(".download-tmp", isDirectory: true)
+    }
+
+    /// Where `modelID`'s unfinished files wait for the next attempt.
+    private static func partialDirectory(for modelID: String) -> URL {
+        // "org/name" -> "org--name", like the Hugging Face cache's own folders.
+        let name = modelID.replacingOccurrences(of: "/", with: "--")
+            .map { $0.isLetter || $0.isNumber || "-_.".contains($0) ? String($0) : "_" }
+            .joined()
+        return tempRoot.appendingPathComponent(name, isDirectory: true)
+    }
+
+    /// Whether an earlier attempt left part of `modelID` behind, so 下載
+    /// can say it will continue rather than start over.
+    static func hasPartialDownload(modelID: String) -> Bool {
+        FileManager.default.fileExists(atPath: partialDirectory(for: modelID).path)
+    }
+
+    /// Builds before resumable folders used a fresh UUID-named folder per
+    /// attempt and left it behind when the app quit mid-download. Nothing
+    /// can resume from those any more; they only take up disk space.
+    private static func removeAbandonedTempDirs() {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: tempRoot.path) else { return }
+        for name in names where UUID(uuidString: name) != nil {
+            try? fm.removeItem(at: tempRoot.appendingPathComponent(name, isDirectory: true))
         }
     }
 
@@ -209,14 +239,19 @@ enum ModelDownloader {
         }
         if let lastError { throw lastError }
 
+        // A file that is too short is kept: the next attempt resumes it. One
+        // that is too long, or whose bytes don't check out, can't be
+        // repaired by resuming, so it goes and that file starts over.
         let finalSize = fileSize(at: destination)
         if expectedSize > 0, finalSize != expectedSize {
+            if finalSize > expectedSize { try? FileManager.default.removeItem(at: destination) }
             throw DownloadError(message: "\(filePath) 下載大小不符（預期 \(expectedSize)，實際 \(finalSize)）")
         }
         if let verifySHA256 {
             let normalized = verifySHA256.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
                 .replacingOccurrences(of: "W/", with: "")
             guard normalized.count == 64, let actual = try? sha256Hex(of: destination), actual == normalized else {
+                try? FileManager.default.removeItem(at: destination)
                 throw DownloadError(message: "\(filePath) 的 SHA256 驗證失敗，檔案可能損毀")
             }
         }

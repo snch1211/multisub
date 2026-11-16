@@ -86,7 +86,9 @@ struct ModelRow: View {
     private var downloadButton: some View {
         switch downloadManager.sizeEstimates[modelID] {
         case .known?:
-            Button(downloadState?.failed == true ? "重試下載" : "下載", action: onDownload)
+            // An earlier attempt's files are kept, so this picks up where it stopped.
+            Button(downloadState?.failed == true || ModelDownloader.hasPartialDownload(modelID: modelID) ? "繼續下載" : "下載",
+                   action: onDownload)
         case .failed?:
             Button("重新查詢大小") { downloadManager.retrySizeEstimate(modelID: modelID) }
         case .loading?, nil:

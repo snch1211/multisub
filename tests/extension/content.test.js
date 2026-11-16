@@ -343,7 +343,7 @@ async function test(name, fn) {
     assert.ok(!t.pageCommands.some((c) => c.purpose === 'reference'));
     t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
     await sleep(150);
-    assert.equal(t.hint().textContent, '這部片沒有 Netflix 官方的韓文字幕，可在 MultiSub 選單改用「AI 翻譯」');
+    assert.equal(t.hint().textContent, '這部片沒有官方韓文字幕，可在 MultiSub 選單改用 AI 翻譯');
     assert.equal(t.overlayOriginal().textContent, 'line 7');
     assert.equal(t.overlayText().style.display, 'none');
     const st = await t.status();
@@ -450,7 +450,7 @@ async function test(name, fn) {
     await sleep(150);
     assert.equal((await t.status()).status, 'ready');
     assert.equal(t.overlayOriginal().textContent, 'line 7');
-    assert.equal(t.hint().textContent, '這部片沒有 Netflix 官方的日文字幕，可在 MultiSub 選單改用「AI 翻譯」');
+    assert.equal(t.hint().textContent, '這部片沒有官方日文字幕，可在 MultiSub 選單改用 AI 翻譯');
     answer();
     await sleep(150);
     const st = await t.status();
@@ -510,7 +510,7 @@ async function test(name, fn) {
     assert.ok(host, 'toast shown');
     assert.equal(host.parentElement, t.container); // same container as the overlay: visible in fullscreen
     assert.equal(t.html.querySelector('#multisub-overlay').parentElement, t.container);
-    assert.deepEqual(toastText(host), ['MultiSub 已開啟', '目前使用 Netflix 雙語字幕，第二語言是繁體中文。',
+    assert.deepEqual(toastText(host), ['MultiSub 已開啟', 'Netflix 雙語字幕・繁體中文',
       '點 Safari 工具列的 MultiSub 按鈕可以換模式。']);
     assert.equal(host.shadowRoot.querySelector('.toast').getAttribute('role'), 'status');
     // Click-through: nothing takes pointer events except the close button.
@@ -575,13 +575,13 @@ async function test(name, fn) {
   await test('toast: says which mode and language are in use, and follows popup changes', async () => {
     const t = boot({ stored: undefined, navigator: { languages: ['ja-JP', 'en-US'] }, ping: () => ({ ok: true, engine: null }) });
     await sleep(200);
-    assert.equal(toastText(t.toast())[1], '目前使用 Netflix 雙語字幕，第二語言是日文。');
+    assert.equal(toastText(t.toast())[1], 'Netflix 雙語字幕・日文');
     await t.setSettings({ mode: 'annotate', prefsUpdatedAt: 9 });
     await sleep(20);
-    assert.equal(toastText(t.toast())[1], '目前使用生字標註，難字後面會標上日文的意思。');
+    assert.equal(toastText(t.toast())[1], '生字標註・日文');
     await t.setSettings({ mode: 'translate', targetLang: 'ko', prefsUpdatedAt: 10 });
     await sleep(20);
-    assert.equal(toastText(t.toast())[1], '目前使用 AI 翻譯雙語字幕，第二語言是韓文。');
+    assert.equal(toastText(t.toast())[1], 'AI 翻譯雙語字幕・韓文');
     await t.setSettings({ enabled: false });
     await sleep(20);
     assert.equal(t.toast(), null);
@@ -609,7 +609,7 @@ async function test(name, fn) {
     assert.equal(t.overlayText().querySelector('.ms-gloss').textContent, '堅決');
     await t.setSettings({ mode: 'netflix', prefsUpdatedAt: 50 });
     await sleep(150);
-    assert.equal(t.hint().textContent, '沒有抓到字幕資料，請重新整理頁面（⌘R）');
+    assert.equal(t.hint().textContent, '沒抓到字幕資料，請重新整理頁面（⌘R）');
     assert.ok(!t.html.classList.contains('multisub-native-hidden'));
     t.stop();
   });
@@ -703,6 +703,63 @@ async function test(name, fn) {
     await sleep(20);
     return t.port();
   }
+
+  await test('switching back to a mode shows what it had at once: finished asks nothing, unfinished asks for the rest', async () => {
+    const t = boot({ stored: settingsWith({}), ping: () => ({ ok: true, engine: cloudEngine }) });
+    const port = await runningJob(t);
+    port.onMessage.fire({ type: 'progress', kind: 'translate', start: 0, items: EN_CUES.map((c) => 'T ' + c.text) });
+    port.onMessage.fire({ type: 'done', kind: 'translate' });
+    assert.equal((await t.status()).status, 'done');
+
+    // annotate, left before it finished
+    await t.setSettings({ mode: 'annotate', prefsUpdatedAt: 20 });
+    await sleep(20);
+    assert.equal(t.ports.length, 2);
+    t.port().onMessage.fire({ type: 'progress', kind: 'annotate', start: 0, items: EN_CUES.slice(0, 10).map((c, i) => [{ term: String(i), gloss: '第' + i }]) });
+
+    // back to translate: finished, so no job and no port, the lines are already there
+    await t.setSettings({ mode: 'translate', prefsUpdatedAt: 30 });
+    let st = await t.status();
+    assert.equal(st.status, 'done');
+    assert.equal(st.jobKind, 'translate');
+    assert.equal(st.translatedCount, 50);
+    assert.equal(t.ports.length, 2);
+    await sleep(150);
+    assert.equal(t.overlayText().textContent, 'T line 7');
+
+    // back to annotate: its 10 lines show right away, a job asks for the rest
+    await t.setSettings({ mode: 'annotate', prefsUpdatedAt: 40 });
+    st = await t.status();
+    assert.equal(st.status, 'annotating');
+    assert.equal(st.translatedCount, 10);
+    assert.equal(t.ports.length, 3);
+    assert.equal(t.port().posted.find((m) => m.type === 'job').kind, 'annotate');
+    await sleep(150);
+    assert.equal(t.overlayText().querySelector('.ms-gloss').textContent, '第7');
+
+    // another level is another result: nothing kept for it
+    await t.setSettings({ annotateLevel: 'C1', prefsUpdatedAt: 50 });
+    st = await t.status();
+    assert.equal(st.translatedCount, 0);
+    assert.equal(t.port().posted.find((m) => m.type === 'job').level, 'C1');
+    t.stop();
+  });
+
+  await test('preview-display applies size and position at once without storing them', async () => {
+    const t = boot({ stored: settingsWith({}), ping: () => ({ ok: true, engine: cloudEngine }) });
+    await runningJob(t);
+    await sleep(150);
+    const overlay = t.html.querySelector('#multisub-overlay');
+    assert.equal(overlay.style['--multisub-font-scale'], '1');
+    const res = await t.tabMessage({ type: 'preview-display', fontScale: 1.45, bottomOffset: 22 });
+    assert.deepEqual(JSON.parse(JSON.stringify(res)), { ok: true });
+    assert.equal(overlay.style['--multisub-font-scale'], '1.45');
+    assert.equal(overlay.style['--multisub-bottom'], '22%');
+    assert.equal(t.store.settings.fontScale, 1); // the popup stores it when the slider settles
+    // a pipeline isn't restarted by it
+    assert.equal(t.ports.length, 1);
+    t.stop();
+  });
 
   await test('partial done: brief notice instead of the error hint, missing lines retried quietly', async () => {
     const t = boot({ stored: settingsWith({}), ping: () => ({ ok: true, engine: cloudEngine }), scale: 0.01 });

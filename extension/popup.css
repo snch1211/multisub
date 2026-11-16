@@ -51,10 +51,35 @@
 
 [hidden] { display: none !important; }
 
+/* Safari sizes the popover to the page, up to about 600 px tall, and
+   scrolls the page past that. A classic scrollbar would then take ~15 px,
+   and Safari widens the popover by that much on the right only, which reads
+   as a lopsided margin. The page still scrolls (wheel, trackpad, keyboard);
+   it just has no bar. Opening the display settings scrolls them into view
+   (popup.js), so nothing ends up hidden below the edge. */
+html { scrollbar-width: none; }
+::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+/* With no scrollbar, a fade along the bottom edge says the page goes on
+   below; popup.js (updateMoreBelow) shows it until the bottom is reached. */
+body::after {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 32px;
+  background: linear-gradient(to bottom, transparent, var(--bg));
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+body.more-below::after { opacity: 1; }
+
 body {
   width: 340px;
   margin: 0;
-  padding: 14px;
+  padding: 12px 14px;
   font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", system-ui, sans-serif;
   font-size: 13px;
   line-height: 1.4;
@@ -103,7 +128,7 @@ button, select, input { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   padding: 0 2px;
 }
 
@@ -135,7 +160,7 @@ h1 {
 }
 
 .card-title {
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -204,10 +229,11 @@ h1 {
   font-weight: 600;
 }
 
-/* Fixed to two lines so switching modes never shifts the controls below. */
+/* Every mode's line fits on one line; the min-height keeps switching modes
+   from shifting the controls below. */
 .mode-desc {
-  min-height: 2.8em;
-  margin: 7px 2px 6px;
+  min-height: 1.4em;
+  margin: 7px 2px 4px;
   font-size: 12px;
   color: var(--text-dim);
 }
@@ -241,22 +267,9 @@ h1 {
 .status-text.err { color: var(--err); }
 
 /* --- Form controls ---------------------------------------------------- */
-.field { margin-top: 10px; }
-.field:first-child { margin-top: 0; }
-.field > label, .label-row label {
-  display: block;
-  margin-bottom: 4px;
-  font-weight: 500;
-}
-.label-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
 .value { font-weight: 400; color: var(--text-dim); }
 
-select, input[type="text"], input[type="password"], input[type="url"] {
+select {
   width: 100%;
   min-height: 28px;
   padding: 4px 8px;
@@ -265,8 +278,6 @@ select, input[type="text"], input[type="password"], input[type="url"] {
   background: var(--field);
   font-size: 13px;
 }
-input::placeholder { color: var(--text-dim); opacity: 1; }
-.model-custom { margin-top: 6px; }
 
 input[type="range"] {
   width: 100%;
@@ -338,7 +349,7 @@ input[type="range"] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* A long model id must truncate the summary, not squeeze 「變更」 onto two lines. */
+/* A long model id must truncate the summary, not squeeze 「到 App 變更」 onto two lines. */
 .engine-summary .link-button {
   flex-shrink: 0;
   white-space: nowrap;
@@ -352,52 +363,13 @@ input[type="range"] {
 .engine-notice.err { color: var(--err); }
 .engine-notice.dim { color: var(--text-dim); }
 
-.engine-form .primary-button { margin-top: 12px; }
-
-.engine-result {
-  min-height: 1.4em;
-  margin: 6px 0 0;
+/* No engine yet: why, and the way to the app to set one up. */
+.engine-setup-text {
+  margin: 0;
   font-size: 12px;
   color: var(--text-dim);
 }
-.engine-result.ok { color: var(--ok); }
-.engine-result.err { color: var(--err); }
-
-/* --- Consent step (after a successful test, before saving) ------------- */
-.consent-step {
-  margin-top: 12px;
-  padding: 10px 11px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--seg-bg);
-}
-.consent-title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ok);
-}
-.consent-text {
-  margin: 4px 0 0;
-  font-size: 12px;
-}
-.consent-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
-}
-.consent-actions .secondary-button,
-.consent-actions .primary-button {
-  flex: 1;
-  margin-top: 0;
-}
-
-.engine-links {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 4px;
-}
+.engine-setup .primary-button { margin-top: 8px; }
 
 /* --- Display settings ------------------------------------------------- */
 .details { padding: 0; }
@@ -423,7 +395,32 @@ input[type="range"] {
 }
 .details[open] summary::after { transform: rotate(45deg); }
 .details-body { padding: 0 12px 12px; }
-.details-body .secondary-button { margin-top: 12px; }
+
+/* Label, slider and value on one line. */
+.slider-row {
+  display: grid;
+  grid-template-columns: auto 1fr 3em;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.slider-row:first-child { margin-top: 0; }
+.slider-row label { font-weight: 500; }
+.slider-row input[type="range"] { margin: 0; }
+.slider-row .value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.check-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+}
+.check-group .check-row { margin-top: 0; }
+
+.details-links { margin-top: 10px; }
 
 /* --- Hints, vocab, footer --------------------------------------------- */
 .hint {
@@ -528,6 +525,6 @@ input[type="range"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .switch .slider, .switch .slider::before, .details summary::after { transition: none; }
+  .switch .slider, .switch .slider::before, .details summary::after, body::after { transition: none; }
   body.loading > .loading-note { animation: none; }
 }

@@ -64,108 +64,22 @@
       return { hint: $('organizeVocabHint').textContent, cls: $('organizeVocabHint').className, shown: visible('vocabStatus'),
         disabled: $('organizeVocab').disabled, calls: vocabCalls().length };
     },
-    async 'list-models'() {
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      choose('provider', 'openai');
-      type('apiKey', 'sk-typed');
-      $('loadModels').click();
-      await waitFor(() => /找到/.test($('engineResult').textContent));
-      return { sent: log(), keyField: $('apiKey').value, result: $('engineResult').textContent,
-        options: Array.from($('model').options).map((o) => o.value) };
-    },
-    async 'list-models-nokey'() {
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      choose('provider', 'openai');
-      $('loadModels').click();
+    async 'engine-card'() {
+      await waitFor(() => !document.body.classList.contains('loading'), 6000);
       await sleep(100);
-      return { sent: log(), result: $('engineResult').textContent };
-    },
-    async 'save-consent'() {
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      choose('provider', 'openai');
-      type('apiKey', 'sk-typed');
-      $('engineForm').requestSubmit();
-      await waitFor(() => visible('consentStep'));
-      const step = { title: $('consentTitle').textContent, text: $('consentText').textContent,
-        saveHidden: !visible('saveEngine'), sentBefore: log() };
-      $('consentAccept').click();
-      await waitFor(() => visible('engineSummary'));
-      return { step, sent: log(), notice: $('engineNotice').textContent, summary: $('engineSummaryText').textContent,
-        keyField: $('apiKey').value, draftRemoved: window.__log.some((m) => m.type === 'storage.remove' && m.keys.includes('engineDraft')) };
-    },
-    async 'save-consent-cancel'() {
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      choose('provider', 'custom');
-      type('baseURL', 'http://localhost:1234/v1');
-      type('modelCustom', 'qwen3');
-      $('engineForm').requestSubmit();
-      await waitFor(() => visible('consentStep'));
-      const text = $('consentText').textContent;
-      $('consentCancel').click();
-      await sleep(50);
-      return { text, sent: log(), stepHidden: !visible('consentStep'), result: $('engineResult').textContent, formShown: visible('engineForm') };
-    },
-    async 'save-test-fails'() {
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      choose('provider', 'openai');
-      type('apiKey', 'sk-bad');
-      $('engineForm').requestSubmit();
-      await waitFor(() => $('engineResult').textContent && !/測試中/.test($('saveEngine').textContent));
-      return { sent: log(), result: $('engineResult').textContent, cls: $('engineResult').className };
-    },
-    async 'save-nokey'() {
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      choose('provider', 'openai');
-      $('engineForm').requestSubmit();
-      await sleep(80);
-      return { sent: log(), result: $('engineResult').textContent };
-    },
-    async 'save-known-consent'() {
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      choose('provider', 'openai');
-      type('apiKey', 'sk-typed');
-      $('engineForm').requestSubmit();
-      await waitFor(() => visible('engineSummary') || visible('consentStep'));
-      return { sent: log(), stepShown: visible('consentStep') };
-    },
-    async 'draft-keylink'() {
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      choose('provider', 'openai');
-      choose('model', 'gpt-6-luna');
-      type('apiKey', 'sk-never-stored');
-      $('keyLink').click();
-      await waitFor(() => window.__log.some((m) => m.type === 'tabs.create'));
-      return { create: window.__log.find((m) => m.type === 'tabs.create'), stored: window.__store.engineDraft };
-    },
-    async 'draft-restore'() {
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      return { provider: $('provider').value, model: $('model').value, formShown: visible('engineForm'), summaryShown: visible('engineSummary') };
+      const card = { summaryShown: visible('engineSummary'), summary: $('engineSummaryText').textContent,
+        change: $('engineChange').textContent, setupShown: visible('engineSetup'), setupText: $('engineSetupText').textContent,
+        openLabel: $('engineOpenApp').textContent, formFields: ['engineForm', 'apiKey', 'provider', 'model'].filter((id) => $(id)) };
+      $(card.summaryShown ? 'engineChange' : 'engineOpenApp').click();
+      await sleep(100);
+      return { card, sent: window.__log.filter((m) => m.type === 'open-app'), notice: visible('engineNotice') && $('engineNotice').textContent,
+        noticeCls: $('engineNotice').className };
     },
     async 'perm'() {
       await waitFor(() => !document.body.classList.contains('loading'));
       await sleep(100);
       return { banner: visible('banner') && $('bannerText').textContent, action: $('bannerAction').textContent,
         status: $('statusText').textContent, openNetflixShown: visible('openNetflix') };
-    },
-    async 'local-downloaded'() {
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      const label = $('useLocal').textContent;
-      $('useLocal').click();
-      await waitFor(() => visible('engineSummary'));
-      return { label, sent: log(), notice: $('engineNotice').textContent, summary: $('engineSummaryText').textContent };
-    },
-    async 'local-missing'() {
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      const label = $('useLocal').textContent;
-      $('useLocal').click();
-      await sleep(80);
-      return { label, sent: log(), result: $('engineResult').textContent };
-    },
-    async 'local-active'() {
-      await waitFor(() => visible('engineSummary'));
-      $('engineChange').click();
-      await waitFor(() => visible('engineForm') && $('provider').options.length);
-      return { useLocalShown: visible('useLocal'), cancelShown: visible('engineCancel') };
     },
     async 'slow-ping'() {
       const snaps = [];
@@ -191,6 +105,23 @@
       fire($('mergedMode'), 'change');
       await sleep(100);
       return { stored: window.__store.settings || null, sentPrefs: window.__log.filter((m) => m.type === 'set-prefs') };
+    },
+    async 'slider-drag'() {
+      await waitFor(() => !document.body.classList.contains('loading'), 6000);
+      const previews = [];
+      const send = browser.tabs.sendMessage;
+      browser.tabs.sendMessage = (id, m) => { if (m.type === 'preview-display') previews.push(m); return send(id, m); };
+      const slider = $('fontScale');
+      const storedDuring = [];
+      for (const v of ['1.1', '1.2', '1.3']) {
+        slider.value = v;
+        fire(slider, 'input');
+        await sleep(40);
+        storedDuring.push(window.__store.settings.fontScale);
+      }
+      fire(slider, 'change'); // let go
+      await sleep(30);
+      return { previews, storedDuring, storedAfter: window.__store.settings.fontScale, shown: $('fontScaleValue').textContent };
     },
     async 'pick-mode'() {
       await waitFor(() => !document.body.classList.contains('loading'), 6000);

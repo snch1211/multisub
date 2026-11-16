@@ -134,11 +134,11 @@
   // `short` fits the popup's three-way segmented control.
   const MODES = Object.freeze([
     { id: 'netflix', label: 'Netflix 雙語字幕', short: 'Netflix 字幕',
-      desc: '直接疊上 Netflix 官方的第二語言字幕，不需 AI、免設定', needsEngine: false },
+      desc: '疊上 Netflix 官方的第二語言字幕，免設定', needsEngine: false },
     { id: 'translate', label: 'AI 翻譯雙語字幕', short: 'AI 翻譯',
-      desc: '用 AI 翻譯原文字幕，任何片都能雙語', needsEngine: true },
+      desc: '用 AI 翻譯原文，每部片都能雙語', needsEngine: true },
     { id: 'annotate', label: '生字標註', short: '生字標註',
-      desc: '只顯示原文，在難字後面標上意思，適合學語言', needsEngine: true }
+      desc: '在原文的難字後面標上意思，適合學語言', needsEngine: true }
   ]);
 
   const LEVELS = Object.freeze([
@@ -152,12 +152,12 @@
   // ARCHITECTURE §5.1. Short enough for the overlay hint and the popup's
   // status line.
   const ERROR_TEXT = Object.freeze({
-    'native-unavailable': '連不到 MultiSub App，請先打開 App 再試一次',
+    'native-unavailable': '連不到 MultiSub App，請打開 App 再試一次',
     'engine-not-ready': '還沒設定 AI 引擎，點 Safari 工具列的 MultiSub 圖示設定',
-    'model-not-ready': '本機模型還沒下載完，請到 MultiSub App 下載',
+    'model-not-ready': '本機模型還沒下載，請到 MultiSub App 下載',
     'auth-failed': 'API Key 無效或已過期，請重新貼上',
-    'rate-limited': 'AI 服務的額度或請求次數到上限了，請稍後再試，或到服務商網站檢查餘額',
-    'network': '網路連不上 AI 服務，請檢查網路',
+    'rate-limited': 'AI 服務的額度用完或請求太頻繁，請稍後再試',
+    'network': '連不上 AI 服務，請檢查網路',
     'provider-error': 'AI 服務暫時出錯，請稍後再試',
     // set-engine refuses a cloud provider the user hasn't agreed to send
     // subtitles to yet (App Review 5.1.2(i)); the popup turns this into its

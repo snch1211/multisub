@@ -106,7 +106,7 @@ struct EngineSetupView: View {
         Group {
             statusRow
             Picker("設定方式", selection: $tab) {
-                Text("API Key（推薦，免下載）").tag(EngineSetupTab.cloud)
+                Text("API Key（推薦）").tag(EngineSetupTab.cloud)
                 Text("本機模型（離線）").tag(EngineSetupTab.local)
             }
             .pickerStyle(.segmented)
@@ -178,7 +178,7 @@ struct EngineSetupView: View {
             return "本機模型 · \(ModelCatalog.displayName(for: status.localModelId))"
         default:
             if status.configured != .local, let provider = savedProviderAwaitingConsent {
-                return "還沒同意把字幕送到 \(provider.consentRecipient)，按「儲存並測試」確認"
+                return "尚未同意傳送到 \(provider.consentRecipient)，請按「儲存並測試」"
             }
             switch status.configured {
             case .local: return "本機模型還沒下載"
@@ -297,7 +297,7 @@ struct EngineSetupView: View {
     }
 
     private var sendDisclosure: String {
-        "儲存後，要翻譯或標註的字幕文字會從這台 Mac 直接送到 \(provider.consentRecipient)，不經過 MultiSub。"
+        "儲存後，字幕文字會從這台 Mac 直接送到 \(provider.consentRecipient)，不經過 MultiSub。"
     }
 
     private var consentAlertShown: Binding<Bool> {
@@ -314,11 +314,11 @@ struct EngineSetupView: View {
         let recipient = candidate.provider == .custom
             ? "你填的 API 網址（\(candidate.baseURL)）"
             : candidate.provider.consentRecipient
-        var message = "之後翻譯或標註時，字幕文字會從這台 Mac 直接送到 \(recipient)，不經過 MultiSub。"
+        var message = "翻譯或標註時，字幕文字會從這台 Mac 直接送到 \(recipient)，不經過 MultiSub。"
         if candidate.provider != .custom {
-            message += "資料怎麼處理，以這個服務的隱私權政策為準。"
+            message += "資料依該服務的隱私權政策處理。"
         }
-        message += "\n\n同意後會先送一句固定的測試句，測試成功才會儲存。"
+        message += "\n\n同意後會先送一句測試句，成功才儲存。"
         return message
     }
 
@@ -485,7 +485,7 @@ struct EngineSetupView: View {
             }
             consentGiven.remove(candidate.provider)
             let seconds = String(format: "%.1f", Double(result.latencyMs) / 1000)
-            feedback = .success("已儲存，可以用了，回應時間 \(seconds) 秒", detail: "「\(result.sample)」")
+            feedback = .success("已儲存，可以用了（\(seconds) 秒）", detail: "「\(result.sample)」")
             await refreshStatus()
         }
     }
@@ -534,7 +534,7 @@ struct EngineSetupView: View {
 
     @ViewBuilder
     private var localRows: some View {
-        Text("在這台 Mac 上用 Gemma 模型翻譯，不需要網路，也不用 API Key。模型只要下載一次。")
+        Text("在這台 Mac 上用 Gemma 翻譯，不用網路和 API Key，模型下載一次就好。")
             .font(.callout)
             .foregroundStyle(.secondary)
 
@@ -569,7 +569,7 @@ struct EngineSetupView: View {
         }
 
         if showsLocalModelHint {
-            Text("想換其他大小的模型，可以到「一般設定」的「本機模型」下載。")
+            Text("其他大小的模型在「一般設定」下載。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -641,7 +641,7 @@ struct EngineSetupView: View {
             configStore.update { $0.engine = .local }
         }
         // Only the first run is slow; later runs reuse the loaded model.
-        runTest(note: "載入模型並測試中，第一次約需 10–30 秒…")
+        runTest(note: "載入模型並測試中，首次約需 10–30 秒…")
     }
 
     // MARK: - Test
@@ -652,7 +652,7 @@ struct EngineSetupView: View {
             do {
                 let result = try await Translator.shared.testEngine()
                 let seconds = String(format: "%.1f", Double(result.latencyMs) / 1000)
-                feedback = .success("可以用了，回應時間 \(seconds) 秒", detail: "「\(result.sample)」")
+                feedback = .success("可以用了（\(seconds) 秒）", detail: "「\(result.sample)」")
             } catch {
                 feedback = .failure(error.localizedDescription)
             }

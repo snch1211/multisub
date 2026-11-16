@@ -401,9 +401,9 @@ async function startJob(conn, msg) {
 
 async function runJob(job) {
   const n = job.lines.length;
-  const profile = profileFor(await currentEngine());
-  if (job.stopped()) return;
-
+  // The cache before the engine: currentEngine() may first ping native
+  // (which also reads all of storage.local for the cache index), and an
+  // episode that is already done shouldn't wait for that to come back.
   await loadCachedItems(job);
   if (job.stopped()) return;
   // Replay whatever we already have.
@@ -414,6 +414,9 @@ async function runJob(job) {
     postJob(job, { type: 'done', kind: job.kind, fromCache: true });
     return;
   }
+
+  const profile = profileFor(await currentEngine());
+  if (job.stopped()) return;
 
   let chunks;
   if (job.kind === 'translate') chunks = MS.fixedChunks(n, profile.batch);

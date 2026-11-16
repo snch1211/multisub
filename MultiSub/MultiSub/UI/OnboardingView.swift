@@ -39,9 +39,9 @@ enum SubtitleMode: String, CaseIterable, Identifiable {
 
     var summary: String {
         switch self {
-        case .netflix: return "直接疊上 Netflix 官方的第二語言字幕，不需 AI、免設定"
-        case .translate: return "用 AI 翻譯原文字幕，任何片都能雙語"
-        case .annotate: return "只顯示原文，在難字後面標上意思，適合學語言"
+        case .netflix: return "疊上 Netflix 官方的第二語言字幕，免設定"
+        case .translate: return "用 AI 翻譯原文，每部片都能雙語"
+        case .annotate: return "在原文的難字後面標上意思，適合學語言"
         }
     }
 
@@ -154,12 +154,16 @@ struct OnboardingView: View {
                 SafariExtensionRow(state: extensionState)
                 websiteAccessRow
             } header: {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 24) {
                     hero
                     stepHeader(1, "啟用 Safari 延伸功能")
                 }
             } footer: {
-                Text("在 Safari 設定的「延伸功能」勾選 MultiSub。")
+                // Only while there's something to do; once ticked, the
+                // green status says it all.
+                if !extensionState.isEnabled {
+                    Text("在 Safari 設定的「延伸功能」勾選 MultiSub。")
+                }
             }
 
             Section {
@@ -197,12 +201,18 @@ struct OnboardingView: View {
                         .pickerStyle(.segmented)
                     }
                 } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("想用 AI 翻譯或生字標註？")
+                    // What's in use, so the collapsed row still answers
+                    // "which mode am I on?" without opening it. Open, the
+                    // cards and the picker say the same thing.
+                    HStack {
+                        Text("字幕模式與語言")
                             .font(.headline)
-                        Text("也可以在這裡換第二語言，目前是\(SubtitleChoices.languageName(targetLang))。")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 12)
+                        if !showsOptions {
+                            Text("\(mode.title)・\(SubtitleChoices.languageName(targetLang))")
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                     .padding(.vertical, 2)
                 }
@@ -222,8 +232,10 @@ struct OnboardingView: View {
                 } header: {
                     Text("AI 引擎")
                 } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("API Key 只存在這台 Mac 的鑰匙圈裡。用 API Key 時，字幕文字只會送到你選的 AI 服務。")
+                    // Where the text goes is said in the form itself, right
+                    // above 「儲存並測試」.
+                    HStack(spacing: 4) {
+                        Text("API Key 只存在這台 Mac 的鑰匙圈。")
                         if let url = MultiSubLinks.privacyPolicy {
                             Link("隱私權政策", destination: url)
                         }
@@ -255,23 +267,21 @@ struct OnboardingView: View {
     // MARK: - Pieces
 
     private var hero: some View {
-        VStack(spacing: 14) {
-            BrandLogoView(scale: 2.4)
+        VStack(spacing: 10) {
+            BrandLogoView(scale: 2)
                 .padding(.bottom, 4)
             Text("歡迎使用 MultiSub")
                 .font(.largeTitle.weight(.bold))
                 .foregroundStyle(.primary)
-            // Two deliberate lines: left to wrap on its own, the second
-            // sentence broke mid-word at common window widths.
-            Text("在 Netflix 同時看兩種語言的字幕，或幫較難的單字標上意思。\n照著下面兩個步驟就能開始。")
+            // One short line: the numbered steps below say what to do.
+            Text("在 Netflix 看雙語字幕，或幫難字標上意思")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 12)
+        .padding(.top, 8)
     }
 
     /// Content scripts only run once Safari grants access to netflix.com,
@@ -281,8 +291,8 @@ struct OnboardingView: View {
     private var websiteAccessRow: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text("允許 MultiSub 在 netflix.com 上執行")
-                Text("第一次在 netflix.com 用 MultiSub 時，Safari 會詢問網站權限，請選「一律允許」。選「允許一天」的話，隔天就會失效。Safari 沒有詢問的話，點工具列的 MultiSub 按鈕，再按「允許存取」。")
+                Text("允許在 netflix.com 上執行")
+                Text("Safari 詢問時選「一律允許」，選「允許一天」隔天就會失效。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -291,6 +301,9 @@ struct OnboardingView: View {
             Image(systemName: "globe")
                 .foregroundStyle(.secondary)
         }
+        // The fallback for when Safari never asks; the popup's own 允許存取
+        // banner covers it too, so it doesn't need a line of its own here.
+        .help("Safari 沒有詢問的話，點工具列的 MultiSub 按鈕，再按「允許存取」。")
     }
 
     private func openNetflixRow(scrollProxy: ScrollViewProxy) -> some View {
@@ -300,9 +313,9 @@ struct OnboardingView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if needsEngine && !engineReady {
                     HStack(spacing: 6) {
-                        Label("「\(mode.title)」需要 AI 引擎", systemImage: "exclamationmark.triangle.fill")
+                        Label("這個模式需要 AI 引擎", systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
-                        Button("設定 AI 引擎") { revealEngineSetup(scrollProxy) }
+                        Button("設定") { revealEngineSetup(scrollProxy) }
                             .buttonStyle(.link)
                     }
                     .font(.callout)
@@ -320,20 +333,16 @@ struct OnboardingView: View {
         .padding(.vertical, 4)
     }
 
-    /// What happens on Netflix with the current settings, and where to
-    /// change them. Netflix mode only has a second line where Netflix offers
-    /// an official track in that language (chooseSecondTrack in content.js),
-    /// so it says so here, where it's always visible.
+    /// What happens on Netflix with the current settings. Where to change
+    /// them is the section right below. A film without an official track in
+    /// the second language is the popup's to explain (its status line offers
+    /// 改用 AI 翻譯 then), not this page's.
     private var watchSummary: String {
         let language = SubtitleChoices.languageName(targetLang)
-        let change = "要換語言或模式，可以在下方設定，或點 Safari 工具列的 MultiSub 按鈕。"
         switch mode {
-        case .netflix:
-            return "播放影片時，雙語字幕會自動出現，第二語言是\(language)。有些片沒有 Netflix 官方的\(language)字幕，這時可以改用 AI 翻譯。" + change
-        case .translate:
-            return "播放影片時，雙語字幕會自動出現，第二語言是\(language)。" + change
-        case .annotate:
-            return "播放影片時，難字後面會自動標上\(language)的意思。" + change
+        case .netflix: return "播放影片時，會疊上官方的\(language)字幕。"
+        case .translate: return "播放影片時，會用 AI 把字幕翻成\(language)。"
+        case .annotate: return "播放影片時，難字後面會標上\(language)意思。"
         }
     }
 
@@ -343,10 +352,8 @@ struct OnboardingView: View {
                    isCurrent: currentStep == number)
     }
 
-    /// Under the mode cards. Netflix mode's caveat (no official track in the
-    /// second language) is in step 2's `watchSummary`, visible with this
-    /// section collapsed too.
-    private var modeFooter: String { "之後隨時能從 Safari 工具列的 MultiSub 按鈕切換模式。" }
+    /// Under the mode cards.
+    private var modeFooter: String { "看片時也能從 Safari 工具列的 MultiSub 按鈕切換。" }
 
     /// The known languages, plus the saved one if the extension stored a code
     /// this list doesn't have (so the picker never holds an invalid tag).

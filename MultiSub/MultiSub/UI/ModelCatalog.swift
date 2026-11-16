@@ -116,14 +116,14 @@ enum ModelMemoryAdvisor {
     /// Title and message of that confirmation, shared by 一般設定 and the
     /// engine setup so both ask the same way.
     static func confirmationTitle(sizeKnown: Bool) -> String {
-        sizeKnown ? "此模型可能超出裝置記憶體" : "查不到這個模型的大小"
+        sizeKnown ? "這個模型可能超出記憶體" : "查不到這個模型的大小"
     }
 
     static func confirmationMessage(sizeKnown: Bool) -> String {
         if sizeKnown {
-            return "此模型磁碟大小換算約超過裝置實體記憶體的 \(Int(blockedRatio * 100))%，載入可能導致系統記憶體吃緊或當機。"
+            return "模型大小超過這台 Mac 記憶體的 \(Int(blockedRatio * 100))%，載入時可能讓系統變慢或當機。"
         }
         let memory = ModelCatalog.formatBytes(Int64(ProcessInfo.processInfo.physicalMemory))
-        return "無法確認這個模型會不會超出這台 Mac 的記憶體（\(memory)）。模型太大的話，載入時可能讓系統記憶體吃緊或當機。"
+        return "不確定它會不會超出這台 Mac 的記憶體（\(memory)）。太大的話，載入時可能讓系統變慢或當機。"
     }
 }

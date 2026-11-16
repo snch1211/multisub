@@ -16,7 +16,7 @@ struct MultiSubApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var router: AppRouter
     @State private var configStore = ConfigStore()
-    @State private var modelDownloadManager = ModelDownloadManager()
+    @State private var modelDownloadManager: ModelDownloadManager
     @State private var vocabExtractionManager: VocabExtractionManager
     #if !APP_STORE
     // Direct (DMG) builds only: the App Store build updates through the
@@ -33,6 +33,9 @@ struct MultiSubApp: App {
         _vocabExtractionManager = State(initialValue: vocab)
         _router = State(initialValue: AppRouter(vocab: vocab))
         AppDelegate.vocabExtraction = vocab
+        let downloads = ModelDownloadManager()
+        _modelDownloadManager = State(initialValue: downloads)
+        AppDelegate.modelDownloads = downloads
     }
 
     var body: some Scene {
