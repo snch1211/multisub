@@ -11,7 +11,7 @@
 #
 # Usage:
 #   ./deploy.sh            dev install: Debug build → /Applications (default)
-#   ./deploy.sh --release  R3 packaging: Release build → build/MultiSub.app
+#   ./deploy.sh --release  packaging: Release build → build/MultiSub.app
 #                          (does NOT install to /Applications or touch Safari;
 #                           feed the result to scripts/make-dmg.sh)
 #
@@ -21,9 +21,9 @@ REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$REPO_DIR/MultiSub"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
-# ── R3: Release build for DMG packaging ──────────────────────────────────────
-# Uses the same mandatory flags as the Debug path (see CLAUDE.md), only with
-# -configuration Release. Route 1 (free signing) — no hardened runtime / no
+# ── Release build for DMG packaging ──────────────────────────────────────────
+# Uses the same mandatory flags as the Debug path below, only with
+# -configuration Release. Free signing — no hardened runtime / no
 # notarization. Stages a clean copy at build/MultiSub.app and stops there.
 if [ "${1:-}" = "--release" ]; then
   OUT_DIR="$REPO_DIR/build"
@@ -92,7 +92,7 @@ codesign --verify --deep --strict /Applications/MultiSub.app \
 echo "▶︎ (5/5) 完成 ✓"
 echo ""
 echo "接下來要讓 Safari 載入新版："
-echo "  1. Safari 設定 → 擴充功能 → MultiSub 取消勾選再重新勾選（重載資源）"
+echo "  1. Safari 設定 → 延伸功能 → MultiSub 取消勾選再重新勾選（重載資源）"
 echo "  2. Netflix 分頁按 ⌘R 重新整理"
 echo ""
 echo "只是想用 App：⌘空白鍵 打 MultiSub 開啟即可，不用進 Xcode。"
