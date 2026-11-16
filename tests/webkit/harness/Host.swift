@@ -148,7 +148,8 @@ enum HostError: Error, CustomStringConvertible {
 
 @MainActor
 final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate, WKNavigationDelegate {
-  let extensionDir: URL
+  /// The build loaded last (reloadContext(from:) can switch to another).
+  private(set) var extensionDir: URL
   let native: NativeStub
   private(set) var webExtension: WKWebExtension!
   private(set) var controller: WKWebExtensionController!
@@ -170,18 +171,51 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate, WKNavigat
   /// Loads the extension and grants everything it asks for, as a user who
   /// enabled it in Safari and allowed it on netflix.com would have.
   func load() async throws {
-    let ext = try await WKWebExtension(resourceBaseURL: extensionDir)
-    webExtension = ext
     controller = WKWebExtensionController(configuration: .nonPersistent())
     controller.delegate = self
+    try await loadContext()
+    controller.didOpenWindow(window)
+    controller.didFocusWindow(window)
+  }
+
+  /// A context for a freshly read copy of the extension, loaded into the
+  /// controller. `sameAs` keeps an earlier context's identity (its
+  /// runtime.id, base URL and storage), as Safari does when it reloads an
+  /// extension it already knows.
+  private func loadContext(sameAs previous: WKWebExtensionContext? = nil) async throws {
+    let ext = try await WKWebExtension(resourceBaseURL: extensionDir)
+    webExtension = ext
     let ctx = WKWebExtensionContext(for: ext)
+    if let previous {
+      ctx.uniqueIdentifier = previous.uniqueIdentifier
+      ctx.baseURL = previous.baseURL
+    }
     ctx.isInspectable = true
     for p in ext.requestedPermissions { ctx.setPermissionStatus(.grantedExplicitly, for: p) }
     for m in ext.allRequestedMatchPatterns { ctx.setPermissionStatus(.grantedExplicitly, for: m) }
     context = ctx
     try controller.load(ctx)
-    controller.didOpenWindow(window)
-    controller.didFocusWindow(window)
+  }
+
+  /// Whether the extension's context is loaded (unloadContext() unloads it).
+  var contextLoaded: Bool { context.map { controller.extensionContexts.contains($0) } ?? false }
+
+  /// Unloads the extension's context, as Safari does when the extension is
+  /// turned off. Pages keep whatever its content scripts left running.
+  func unloadContext() throws {
+    if contextLoaded { try controller.unload(context) }
+  }
+
+  /// Unloads the extension's context, if loaded, and loads a new one for
+  /// the same extension, as Safari does when it installs a new build or the
+  /// extension is turned off and on again: WebKit injects the new content
+  /// scripts into tabs that are already open. `dir`: another build of it to
+  /// load this time.
+  func reloadContext(from dir: URL? = nil) async throws {
+    let previous = context!
+    try unloadContext()
+    if let dir { extensionDir = dir }
+    try await loadContext(sameAs: previous)
   }
 
   var extensionErrors: [String] { webExtension?.errors.map { describe($0) } ?? [] }

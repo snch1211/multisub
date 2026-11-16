@@ -7,8 +7,11 @@
 //  - the watch scenarios in fixtures/scenarios on the mock Netflix page,
 //    over https (data: URL fixtures), one again in ja, one over http
 //    (loopback server), one with the manifest read through JSON.parse;
+//  - the extension reloaded under the open tab, over a build whose content
+//    script doesn't step aside (as the versions already shipped don't);
 //  - copies of the extension with a known mistake (no entity decoding, a
-//    forced-narrative second line, no world: "MAIN" inject.js) that must
+//    forced-narrative second line, no world: "MAIN" inject.js, a content
+//    script that doesn't announce itself, no stylesheet marker) that must
 //    fail.
 // Skips (exit 0) when not on macOS or when the harness doesn't build.
 const fs = require('fs');
@@ -251,6 +254,74 @@ test('watch fails when inject.js is no longer a world: "MAIN" content script (fa
   const res = harness(['watch', dir, scenario]);
   assertFailedWith(res, 'inject.js hooked JSON.parse before the page\'s scripts (world MAIN)');
   assert.equal(res.result.page.injected, true, 'the <script src> fallback did not run inject.js either');
+});
+
+// --- the extension reloaded under an open tab --------------------------------
+
+// content.js patched so that it neither steps aside nor marks or hides
+// anything, like the versions shipped before instances knew of each other.
+function uncooperative(src) {
+  const patches = [
+    [/function announce\(\) \{/, 'function announce() { return;'],
+    [/function teardown\(reason, by\) \{/, 'function teardown(reason, by) { return;'],
+    [/function keepInstanceStyle\(\) \{/, 'function keepInstanceStyle() { return;'],
+    [/function removeForeignElements\(\) \{/, 'function removeForeignElements() { return;'],
+    [/overlay\.setAttribute\(INSTANCE_ATTR, INSTANCE_ID\);/, '']
+  ];
+  for (const [re, to] of patches) {
+    const next = src.replace(re, to);
+    assert.notEqual(next, src, 'content.js has no ' + re + ' any more; update this test');
+    src = next;
+  }
+  return src;
+}
+
+// What Safari did to a viewer: a new build installed while Netflix was open
+// left the old content script drawing its own overlay under the new one's.
+test('watch reload over a build that doesn\'t step aside: its overlay is hidden, the new one draws alone', () => {
+  const old = extensionVariant('uncooperative', (d) => {
+    const file = path.join(d, 'content.js');
+    fs.writeFileSync(file, uncooperative(fs.readFileSync(file, 'utf8')));
+  });
+  const reload = JSON.parse(fs.readFileSync(path.join(SCENARIOS, 'reload.json'), 'utf8'));
+  const [first, second] = reload.checkpoints;
+  const scenario = scenarioVariant('reload.json', 'over-old', {
+    checkpoints: [first, Object.assign({}, second, { extension: EXT,
+      expect: Object.assign({}, second.expect, { overlaysInDOM: 2 }) })]
+  });
+  const res = harness(['watch', old, scenario]);
+  assertPassed(res);
+});
+
+test('watch reload fails when content.js doesn\'t announce itself (the old instance keeps going)', () => {
+  const dir = extensionVariant('no-hello', (d) => {
+    const file = path.join(d, 'content.js');
+    const src = fs.readFileSync(file, 'utf8');
+    const patched = src.replace(/function announce\(\) \{/, 'function announce() { return;');
+    assert.notEqual(patched, src, 'content.js has no announce() any more; update this test');
+    fs.writeFileSync(file, patched);
+  });
+  const reload = JSON.parse(fs.readFileSync(path.join(SCENARIOS, 'reload.json'), 'utf8'));
+  const res = harness(['watch', dir, scenarioVariant('reload.json', 'no-hello', { checkpoints: reload.checkpoints.slice(0, 2) })]);
+  // Two overlays on the page, or two instances taking each other's off and
+  // hiding each other's: never just the new one.
+  const hit = assertFailedWith(res, 'overlay at 6.0 s');
+  assert.match(hit.detail, /overlays(InDOM)?: want \[1\] got \[[02]\]/);
+});
+
+test('watch fails when overlay.css has no marker (a turned-off extension keeps drawing)', () => {
+  const dir = extensionVariant('no-marker', (d) => {
+    const file = path.join(d, 'overlay.css');
+    const src = fs.readFileSync(file, 'utf8');
+    const patched = src.replace(/--multisub-stylesheet:\s*1;/, '');
+    assert.notEqual(patched, src, 'overlay.css has no --multisub-stylesheet marker any more; update this test');
+    fs.writeFileSync(file, patched);
+  });
+  const reload = JSON.parse(fs.readFileSync(path.join(SCENARIOS, 'reload.json'), 'utf8'));
+  const [first, , off] = reload.checkpoints;
+  const res = harness(['watch', dir, scenarioVariant('reload.json', 'no-marker', { checkpoints: [first, off], native: undefined })]);
+  const hit = assertFailedWith(res, 'overlay at 10.0 s');
+  assert.match(hit.detail, /nativeHidden: want \[false\] got \[true\]/);
 });
 
 console.log('\n' + passed + ' tests passed' + (process.exitCode ? ', some FAILED' : '') + '  (snapshots: ' + path.relative(process.cwd(), SNAPSHOTS) + ')');

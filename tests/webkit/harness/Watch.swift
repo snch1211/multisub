@@ -23,8 +23,11 @@
 //   "scheme": "https" | "http",      // optional, default https; --scheme overrides
 //   "checkpoints": [
 //     { "time": 2, "waitMs": 10000, "snapshot": true,
+//       "action": "reload-extension" | "unload-extension",  // optional, before the seek (see runAction)
+//       "extension": "...", "settings": { ... },            // optional, for "reload-extension"
 //       "expect": { "original": "...", "text": "...", "plain": "...",
-//                   "terms": [{ "term": "...", "gloss": "..." }], "hint": "...", "nativeHidden": true } }
+//                   "terms": [{ "term": "...", "gloss": "..." }], "hint": "...", "nativeHidden": true,
+//                   "nativeVisible": true, "overlays": 1, "overlaysInDOM": 1 } }
 //   ],
 //   "status": { "mode": "translate", "status": "done", ... },  // partial match of content.js get-status
 //   "native": { "translate": ">=1", "annotate": 0 },             // stub call counts
@@ -34,6 +37,11 @@
 // "original" and "text" are the lines of #multisub-original / #multisub-text
 // joined with "\n" ("" when the line is hidden); "plain" is #multisub-text
 // without its glosses; "terms" are the .ms-term/.ms-gloss pairs in order.
+// They are read from the first visible #multisub-overlay: "overlays" counts
+// the visible ones, "overlaysInDOM" all of them (a content script left over
+// from before a reload may have its own). "nativeHidden" is the
+// html.multisub-native-hidden class, "nativeVisible" whether Netflix's own
+// .player-timedtext is displayed.
 import AppKit
 import Foundation
 import WebKit
@@ -156,6 +164,10 @@ struct WatchRunner {
       let t = (cp["time"] as? NSNumber)?.doubleValue ?? 0
       let expect = cp["expect"] as? [String: Any] ?? [:]
       let waitMs = (cp["waitMs"] as? NSNumber)?.intValue ?? (i == 0 ? 12000 : 4000)
+      if let action = cp["action"] as? String {
+        let outcome = await runAction(action, cp, host, relativeTo: scenarioURL.deletingLastPathComponent())
+        checks.add("\(action) before the checkpoint at \(String(format: "%.1f", t)) s", outcome == nil, outcome)
+      }
       let seek = (try? await wv.evalJSON("return JSON.stringify(await window.__fixture.seek(\(t)));")) as? [String: Any] ?? [:]
       // content.js renders on a 100 ms tick: let a few pass after the seek so
       // what is read back belongs to the new time.
@@ -250,6 +262,39 @@ struct WatchRunner {
 
   // MARK: - Steps
 
+  /// A checkpoint's "action", run before its seek. Returns nil when it
+  /// worked, otherwise what went wrong.
+  /// - "unload-extension": unloads the extension's context (the extension
+  ///   turned off in Safari's settings).
+  /// - "reload-extension": unloads it and loads a fresh context for the same
+  ///   extension (a new build installed, or the extension turned off and on
+  ///   again), which injects the content scripts into the open tab once more.
+  ///   The checkpoint's "extension", if any, is the directory of the build
+  ///   to load (absolute or relative to the scenario file; default: the one
+  ///   loaded before). Its "settings", if any, are then written to
+  ///   storage.local through the new context, as a change made in its popup
+  ///   would be.
+  func runAction(_ action: String, _ cp: [String: Any], _ host: ExtensionHost, relativeTo base: URL) async -> String? {
+    do {
+      switch action {
+      case "unload-extension":
+        try host.unloadContext()
+      case "reload-extension":
+        let dir = (cp["extension"] as? String).map { $0.hasPrefix("/") ? fileURL($0) : fileURL(base.appendingPathComponent($0).path) }
+        try await host.reloadContext(from: dir)
+        if let settings = cp["settings"] { _ = try await seedStorage(host, ["settings": settings]) }
+      default:
+        return "unknown action \(action)"
+      }
+    } catch {
+      return host.describe(error)
+    }
+    Out.debug("\(action): context loaded = \(host.contextLoaded)")
+    // Let the new content scripts start before the checkpoint reads the page.
+    await sleep(ms: 500)
+    return nil
+  }
+
   /// Writes storage.local before any content script runs: from a blank page
   /// at the extension's origin when WebKit grants it the extension APIs,
   /// otherwise from the background page.
@@ -272,14 +317,21 @@ struct WatchRunner {
     return "background page"
   }
 
-  /// The overlay as the viewer would read it.
+  /// The overlay as the viewer would read it. Several content-script
+  /// instances can each have put a #multisub-overlay on the page (a stale
+  /// one after the extension was reloaded): the lines are read from the
+  /// first one that is visible, and "overlays" counts the visible ones.
   func observe(_ wv: WKWebView) async -> [String: Any] {
     let js = """
-      const $ = (id) => document.getElementById(id);
-      const shown = (el) => !!el && getComputedStyle(el).display !== 'none';
+      const shown = (el) => !!el && getComputedStyle(el).display !== 'none' && el.getClientRects().length > 0;
+      const overlays = Array.from(document.querySelectorAll('#multisub-overlay'));
+      const visible = overlays.filter(shown);
+      const overlay = visible[0] || overlays[0] || null;
+      const $ = (id) => overlay ? overlay.querySelector('#' + id) : null;
       const lineEls = (el) => el ? Array.from(el.children).filter((c) => c.classList.contains('ms-line')) : [];
       const text = (el) => shown(el) ? lineEls(el).map((l) => l.textContent).join('\\n') : '';
       const t = $('multisub-text');
+      const o = $('multisub-original');
       const plain = shown(t) ? lineEls(t).map((l) => Array.from(l.childNodes)
         .filter((n) => !(n.nodeType === 1 && n.classList.contains('ms-gloss'))).map((n) => n.textContent).join('')).join('\\n') : '';
       const terms = shown(t) ? Array.from(t.querySelectorAll('.ms-term')).map((el) => {
@@ -288,16 +340,19 @@ struct WatchRunner {
       }) : [];
       const hint = $('multisub-hint');
       const video = document.querySelector('video');
-      const overlay = $('multisub-overlay');
+      const nativeBox = document.querySelector('.player-timedtext');
       return JSON.stringify({
         overlay: !!overlay,
+        overlays: visible.length,
+        overlaysInDOM: overlays.length,
         overlayParent: overlay && overlay.parentElement ? overlay.parentElement.className : null,
-        original: text($('multisub-original')),
+        original: text(o),
         text: text(t),
         plain: plain,
         terms: terms,
         hint: shown(hint) ? hint.textContent : '',
         nativeHidden: document.documentElement.classList.contains('multisub-native-hidden'),
+        nativeVisible: !!nativeBox && getComputedStyle(nativeBox).display !== 'none',
         currentTime: video ? video.currentTime : null,
         overlayText: overlay ? overlay.textContent : '',
         bodyText: document.body ? document.body.innerText : ''

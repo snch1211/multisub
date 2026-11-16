@@ -91,10 +91,17 @@ on a mock Netflix watch page (`fixtures/netflix-watch.html`):
 - At the end it opens the popup, which finds the tab with `tabs.query` and
   asks `content.js` for its status with `tabs.sendMessage`; the scenario can
   check that status and how often each native action was called.
+- A checkpoint can first reload the extension under the open tab
+  (`"action": "reload-extension"`: the context is unloaded and a new one
+  for the same extension, optionally another build of it, is loaded) or
+  turn it off (`"unload-extension"`). The overlay is then read from the
+  first visible `#multisub-overlay`, and `overlays` / `overlaysInDOM`
+  count them.
 
 The scenarios in `fixtures/scenarios/` cover the netflix, translate and
-annotate modes, and translate with an engine that isn't set up (the hint text
-comes from `shared.js`). `webkit.test.js` runs each of them, runs the
+annotate modes, translate with an engine that isn't set up (the hint text
+comes from `shared.js`), and the extension reloaded and then turned off under
+an open tab (`reload.json`). `webkit.test.js` runs each of them, runs the
 engine-error one again in ja to check that the content scripts' Chinese text
 survives a Shift_JIS default, runs translate with `--scheme http`, where the
 page is served over http and the fixtures come from a loopback HTTP server
@@ -108,6 +115,37 @@ known mistake fail:
   track's one cue at 18 s instead of the full track's line;
 - `inject.js` is no longer a `world: "MAIN"` content script: the overlay
   still works through the fallback, but the `JSON.parse` hook comes too late.
+- `content.js` doesn't announce itself: after a reload the old instance
+  keeps its overlay on the page;
+- `overlay.css` has no `--multisub-stylesheet` marker: a turned-off
+  extension's content script keeps drawing and keeps Netflix's own
+  subtitles hidden.
+
+`reload.json` also runs over a copy of the extension whose `content.js`
+neither steps aside nor marks its elements, as the versions already shipped
+do: after the reload its overlay stays in the page but must be hidden.
+
+### Reloading the extension under an open tab
+
+This is what WebKit does, and what the reload scenarios rely on:
+
+- Loading a context injects its content scripts (and stylesheets) into the
+  tabs already open, next to whatever is running there. Unloading one
+  removes its stylesheets from the page but not its scripts: the old
+  `content.js` keeps its timers and keeps drawing, until the tab is
+  reloaded.
+- In such a stale content script `browser.runtime.id`,
+  `runtime.getURL()` and `runtime.getManifest()` keep working and
+  `runtime.connect()` doesn't throw, while `storage.local` calls never
+  settle. That is why `content.js` tells a dead context by its stylesheet
+  (overlay.css's `--multisub-stylesheet` marker) rather than by `runtime.id`
+  alone.
+- The harness gives the new context the old one's `uniqueIdentifier` and
+  `baseURL`, as Safari keeps an extension's identity across updates, so
+  `storage.local` carries over.
+- Timers in the tab may fire only once a second (seen in the content script
+  loaded by a reload; the web view is never on screen), so `content.js`
+  checks the stylesheet by elapsed time, not by a count of ticks.
 
 The scenario format is described at the top of `harness/Watch.swift`.
 

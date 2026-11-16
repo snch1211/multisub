@@ -1,3 +1,11 @@
+/* Marks the page as having this stylesheet. WebKit removes an extension's
+   content stylesheets from open pages when the extension is turned off,
+   but keeps its content scripts running there, with runtime.id still set:
+   content.js's extensionGone() notices the marker gone and steps aside. */
+:root {
+  --multisub-stylesheet: 1;
+}
+
 #multisub-overlay {
   position: absolute;
   left: 0;

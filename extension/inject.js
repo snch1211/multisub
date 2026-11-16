@@ -12,6 +12,23 @@
 //  3. Report the subtitle and audio tracks selected in Netflix's player.
 //  4. On request from the content script, fetch a track, parse it into cues
 //     [{start, end, text}], and post them back via window.postMessage.
+//
+// The messages between this file and content.js are a protocol between
+// versions. Only the first copy of this file runs in a page (the
+// __multisubInjected guard below), and the page world outlives the
+// extension: after Safari reloads the extension (an update, or turning it
+// off and on) the new content.js is injected into open tabs and talks to the
+// inject.js the page loaded with, possibly from an older version, until the
+// tab is reloaded. So:
+//  - never rename or remove a message type or field, or change what one
+//    means; posts are { __multisub: true, type, ... }, commands are
+//    { __multisub_cmd: true, type, ... };
+//  - anything new is optional: content.js must work with an inject.js that
+//    doesn't send it, and inject.js ignores commands and fields it doesn't
+//    know;
+//  - a change to what this file computes (how it parses a track, say) only
+//    reaches pages loaded after the update, so content.js must not depend on
+//    it either.
 (() => {
   'use strict';
   // An engine that ignores `world: "MAIN"` would run this in the isolated
