@@ -858,6 +858,34 @@ async function test(name, fn) {
     t2.stop();
   });
 
+  await test("netflix mode: the second line keeps its size while its cue outlasts the original's", async () => {
+    const twoLines = (t) => t.html.querySelector('#multisub-overlay').classList.contains('multisub-two-lines');
+    // Netflix times each language on its own: here every Chinese cue ends
+    // 0.9 s after its English one.
+    const zh = Array.from({ length: 50 }, (_, i) => ({ start: i * 4, end: i * 4 + 3.9, text: '第 ' + i + ' 句' }));
+    const t = boot({ stored: settingsWith({ mode: 'netflix' }), ping: () => ({ ok: true, engine: null }) });
+    await toFetch(t);
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cues: zh });
+    const at = async (time) => { t.video.currentTime = time; await sleep(150); };
+    await at(30.5);
+    assert.equal(t.overlayOriginal().textContent, 'line 7');
+    assert.equal(t.overlayText().textContent, '第 7 句');
+    assert.ok(twoLines(t), 'both cues on screen');
+    await at(31.5);
+    assert.equal(t.overlayOriginal().style.display, 'none', 'the English cue has ended');
+    assert.equal(t.overlayText().textContent, '第 7 句');
+    assert.ok(twoLines(t), 'the same Chinese cue, the same size');
+    // Not merged: Netflix draws the English line, on the same timeline.
+    await t.setSettings({ mergedMode: false });
+    await at(30.5);
+    assert.equal(t.overlayText().textContent, '第 7 句');
+    assert.ok(twoLines(t), "under Netflix's own line");
+    await at(31.5);
+    assert.ok(twoLines(t), "after Netflix's own line has gone");
+    t.stop();
+  });
+
   // --- Several instances on one page (the extension reloaded under an open
   // tab) and an instance whose extension context is gone.
   const overlaysOn = (page) => page.html.querySelectorAll('#multisub-overlay');

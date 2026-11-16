@@ -48,12 +48,14 @@
   text-shadow: var(--multisub-outline, 0 0 4px rgba(0, 0, 0, 0.9));
 }
 
-/* While two lines are on screen, the second-language line (#multisub-text)
-   is 80% of the original line's size, so the language being watched stays
-   the visual anchor; content.js's render() sets .multisub-two-lines then.
-   On its own the line is full size: in annotate mode (and when the original
-   is already in the target language) it holds the original itself. Users
-   can still scale both with the popup's font-size slider. */
+/* The second-language line (#multisub-text under the original, ours or
+   Netflix's own) is 80% of the original line's size, so the language being
+   watched stays the visual anchor; content.js's render() sets
+   .multisub-two-lines then, for the whole of a second-language cue even
+   while the original track has none. When the line holds the original
+   itself (annotate mode, or an original already in the target language) it
+   is full size. Users can still scale both with the popup's font-size
+   slider. */
 #multisub-overlay.multisub-two-lines #multisub-text {
   font-size: calc(2.4vw * var(--multisub-font-scale, 1) * var(--multisub-second-scale, 0.8));
 }
