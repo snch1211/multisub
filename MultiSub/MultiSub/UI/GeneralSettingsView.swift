@@ -121,7 +121,7 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("本機模型")
             } footer: {
-                Text("模型越大通常翻譯品質越好，但需要更多記憶體與下載時間。下載完成後存在本機，翻譯時不會重新下載。模型下載自 Hugging Face（MLX 格式），也可以自行在模型資料夾放入符合 MLX 格式的權重。展開「可下載的模型」時才會向 Hugging Face 查詢模型大小，查到大小後才能下載。\n此裝置實體記憶體 \(ModelCatalog.formatBytes(Int64(ProcessInfo.processInfo.physicalMemory)))。紅燈表示模型磁碟大小超出建議上限（仍可強制選用），橘燈是警告。")
+                Text("模型越大通常翻譯品質越好，但需要更多記憶體與下載時間。下載完成後存在本機，翻譯時不會重新下載。模型下載自 Hugging Face（MLX 格式），也可以自行在模型資料夾放入符合 MLX 格式的權重。展開「可下載的模型」或在「AI 引擎」查看還沒下載的本機模型時，才會向 Hugging Face 查詢模型大小，查到大小後才能下載。\n此裝置實體記憶體 \(ModelCatalog.formatBytes(Int64(ProcessInfo.processInfo.physicalMemory)))。紅燈表示模型磁碟大小超出建議上限（仍可強制選用），橘燈是警告。")
             }
             .alert(ModelMemoryAdvisor.confirmationTitle(sizeKnown: pendingSizeKnown), isPresented: $showForceConfirm) {
                 Button(pendingIsDownload ? "仍要下載" : "仍要使用", role: .destructive) {

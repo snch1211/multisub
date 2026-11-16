@@ -29,6 +29,12 @@ enum HubBridgeError: LocalizedError {
 }
 
 /// Downloads model snapshots through `HuggingFace.HubClient`.
+///
+/// Only for the app's explicit download, when the files aren't all on disk
+/// yet: `downloadSnapshot` skips the network only for a commit-hash
+/// revision, so with "main" it asks huggingface.co for the file list on
+/// every call, even when everything is cached. Loading a model that's
+/// already here goes through `LocalModelFolder` instead.
 struct HubDownloader: MLXLMCommon.Downloader {
     private let client: HuggingFace.HubClient
 
@@ -52,6 +58,26 @@ struct HubDownloader: MLXLMCommon.Downloader {
             matching: patterns,
             progressHandler: { @MainActor progress in progressHandler(progress) }
         )
+    }
+}
+
+/// Hands mlx-swift-lm a model folder that's already on this Mac
+/// (`MultiSubPaths.modelSnapshotDirectory`), so loading it makes no network
+/// request at all.
+struct LocalModelFolder: MLXLMCommon.Downloader {
+    let directory: URL
+
+    func download(
+        id: String,
+        revision: String?,
+        matching patterns: [String],
+        useLatest: Bool,
+        progressHandler: @Sendable @escaping (Progress) -> Void
+    ) async throws -> URL {
+        let progress = Progress(totalUnitCount: 1)
+        progress.completedUnitCount = 1
+        progressHandler(progress)
+        return directory
     }
 }
 

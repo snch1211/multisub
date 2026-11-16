@@ -13,12 +13,14 @@
 //  file we own (resumed via `Range` headers), then hands off to `HubCache`'s
 //  own public `storeFile` API to place it under the exact
 //  `blobs/<etag>` + `snapshots/<commit>/<filename>` layout `HubClient`
-//  expects. `Translator.loadModel` (unchanged) then finds every matching file
-//  already cached via `HubClient+Files.swift`'s per-file fast path and does
-//  zero network I/O for the weights.
+//  expects. `Translator.loadModel` then finds the snapshot complete on disk
+//  (`MultiSubPaths.modelSnapshotDirectory`) and loads it from there with no
+//  network I/O at all.
 //
 //  App target only — the extension never downloads (every `Translator`
-//  request loads the model with `allowDownload: false`).
+//  request loads the model with `allowDownload: false`). Besides this
+//  download, only `estimatedSize` (a row showing a model that isn't
+//  downloaded yet) contacts Hugging Face.
 //
 
 import CryptoKit

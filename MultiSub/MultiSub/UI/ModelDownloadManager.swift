@@ -72,7 +72,7 @@ final class ModelDownloadManager {
                 // swift-huggingface's own download path handle the big
                 // weight files — that path gets stuck around 1% on flaky
                 // connections. loadModel below then finds everything already
-                // cached and does no network I/O for the weights.
+                // on disk and loads it without any network I/O.
                 try await ModelDownloader.download(modelID: modelID) { fraction in
                     Task { @MainActor in self?.downloads[modelID]?.progress = fraction }
                 }

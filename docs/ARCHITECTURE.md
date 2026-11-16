@@ -124,6 +124,11 @@ glosses from drifting away from what the scene means.
   and the user has agreed to send subtitles there (below), otherwise the local
   model if it is downloaded, otherwise "not ready".
 * `local` — MLX + Gemma, downloaded once from Hugging Face (Apple silicon).
+  Only the app's explicit download (and the size lookup for a model shown as
+  not downloaded) contacts Hugging Face. Loading reads the snapshot folder
+  `MultiSubPaths.modelSnapshotDirectory` finds complete on disk
+  (`LocalModelFolder`), with no network request in either process; a missing
+  or incomplete model is `model-not-ready`, never a download.
 * `cloud` — the user's own API key (BYOK); "not ready" without consent.
 
 Cloud providers (`CloudProvider`): `anthropic`, `openai`, `openrouter`,
