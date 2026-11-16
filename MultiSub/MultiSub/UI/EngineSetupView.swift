@@ -157,8 +157,9 @@ struct EngineSetupView: View {
         // model row itself, so it isn't fetched while the cloud half is shown.
         .task(id: localModelID) { measureLocalModel() }
         .onChange(of: configStore.config) { oldValue, newValue in
-            // The popup's `set-engine` or our own save; adopt the saved cloud
-            // settings unless the user is in the middle of typing a key.
+            // A `set-engine` from the extension, or our own save; adopt the
+            // saved cloud settings unless the user is in the middle of
+            // typing a key.
             if oldValue.cloud != newValue.cloud, keyDraft.isEmpty { loadDraft(from: newValue.cloud) }
             Task { await refreshStatus() }
         }
@@ -429,7 +430,7 @@ struct EngineSetupView: View {
             return
         }
         // The check set-engine and test-engine make, so the app and the
-        // popup accept the same addresses.
+        // native actions accept the same addresses.
         if provider.needsBaseURL, let problem = CloudSettings.baseURLProblem(trimmedBaseURL) {
             feedback = .failure(problem)
             return

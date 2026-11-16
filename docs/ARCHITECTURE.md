@@ -134,6 +134,24 @@ glosses from drifting away from what the scene means.
   snapshot without that list (an older build's download, or files put there
   by hand) needs `config.json`, `tokenizer.json`, `tokenizer_config.json`
   and every weight shard.
+
+  Downloads (`ModelDownloader`, app only) resume: a later attempt, in this
+  run or after a relaunch, skips the files already in the snapshot and
+  resumes the one that was in flight, which waits as `<etag>.partial` in
+  the model's partial folder `models/.download-tmp/<org>--<name>/`
+  (`MultiSubPaths.modelPartialDirectory`). That folder is removed once every
+  file is stored; per-attempt folders named by a UUID, left by older builds,
+  are removed when the next download starts. For a model that isn't
+  complete, 一般設定 shows what its repo folder and partial folder hold as
+  「下載未完成（佔用 …）」 (`MultiSubPaths.unfinishedDownloadBytes`; hidden
+  files, the expected-files list among them, don't count, so a download that
+  stopped before any data shows nothing to delete), labels the button
+  繼續下載 (重試下載 after a failure that left nothing, else 下載), and offers a
+  trash button. Deleting a model, downloaded or not, removes both folders;
+  it is refused while that model downloads or is loaded in the app, or while
+  the app's `Translator` is busy. Models found only on disk (not in the
+  catalog) are listed whenever either folder holds data
+  (`MultiSubPaths.modelIDsOnDisk`).
 * `cloud` — the user's own API key (BYOK); "not ready" without consent.
 
 Cloud providers (`CloudProvider`): `anthropic`, `openai`, `openrouter`,
@@ -143,9 +161,16 @@ URL, e.g. a local LM Studio/Ollama server). Requests are made from Swift with
 subtitles, the app for vocabulary and "test"). Keys are stored in the shared
 keychain access group `$(AppIdentifierPrefix)$(MULTISUB_BUNDLE_ID).shared`
 (data-protection keychain), one item per provider, and are never sent back to
-JavaScript. A key typed in the popup passes through background.js once:
-`set-engine` stores it, while `test-engine` and `list-models` use it for that
-one request only.
+JavaScript. Keys are entered only in the app (`EngineSetupView`, in
+onboarding and 一般設定), which is also the only place that picks the
+provider and model, tests a setup and asks for consent. The toolbar popup
+only shows the engine in use (from `ping`) or, when there is none, a button
+that opens the app's settings (`open-app {destination: "general"}`). The
+native actions `set-engine`, `test-engine`, `list-models` and
+`get-engine-options`, and background.js's relay for them (`NATIVE_FORWARD`),
+are still there (§5.2), but nothing in the shipped popup calls them. A key
+sent to them passes through background.js once: `set-engine` stores it,
+while `test-engine` and `list-models` use it for that one request only.
 
 **Consent (App Review 5.1.2(i)).** `config.cloudConsent` maps a provider id to
 when (ms) the user agreed that subtitle text may be sent there directly from
@@ -157,12 +182,16 @@ an older build moves to the base URL saved in the same config when it's read.
 `Translator.resolveEngine` treats settings without an entry as not
 ready (`engine-not-ready`; `auto` falls through to the local model), so no
 subtitle text leaves the Mac before the user has agreed. Consent is recorded
-by the app's confirmation alert or by `set-engine` with `consent: true` (the
-popup's confirmation step), and is never removed by switching away. Both
-confirmations name the provider, or 「你填的 API 網址」 plus the address for
-`custom`. The popup names it with the WHATWG URL parser while Swift records
-the consent and sends with Foundation, so a custom address must be one both
-read as the same server (`CloudSettings.baseURLProblem`): http(s), a host of
+by the app's confirmation alert, which asks again for every custom address
+not agreed to yet (`EngineSetupView` keys it with
+`MultiSubConfig.consentKey`), or by `set-engine` with `consent: true`, which
+the shipped popup no longer sends; it is never removed by switching away.
+The alert names the provider, or 「你填的 API 網址」 plus the address as typed
+for `custom`. Swift records the consent and sends with Foundation, while a
+person reading the address, or a WHATWG parser like the one the popup used
+when it had a consent step, can take some addresses for another server, so
+a custom address must be one both read as the same server
+(`CloudSettings.baseURLProblem`): http(s), a host of
 ASCII letters, digits, `.`, `-`, `_` (a numeric one as plain dotted IPv4) or
 a bracketed IPv6 address, an optional port, and no credentials, percent
 escapes, backslash, whitespace or control characters anywhere
@@ -171,14 +200,15 @@ evil.example to Foundation). `set-engine`, `test-engine`, `list-models` and
 the app refuse any other address with `bad-request` and a zh-TW `detail`,
 and `CloudLLMClient` sends nothing to one saved by an older build.
 tests/native checks that WHATWG and Foundation find the same host and port
-for the addresses it accepts.
+for the addresses it accepts, and how consent is keyed per address,
+including a legacy `custom` record moving to the saved base URL.
 
-**Test before save.** Both UIs test what was typed before saving anything:
-the app with `Translator.testEngine(client:)`, the popup with `test-engine`
-and candidate fields. Only a passing test saves the key, engine and cloud
-settings (and consent), so a typo never replaces a working engine. The test
-sends one fixed English sentence, never subtitle text, which is why it needs
-no consent; the app asks for consent before its test, the popup after.
+**Test before save.** The app tests what was typed before saving anything
+(`Translator.testEngine(client:)`; native `test-engine` with candidate
+fields also tests without saving). Only a passing test saves the key,
+engine and cloud settings (and consent), so a typo never replaces a working
+engine. The test sends one fixed English sentence, never subtitle text,
+which is why it needs no consent; the app asks for consent before its test.
 
 **Refusals and reasoning.** A provider refusal (Anthropic `stop_reason:
 "refusal"`, OpenAI-style `content_filter` / `message.refusal`) or an empty
@@ -225,8 +255,8 @@ works. Recommended picks shown in the UI: fastest (default above), balanced
 | subtitle styles                        | app → `config.styles`                             | delivered in every `ping` reply               |
 | engine, cloud provider/model/base URL  | `config.json` (written by app or `set-engine`)    | read fresh by `Translator` on every request   |
 | cloud consent per provider (custom: per base URL) | `config.cloudConsent` (app alert or `set-engine` `consent: true`) | read fresh by `Translator` on every request |
-| popup engine form draft (provider, model, base URL; never the key) | extension `storage.local.engineDraft`, kept 1 h | — (cleared on save or 取消) |
-| API keys                               | shared keychain                                   | —                                             |
+| API keys                               | shared keychain, entered in the app only          | —                                             |
+| local models                           | app download → `models/models--<org>--<name>/` (plus `.download-tmp/<org>--<name>/` until it's complete, §3) | read from disk by `Translator` in both processes |
 | translation / annotation caches        | extension `storage.local` (`ms:` keys)            | index mirrored to the app on `ping`           |
 | vocabulary word lists                  | app → `vocab/<movieId>.json`                      | —                                             |
 | transcript waiting to be organized     | appex `save-transcript` → `vocab-pending/<movieId>.json` | read by the app; deleted once its words are saved |
@@ -274,8 +304,9 @@ background → content
 | `line-result` | `kind`, `text`, and `result`, `code` or `dropped: true` (a newer line from this tab replaced it while waiting) |
 | `heartbeat`   | — (only keeps the background page loaded)                                               |
 
-The popup also sends `engine-changed` to the Netflix tab after the engine is
-saved, so a job that failed with `engine-not-ready` retries immediately.
+The popup also sends `engine-changed` to the Netflix tabs when a `ping`
+shows that an engine became ready since its last answer (set up in the app
+meanwhile), so a job that failed with `engine-not-ready` retries immediately.
 A chunk that fails with `rate-limited`, `network` or `provider-error` is
 retried twice (2 s, 6 s). If it still fails, only that chunk is skipped: its
 lines stay null in memory and in the cache, and the workers move on. The whole
@@ -309,6 +340,11 @@ Error codes shown to the user: `native-unavailable`, `engine-not-ready`,
 | `save-transcript`  | `movieId`, `seriesTitle`, `episodeTitle?`, `seasonNumber?`, `sourceLang`, `targetLang`, `lines[]` | — (stages the transcript, marks the episode handed off; §5.3) |
 | `vocab-status`     | `movieId`                                                               | `movieId`, `state` (below; `none` when nothing recent), `accepted`, `done`, `total`, `wordCount?`, `code?`, `message?`, `title?`, `updatedAt` (ms) |
 
+`set-engine`, `test-engine`, `get-engine-options` and `list-models` still
+exist, and background.js still relays them, but nothing in the shipped popup
+calls them (§3): it reads the engine from `ping` and opens the app to set
+one up.
+
 `engine` (as returned by `ping`/`set-engine`):
 `{ configured: "auto"|"local"|"cloud", active: "local"|"cloud"|null, provider, providerName, model, hasKey, localModelId, localModelDownloaded, localModelLoaded }`.
 `active` is null (or `"local"` under `auto`) while the selected cloud
@@ -320,8 +356,13 @@ resulting base URL) has no recorded consent,
 the request has no `consent: true`, and it sets the engine, provider, model,
 base URL or a non-empty key (a request that only deletes the key goes
 through). `auto` is never refused here: `resolveEngine` just skips an
-unconsented provider. The popup turns `consent-required` into its
-confirmation step and sends the same request again with `consent: true`.
+unconsented provider. A caller is meant to ask the user, naming the
+recipient, and send the same request again with `consent: true`; the
+shipped popup sends no `set-engine` at all, and the app writes `config.json`
+itself.
+`get-engine-options` reports `hasConsent` for the saved address and, for
+`custom`, every agreed address in `consentedBaseURLs`, so such a caller can
+tell whether the address in its form needs that step.
 
 `test-engine` with `provider` tests those settings with a client of its own
 and saves nothing. A missing or empty `apiKey` uses the key saved for that

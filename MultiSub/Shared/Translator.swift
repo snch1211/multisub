@@ -67,8 +67,7 @@ struct EngineStatus: Sendable, Equatable {
     var localModelId: String
     var localModelDownloaded: Bool
     var localModelLoaded: Bool
-    /// Saved server address; only meaningful (and only sent) for `.custom`,
-    /// so the popup can prefill its form.
+    /// Saved server address; only meaningful (and only sent) for `.custom`.
     var baseURL: String = ""
 
     /// Plist-compatible shape for native replies. `active` is left out when

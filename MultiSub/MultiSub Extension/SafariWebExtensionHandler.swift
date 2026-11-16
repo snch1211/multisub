@@ -221,13 +221,15 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     ///
     /// `consent: true` records the user's consent to send subtitle text to
     /// that provider, or for `custom` to the base URL this write leaves
-    /// saved (the popup's confirmation step). A request that would leave
-    /// `engine` on `cloud` for a provider (or custom address) with no
-    /// recorded consent, and doesn't carry `consent: true`, is refused with
-    /// `consent-required` before anything (key included) is written, so the
-    /// caller can ask and send the same request again. `auto` needs no
-    /// consent here because `Translator.resolveEngine` skips an unconsented
-    /// provider, and a request that only deletes the key isn't asked either.
+    /// saved (a caller's confirmation step; the shipped popup sends no
+    /// `set-engine`, and the app writes config.json itself). A request
+    /// that would leave `engine` on `cloud` for a provider (or custom
+    /// address) with no recorded consent, and doesn't carry
+    /// `consent: true`, is refused with `consent-required` before anything
+    /// (key included) is written, so the caller can ask and send the same
+    /// request again. `auto` needs no consent here because
+    /// `Translator.resolveEngine` skips an unconsented provider, and a
+    /// request that only deletes the key isn't asked either.
     private func handleSetEngine(_ message: [String: Any]) async -> [String: Any] {
         var engine: EngineKind?
         if let raw = message["engine"] as? String {
@@ -300,7 +302,7 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
 
     /// Without `provider`: tests the engine as saved. With `provider`
     /// (plus optional `model`, `baseURL`, `apiKey`): tests those settings
-    /// without saving anything, so the popup can test before it saves and a
+    /// without saving anything, so a caller can test before it saves and a
     /// failed test leaves the working engine alone. An empty or missing
     /// `apiKey` uses the key saved for that provider; missing `model` /
     /// `baseURL` fall back to the saved ones when the provider is the saved
@@ -399,11 +401,12 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         return saved
     }
 
-    /// `hasConsent` lets the popup go straight from a passing test to its
+    /// `hasConsent` tells a caller with an engine form (the shipped popup
+    /// has none and doesn't send this) whether a passing test needs a
     /// confirmation step; `set-engine` still checks consent on its own. For
     /// `custom`, consent belongs to an address: `hasConsent` is for the
     /// saved base URL, and `consentedBaseURLs` lists every address agreed
-    /// to (normalized), so the popup can tell for the one in its form.
+    /// to (normalized), so such a caller can tell for the one in its form.
     private func handleGetEngineOptions() async -> [String: Any] {
         let config = MultiSubConfig.load()
         let providers: [[String: Any]] = CloudProvider.allCases.map { p in

@@ -102,9 +102,8 @@ struct CloudSettings: Codable, Equatable, Sendable {
     /// A custom server's address the way consent compares it: scheme and
     /// host lowercased, the port only when it isn't the scheme's default,
     /// the path without trailing slashes, no credentials, query or
-    /// fragment. Nil unless it's an http(s) URL with a host. popup.js's
-    /// `normalizedBaseURL` does the same with the WHATWG URL parser; for an
-    /// address `baseURLProblem` accepts, both find the same server.
+    /// fragment. Nil unless it's an http(s) URL with a host. For an address
+    /// `baseURLProblem` accepts, the WHATWG URL parser finds the same server.
     static func normalizedBaseURL(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let components = URLComponents(string: trimmed),
@@ -124,19 +123,20 @@ struct CloudSettings: Codable, Equatable, Sendable {
     /// show, or nil when it can.
     ///
     /// Besides being an http(s) URL with a host, the address must be one
-    /// the popup's WHATWG URL parser, which names the server in the consent
-    /// step, and Foundation, which records the consent and sends the
-    /// requests, can't read as two different servers. WHATWG reads a
+    /// that Foundation, which records the consent and sends the requests,
+    /// and a WHATWG URL parser (the popup's, back when it named the server
+    /// in a consent step), or someone reading it in the app's consent
+    /// alert, can't take for two different servers. WHATWG reads a
     /// backslash as "/" and drops tabs and line breaks, where Foundation
     /// escapes them: `http://localhost:1234\@evil.example/v1` is localhost
-    /// in the popup and evil.example here. So the host is ASCII letters,
-    /// digits, ".", "-" and "_" or a bracketed IPv6 address, with an
-    /// optional port (no credentials, percent escapes or international
-    /// names), and the whole address has no backslash, whitespace or
-    /// control character. A host WHATWG reads as an IPv4 address (its last
-    /// label a number) must be written the plain way, 192.168.1.20: WHATWG
-    /// turns 0x7f.1 or 2130706433 into 127.0.0.1, while Foundation asks DNS
-    /// for that name.
+    /// to WHATWG (and to most readers) and evil.example here. So the host
+    /// is ASCII letters, digits, ".", "-" and "_" or a bracketed IPv6
+    /// address, with an optional port (no credentials, percent escapes or
+    /// international names), and the whole address has no backslash,
+    /// whitespace or control character. A host WHATWG reads as an IPv4
+    /// address (its last label a number) must be written the plain way,
+    /// 192.168.1.20: WHATWG turns 0x7f.1 or 2130706433 into 127.0.0.1,
+    /// while Foundation asks DNS for that name.
     static func baseURLProblem(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let schemeEnd = trimmed.range(of: "://"),
