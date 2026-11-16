@@ -80,7 +80,9 @@ final class VocabExtractionManager {
         var statusLine: String {
             switch phase {
             case .queued: return "排隊中"
-            case .running: return total > 0 ? "整理中（\(done)/\(total)）" : "整理中"
+            // done stays 0 while the engine starts (a local model can take
+            // a while to load); 「整理中（0/N）」 would look stuck.
+            case .running: return done > 0 && total > 0 ? "整理中（\(done)/\(total)）" : "準備中…"
             case .failed(_, let message): return message
             }
         }

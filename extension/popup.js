@@ -999,8 +999,11 @@ function vocabStatusLines(status) {
     case 'queued':
       return { text: '已交給 MultiSub App，等一下就開始整理', sub: where, busy: true };
     case 'running': {
-      const count = status.total > 0 ? '（' + (status.done || 0) + '/' + status.total + '）' : '…';
-      return { text: '整理中' + count, sub: '通常要幾分鐘，可以繼續看影片。' + where, busy: true };
+      // done stays 0 while the engine starts (a local model can take a
+      // while to load); 0/N would look stuck.
+      if (!(status.done > 0)) return { text: '準備中…', sub: '通常要幾分鐘，可以繼續看影片。' + where + '。', busy: true };
+      const count = status.total > 0 ? '（' + status.done + '/' + status.total + '）' : '…';
+      return { text: '整理中' + count, sub: '通常要幾分鐘，可以繼續看影片。' + where + '。', busy: true };
     }
     case 'done':
       return { text: '整理好了：' + (status.wordCount || 0) + ' 個單字', sub: '可以在 MultiSub App 的「生詞本」查看', cls: 'ok', open: true };
@@ -1060,7 +1063,7 @@ function organizeVocabErrorText(code, detail) {
     case 'tab-unreachable': return '連不到 Netflix 分頁';
     case 'native-unavailable': return MS.errorText(code);
     // From the app's status (see VocabExtractionManager).
-    case 'engine-not-ready': return '還沒設定 AI 引擎。到 MultiSub App 的「一般設定」設定好後' + again;
+    case 'engine-not-ready': return '還沒設定 AI 引擎。在這個選單的「AI 翻譯」或「生字標註」模式下就能設定，設定好後' + again;
     case 'model-not-ready': return '本機模型還沒下載。到 MultiSub App 下載模型或改用 API Key 後' + again;
     case 'auth-failed':
     case 'rate-limited':

@@ -126,6 +126,7 @@ const distinct = (list) => list.filter((x, i) => i === 0 || x !== list[i - 1]);
 test('整理本集單字: handed off, then the app\'s progress, polled until done; 打開生詞本 opens the app', () => {
   const r = run(vocabBase('vocab-handoff', { vocabAfter: [
     { ok: true, state: 'queued', accepted: false, done: 0, total: 0 },
+    { ok: true, state: 'running', accepted: true, done: 0, total: 12 },
     { ok: true, state: 'running', accepted: true, done: 3, total: 12 },
     { ok: true, state: 'running', accepted: true, done: 7, total: 12 },
     { ok: true, state: 'done', accepted: true, done: 12, total: 12, wordCount: 48 }
@@ -134,12 +135,12 @@ test('整理本集單字: handed off, then the app\'s progress, polled until don
   assert.equal(r.organizeSent, 1);
   const shown = r.seen.filter((s) => s.shown);
   assert.deepEqual(distinct(shown.map((s) => s.text)),
-    ['正在交給 MultiSub App…', '已交給 MultiSub App，等一下就開始整理', '整理中（3/12）', '整理中（7/12）', '整理好了：48 個單字']);
+    ['正在交給 MultiSub App…', '已交給 MultiSub App，等一下就開始整理', '準備中…', '整理中（3/12）', '整理中（7/12）', '整理好了：48 個單字']);
   const running = shown.find((s) => s.text === '整理中（3/12）');
   assert.equal(running.spinner, true);
   assert.equal(running.disabled, true); // pressing it again would change nothing
   assert.equal(running.open, false);
-  assert.equal(running.sub, '通常要幾分鐘，可以繼續看影片。整理好的單字會放在 MultiSub App 的「生詞本」');
+  assert.equal(running.sub, '通常要幾分鐘，可以繼續看影片。整理好的單字會放在 MultiSub App 的「生詞本」。');
   const done = shown[shown.length - 1];
   assert.deepEqual(done, { shown: true, text: '整理好了：48 個單字', sub: '可以在 MultiSub App 的「生詞本」查看',
     cls: 'vocab-status-text ok', spinner: false, open: true, disabled: false });
@@ -173,7 +174,7 @@ test('opening on an episode with a recent status shows it; polls only while queu
 test('a failed run shows the reason and what to do, from the code (or the app\'s message for an unknown one)', () => {
   const text = (status) => run(vocabBase('vocab-on-open', { vocabInitial: Object.assign({ ok: true, state: 'failed', accepted: true }, status) })).first;
   const engine = text({ code: 'engine-not-ready', message: '尚未設定 AI 引擎' });
-  assert.equal(engine.text, '還沒設定 AI 引擎。到 MultiSub App 的「一般設定」設定好後，再按一次「整理本集單字」');
+  assert.equal(engine.text, '還沒設定 AI 引擎。在這個選單的「AI 翻譯」或「生字標註」模式下就能設定，設定好後，再按一次「整理本集單字」');
   assert.equal(engine.cls, 'vocab-status-text err');
   assert.equal(engine.disabled, false); // pressing it again is the retry
   assert.equal(engine.open, false);
