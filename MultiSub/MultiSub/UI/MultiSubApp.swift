@@ -38,6 +38,7 @@ struct MultiSubApp: App {
     var body: some Scene {
         Window("MultiSub", id: "main") {
             rootView
+                .modifier(MainWindowOpenerHandoff())
                 // 760 used to be narrower than the sidebar's own
                 // reserved minimum (190, see SidebarView's
                 // navigationSplitViewColumnWidth) plus the vocab tab's inner
@@ -69,5 +70,19 @@ struct MultiSubApp: App {
             .environment(updateChecker)
             .environment(updateDownloadManager)
         #endif
+    }
+}
+
+/// Gives `AppDelegate` this window's `openWindow` action, so a
+/// `multisub://` URL that arrives while the window is closed (the app keeps
+/// running while vocabulary is being organized) can open it again.
+private struct MainWindowOpenerHandoff: ViewModifier {
+    @Environment(\.openWindow) private var openWindow
+
+    func body(content: Content) -> some View {
+        content.onAppear {
+            let openWindow = openWindow
+            AppDelegate.openMainWindow = { openWindow(id: "main") }
+        }
     }
 }

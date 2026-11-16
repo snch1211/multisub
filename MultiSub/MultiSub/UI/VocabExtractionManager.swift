@@ -333,6 +333,21 @@ final class VocabExtractionManager {
         }
     }
 
+    // MARK: - Quit
+
+    /// The app is quitting with work still queued or running
+    /// (`AppDelegate.applicationWillTerminate`). Each such job is marked
+    /// failed right away, so the popup stops showing a spinner and frees
+    /// 「整理本集單字」 on its next poll, not after `VocabStatusStore.staleAfter`.
+    /// The staged transcripts stay, and the next launch brings these back
+    /// as failed rows with 「重試」 (`recoverFromLastRun`).
+    func markInterrupted() {
+        for job in jobs where job.isActive {
+            fail(job.movieId, code: VocabStatusStore.interruptedCode,
+                 message: "整理到一半 MultiSub App 就關掉了。按「重試」重新整理。")
+        }
+    }
+
     // MARK: - Launch
 
     /// Picks up where the last app process left off: a hand-off that

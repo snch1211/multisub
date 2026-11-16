@@ -439,14 +439,21 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         var components = URLComponents()
         components.scheme = "multisub"
         components.host = destination
-        if destination == "vocab", let movieId = message["movieId"] as? String {
-            components.queryItems = [URLQueryItem(name: "movieId", value: movieId)]
+        let vocabMovieId = destination == "vocab" ? (message["movieId"] as? String) : nil
+        if let vocabMovieId {
+            components.queryItems = [URLQueryItem(name: "movieId", value: vocabMovieId)]
         }
-        guard let url = components.url else {
-            return ["ok": false, "error": "open-failed"]
+        var opened = false
+        if let url = components.url {
+            opened = await MainActor.run { NSWorkspace.shared.open(url) }
         }
-        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
-        return opened ? ["ok": true] : ["ok": false, "error": "open-failed"]
+        guard opened else {
+            // `save-transcript` already marked the episode handed off; left
+            // as is, the popup would show it waiting for the app.
+            if let vocabMovieId { VocabStatusStore.markOpenFailed(movieId: vocabMovieId) }
+            return ["ok": false, "error": VocabStatusStore.openFailedCode]
+        }
+        return ["ok": true]
     }
 
     /// content.js's "整理本集單字" button. Stages the transcript in the

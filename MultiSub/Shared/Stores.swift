@@ -301,6 +301,9 @@ enum VocabStatusStore {
     static let interruptedCode = "vocab-interrupted"
     /// A stale hand-off the app never picked up.
     static let notStartedCode = "vocab-not-started"
+    /// The appex couldn't open the app for the hand-off; same code
+    /// `open-app` replies with.
+    static let openFailedCode = "open-failed"
 
     /// movieId comes from the extension and ends up in a file name, so only
     /// plain IDs are accepted (Netflix's are numeric).
@@ -383,5 +386,29 @@ enum VocabStatusStore {
         if let existing = current(movieId: movieId), existing.isActive { return }
         write(VocabOrganizeStatus(movieId: movieId, state: .queued, accepted: false,
                                   title: title, updatedAt: Date()))
+    }
+
+    /// The appex staged the transcript but couldn't open the app
+    /// (`open-app` → `open-failed`). The hand-off becomes a failure, so the
+    /// popup shows that error with the button free and not a spinner for a
+    /// run that will never start. Only a hand-off the app hasn't taken over
+    /// is replaced. The transcript stays staged, so if the app is opened
+    /// some other way it shows this episode with 「重試」.
+    static func markOpenFailed(movieId: String) {
+        guard var status = load(movieId: movieId), status.state == .queued, !status.accepted else { return }
+        status.state = .failed
+        status.code = openFailedCode
+        status.message = "Safari 沒能打開 MultiSub App，這集還沒開始整理。按「重試」開始整理。"
+        status.updatedAt = Date()
+        write(status)
+    }
+
+    /// The episode's words were deleted in 生詞本, so a `done` entry would
+    /// tell the popup it's still organized. Queued, running and failed
+    /// entries describe a job the app still holds (a re-organize), so they
+    /// stay.
+    static func forgetDone(movieId: String) {
+        guard let status = load(movieId: movieId), status.state == .done else { return }
+        delete(movieId: movieId)
     }
 }

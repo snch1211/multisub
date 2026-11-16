@@ -197,7 +197,16 @@ test('a failed run shows the reason and what to do, from the code (or the app\'s
   assert.equal(engine.cls, 'vocab-status-text err');
   assert.equal(engine.disabled, false); // pressing it again is the retry
   assert.equal(engine.open, false);
-  assert.equal(text({ code: 'vocab-interrupted' }).text, '整理到一半就停了，可能是 MultiSub App 關掉了。再按一次「整理本集單字」就會重新整理');
+  // The app writes this when it quits mid-run: no spinner, and the button is free again.
+  const interrupted = text({ code: 'vocab-interrupted' });
+  assert.equal(interrupted.text, '整理到一半就停了，可能是 MultiSub App 關掉了。再按一次「整理本集單字」就會重新整理');
+  assert.equal(interrupted.spinner, false);
+  assert.equal(interrupted.disabled, false);
+  // The appex writes this when it staged the transcript but couldn't open the app.
+  const openFailed = text({ accepted: false, code: 'open-failed' });
+  assert.equal(openFailed.text, '打不開 MultiSub App，請確認已安裝');
+  assert.equal(openFailed.spinner, false);
+  assert.equal(openFailed.disabled, false);
   assert.equal(text({ code: 'auth-failed' }).text, '整理失敗：API Key 無效或已過期，請重新貼上');
   assert.equal(text({ code: 'vocab-failed', message: '整理失敗：伺服器沒有回應。' }).text, '整理失敗：伺服器沒有回應。');
 });

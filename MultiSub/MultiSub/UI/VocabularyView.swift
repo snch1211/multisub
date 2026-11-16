@@ -275,7 +275,9 @@ struct VocabularyView: View {
                     .multilineTextAlignment(.center)
                 Text(job.phase == .queued ? "排隊中，等前一集整理完就開始" : job.statusLine)
                     .font(.headline)
-                Text("MultiSub 正在讀這集的英文字幕，挑出值得學的單字，附上翻譯和例句。通常要幾分鐘，可以繼續看影片，整理好會自動出現在左邊的清單。")
+                Text(job.phase == .queued
+                     ? "輪到這集時，MultiSub 會讀英文字幕，挑出值得學的單字，附上翻譯和例句。通常要幾分鐘，可以繼續看影片，整理好會自動出現在左邊的清單。"
+                     : "MultiSub 正在讀這集的英文字幕，挑出值得學的單字，附上翻譯和例句。通常要幾分鐘，可以繼續看影片，整理好會自動出現在左邊的清單。")
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 400)
@@ -482,6 +484,8 @@ struct VocabularyView: View {
     private func deleteEpisode() {
         guard let movieId = selectedMovieId else { return }
         VocabStore.delete(movieId: movieId)
+        // Otherwise the popup keeps saying this episode is organized.
+        VocabStatusStore.forgetDone(movieId: movieId)
         reloadEpisodes()
     }
 
