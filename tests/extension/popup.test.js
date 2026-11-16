@@ -157,10 +157,49 @@ test('slow first ping: neutral loading state, then the real view', () => {
   assert.equal(r.snaps[0].loading, true);
   assert.equal(r.snaps[1].mainShown, true);
   assert.equal(r.snaps[1].engineCard, true);
-  const r2 = run(base('very-slow-ping', { pingDelay: 4500, store: {} }));
-  assert.equal(r2.a.chooserShown, true);
-  assert.equal(r2.a.startDisabled, true); // the app may have a mode on its way
-  assert.equal(r2.b.startDisabled, false);
+});
+
+test('no settings yet: everyday view in Netflix mode with the system language, nothing stamped or pushed', () => {
+  const r = run(base('defaults', { store: {}, languages: ['ja-JP', 'en-US'], status: { onWatchPage: true, status: 'ready', secondState: 'ready', tracks: [] } }));
+  assert.deepEqual(r.checked, ['netflix']);
+  assert.equal(r.targetLang, 'ja');
+  assert.equal(r.modeDesc, '直接疊上 Netflix 官方的第二語言字幕，不需 AI、免設定');
+  assert.equal(r.mainShown, true);
+  assert.equal(r.displaySettings, true);
+  assert.equal(r.vocabShown, true);
+  assert.equal(r.engineCard, false); // Netflix mode needs no engine
+  assert.equal(r.chooser, false);
+  assert.deepEqual(r.sentPrefs, []);
+  assert.ok(!r.stored || !r.stored.prefsUpdatedAt);
+  // zh-Hant system language, and one the extension doesn't offer
+  assert.equal(run(base('defaults', { store: {}, languages: ['zh-Hant-TW'] })).targetLang, 'zh-TW');
+  assert.equal(run(base('defaults', { store: {}, languages: ['zh-CN'] })).targetLang, 'zh-CN');
+  assert.equal(run(base('defaults', { store: {}, languages: ['fi-FI', 'ja-JP'] })).targetLang, 'zh-TW');
+  // a mode chosen in the app is what shows, not the default
+  const app = run(base('defaults', { store: {}, languages: ['ja-JP'], prefs: { mode: 'annotate', targetLang: 'ko', updatedAt: 3 } }));
+  assert.deepEqual(app.checked, ['annotate']);
+  assert.equal(app.targetLang, 'ko');
+  assert.deepEqual(app.sentPrefs, []);
+  assert.equal(app.stored.prefsUpdatedAt, 3);
+});
+
+test('a display change with nothing chosen stores neither mode, language nor level', () => {
+  const r = run(base('display-change', { store: {}, languages: ['ja-JP'] }));
+  assert.equal(r.stored.mergedMode, false);
+  assert.equal(r.stored.prefsUpdatedAt, 0);
+  for (const k of ['mode', 'targetLang', 'annotateLevel']) assert.ok(!(k in r.stored), k);
+  assert.deepEqual(r.sentPrefs, []);
+});
+
+test('picking a mode in the switch is an explicit choice: stamped and sent to the app', () => {
+  const r = run(base('pick-mode', { store: {}, languages: ['ko-KR'] }));
+  assert.equal(r.sentPrefs.length, 1);
+  assert.equal(r.sentPrefs[0].prefs.mode, 'translate');
+  assert.equal(r.sentPrefs[0].prefs.targetLang, 'ko');
+  assert.ok(r.sentPrefs[0].prefs.updatedAt > 0);
+  assert.equal(r.stored.mode, 'translate');
+  assert.ok(r.stored.prefsUpdatedAt > 0);
+  assert.equal(r.engineCard, true); // an AI mode brings up the engine card
 });
 
 console.log('\n' + passed + ' tests passed' + (process.exitCode ? ', some FAILED' : ''));

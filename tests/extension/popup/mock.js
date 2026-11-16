@@ -2,6 +2,12 @@
 (function () {
   const cfg = JSON.parse(decodeURIComponent(location.hash.slice(1) || '%7B%7D'));
   window.__cfg = cfg;
+  // The system's preferred languages, as shared.js reads them for the
+  // default second language (headless Chrome's own would vary by machine).
+  if (cfg.languages) {
+    Object.defineProperty(navigator, 'languages', { get: () => cfg.languages.slice() });
+    Object.defineProperty(navigator, 'language', { get: () => cfg.languages[0] });
+  }
   window.__log = [];
   const store = JSON.parse(JSON.stringify(cfg.store || {}));
   window.__store = store;
@@ -15,7 +21,7 @@
       async sendMessage(m) {
         window.__log.push(copy(m));
         const r = (cfg.replies || {})[m.type];
-        if (m.type === 'ping-native') { await sleep(cfg.pingDelay || 0); return { ok: true, engine: cfg.engine, prefs: { updatedAt: 0 } }; }
+        if (m.type === 'ping-native') { await sleep(cfg.pingDelay || 0); return { ok: true, engine: cfg.engine, prefs: cfg.prefs || { updatedAt: 0 } }; }
         if (m.type === 'get-engine-options') return { ok: true, providers: cfg.providers, engine: cfg.engine };
         if (m.type === 'test-engine') { await sleep(20); return r || { ok: true, latencyMs: 912, sample: '你好' }; }
         if (m.type === 'set-engine') {

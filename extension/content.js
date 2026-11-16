@@ -13,7 +13,7 @@
 //  6. DOM fallback: when no track data was captured, work from the subtitle
 //     text Netflix renders, line by line.
 //  7. Overlay rendering, including drag-to-position.
-//  8. First-run mode chooser on the player.
+//  8. The one-time toast on the first watch page.
 //  9. Sync loop (renders the cue at video.currentTime, detects seeks).
 // 10. Navigation between episodes.
 // 11. Popup messaging and the vocabulary hand-off.
@@ -48,6 +48,10 @@
   // subtitle the viewer has selected, so we don't start a job on the wrong
   // track and pay for it twice.
   const ACTIVE_TRACK_WAIT_MS = 1500;
+  // How long a page with nothing chosen in the extension waits for the first
+  // native ping before running the default mode (see waitingForAppPrefs). A
+  // cold app extension can take a couple of seconds; same as popup.js.
+  const FIRST_PING_WAIT_MS = 3000;
   const NOTICE_MS = 8000;
   // Each term is glossed for its first few annotated cues only, so repeated
   // words stop cluttering the line.
@@ -72,11 +76,13 @@
   const TEXT = {
     noData: '沒有抓到字幕資料，請重新整理頁面（⌘R）',
     noSecond: (lang) => '這部片沒有 Netflix 官方的' + MS.languageName(lang) + '字幕，可在 MultiSub 選單改用「AI 翻譯」',
-    chooserTitle: 'MultiSub：選擇字幕模式',
-    later: '稍後',
-    engineStepTitle: '還差一步',
-    engineStepBody: '點 Safari 工具列的 MultiSub 圖示，貼上 API Key 或下載本機模型',
-    gotIt: '知道了',
+    toastTitle: 'MultiSub 已開啟',
+    // The two bilingual modes' labels start with Latin letters, hence the space.
+    toastBody: (mode, lang) => mode === 'annotate'
+      ? '目前使用生字標註，難字後面會標上' + MS.languageName(lang) + '的意思。'
+      : '目前使用 ' + MS.modeById(mode).label + '，第二語言是' + MS.languageName(lang) + '。',
+    toastHint: '點 Safari 工具列的 MultiSub 按鈕可以換模式。',
+    toastClose: '關閉',
     // A job that finished with some chunks failed (see background.js runJob).
     partial: (kind, retrying) => 'MultiSub：有部分字幕' + (kind === 'annotate' ? '標註' : '翻譯') +
       '失敗' + (retrying ? '，稍後會自動補上' : '')
@@ -109,7 +115,7 @@
     secondTimer: null,
     secondTimedOut: false,
     // --- pipeline
-    status: 'idle', // idle | off | no-mode | waiting-tracks | fetching | ready | translating | annotating | done | passthrough | fallback | error
+    status: 'idle', // idle | off | waiting-tracks | fetching | ready | translating | annotating | done | passthrough | fallback | error
     errorCode: null,
     errorHint: '',
     itemsKind: null,
@@ -143,9 +149,12 @@
     // Drag mode lives only here (not storage.local) so it can't linger
     // enabled across page reloads; the popup reads it back via get-status.
     dragModeEnabled: false,
-    chooserDismissed: false,
     // --- native
+    // The first ping answered (or FIRST_PING_WAIT_MS passed without one).
     startupPingDone: false,
+    // startPipeline() was called while waitingForAppPrefs() held, so the
+    // pipeline still has to start once the wait is over.
+    pipelineHeld: false,
     nativeOk: null,
     engine: null,
     engineSig: null,
@@ -158,8 +167,9 @@
     pendingTitleRequests: new Map()
   };
 
-  // First-run chooser card (section 8). step: 'modes' | 'engine'.
-  const chooser = { host: null, root: null, step: 'modes' };
+  // The one-time toast (section 8). `seen` is null until storage.local has
+  // been read, then whether this install has shown it already.
+  const toast = { host: null, root: null, timer: null, seen: null };
 
   function primaryTrack() {
     return state.tracks.find((t) => t.id === state.activeTrackId) || null;
@@ -195,34 +205,47 @@
   // 2. Settings and native sync
   // ===========================================================================
 
-  // Writes settings and lets the storage.onChanged listener below apply them,
-  // so local and remote (popup) changes take the same path. The explicit
-  // apply afterwards is a no-op when the listener already ran.
+  // Applies settings right away, so the caller can rely on them being in
+  // effect when this returns (onNativePing does), then writes them. The
+  // storage.onChanged listener below applies the written copy once more;
+  // that's a no-op, since nothing compared there has changed.
   function saveSettings(next) {
-    return api.storage.local.set({ settings: next })
-      .catch(() => {})
-      .then(() => applySettingsChange(next));
+    applySettingsChange(next);
+    return api.storage.local.set({ settings: MS.storedSettings(next) }).catch(() => {});
   }
 
   function applySettingsChange(next) {
     const prev = settings;
     settings = next;
     applySettingsToOverlay();
-    if (next.mode) {
-      if (chooser.host && chooser.step === 'modes') removeChooser();
+    // A mode or language picked in the popup while the toast is up.
+    if (toast.host) {
+      if (next.enabled) renderToastText();
+      else removeToast();
     }
-    if (prev.targetLang !== next.targetLang) {
+    const langChanged = prev.targetLang !== next.targetLang;
+    const modeChanged = prev.mode !== next.mode;
+    if (langChanged || modeChanged) {
+      // A notice about the old mode or language (no official track in it,
+      // some lines of the old job missing) no longer applies.
+      state.notice = null;
+      state.lastRenderedKey = null;
+    }
+    if (langChanged) {
       // The second-language track depends on the target language, and so
       // does the primary (it avoids the target language), so re-select both.
       clearFallbackResults();
       state.noSecondHintShown = false;
       if (state.tracks.length && !state.fallback) selectTracks({ restart: true });
       else startPipeline();
-      return;
+    } else {
+      const levelChanged = prev.annotateLevel !== next.annotateLevel && next.mode === 'annotate';
+      if (levelChanged) clearFallbackResults();
+      if (prev.enabled !== next.enabled || modeChanged || levelChanged) startPipeline();
     }
-    const levelChanged = prev.annotateLevel !== next.annotateLevel && next.mode === 'annotate';
-    if (levelChanged) clearFallbackResults();
-    if (prev.enabled !== next.enabled || prev.mode !== next.mode || levelChanged) startPipeline();
+    // Something picked in the popup (stamped) ends the wait for the app's
+    // preferences.
+    resumeHeldPipeline();
   }
 
   api.storage.onChanged.addListener((changes, area) => {
@@ -245,12 +268,37 @@
     return Promise.resolve(p).then(onNativePing, () => onNativePing(null));
   }
 
+  // Whether the pipeline waits for the app's preferences before running
+  // anything: nothing has been chosen in the extension, so the mode and
+  // language in `settings` are only defaults, and the first native ping
+  // hasn't answered yet. The app may well hold a choice (say, AI 翻譯 picked
+  // during onboarding right before opening Netflix); running the default
+  // mode meanwhile would draw the wrong subtitles, hide Netflix's own, and
+  // could put up the netflix-mode hint suggesting the very mode the app
+  // chose. Bounded by FIRST_PING_WAIT_MS.
+  function waitingForAppPrefs() {
+    return !state.startupPingDone && !settings.prefsUpdatedAt;
+  }
+
+  // Starts a pipeline that was held back by waitingForAppPrefs(), once the
+  // wait is over. A no-op otherwise, including when a settings change
+  // already restarted it.
+  function resumeHeldPipeline() {
+    if (state.pipelineHeld && !waitingForAppPrefs()) startPipeline();
+  }
+
+  function endStartupWait() {
+    state.startupPingDone = true;
+    resumeHeldPipeline();
+  }
+
   // Applies a native `ping` reply: subtitle styles (owned by the app), the
   // shared preferences (newest updatedAt wins) and the engine status.
   function onNativePing(res) {
     state.startupPingDone = true;
     if (!res || !res.ok) {
       state.nativeOk = false;
+      endStartupWait();
       return;
     }
     const nativeCameBack = state.nativeOk === false;
@@ -265,8 +313,11 @@
     }
     const rec = MS.reconcilePrefs(next, res.prefs);
     if (rec.adopt) next = Object.assign({}, rec.adopt, { styles: next.styles });
+    // Applied synchronously: a mode the app chose restarts the pipeline in
+    // there, and endStartupWait() below only starts it when nothing did.
     if (next !== settings) saveSettings(next);
     if (rec.push) sendPrefs(next);
+    endStartupWait();
 
     // A job that failed for lack of a working engine gets another go once
     // the engine setup changed (e.g. a key was pasted in the app).
@@ -285,11 +336,13 @@
 
   // Startup: settings first, then ask native right away so styles,
   // preferences and the engine status apply without waiting for the
-  // periodic ping.
+  // periodic ping. A ping that never answers (the app's extension stuck or
+  // missing) must not keep the default mode from running.
   api.storage.local.get('settings')
     .then((res) => applySettingsChange(MS.mergeSettings(res && res.settings)))
     .catch(() => applySettingsChange(MS.mergeSettings(null)))
     .then(() => pingNative());
+  setTimeout(endStartupWait, FIRST_PING_WAIT_MS);
 
   // The native side's idle-unload check for the local model only runs when a
   // native message wakes that process (it has no reliable timer of its own),
@@ -542,6 +595,7 @@
 
   function onSecondSettled() {
     state.lastRenderedKey = null;
+    if (waitingForAppPrefs()) return; // the held pipeline reads secondState when it starts
     if (settings.mode === 'netflix' && !state.fallback && state.cues.length) {
       state.status = state.secondState === 'loading' ? 'fetching' : 'ready';
       maybeShowNoSecondHint();
@@ -619,10 +673,16 @@
     state.errorHint = '';
     state.partialMissing = 0;
     resetItems(null);
+    state.pipelineHeld = false;
     const mode = settings.mode;
     if (!state.urlMovieId) { state.status = 'idle'; return; }
     if (!settings.enabled) { state.status = 'off'; return; }
-    if (!mode) { state.status = 'no-mode'; return; }
+    if (waitingForAppPrefs()) {
+      // Nothing mode-specific yet; resumeHeldPipeline() comes back here.
+      state.pipelineHeld = true;
+      state.status = state.activeTrackId || state.fallback ? 'fetching' : 'waiting-tracks';
+      return;
+    }
     if (state.fallback) {
       state.status = 'fallback';
       if (mode === 'netflix' && !state.noDataHintShown) {
@@ -839,6 +899,7 @@
 
   function maybeShowNoSecondHint() {
     if (settings.mode !== 'netflix' || state.secondState !== 'none' || state.noSecondHintShown) return;
+    if (waitingForAppPrefs()) return; // the mode may not be netflix after all
     state.noSecondHintShown = true;
     showNotice(TEXT.noSecond(settings.targetLang), NOTICE_MS);
   }
@@ -1052,9 +1113,10 @@
   // Netflix's subtitles are hidden only while we have something to draw in
   // their place: cues of our own, or (outside netflix mode) the DOM-fallback
   // text we mirror. Hiding them earlier would leave the viewer with no
-  // subtitles at all while tracks load, or for good if capture fails.
+  // subtitles at all while tracks load, or for good if capture fails. Same
+  // while waiting for the app's preferences, when we draw nothing.
   function shouldHideNative() {
-    if (!settings.enabled || !settings.mode || !state.urlMovieId) return false;
+    if (!settings.enabled || !state.urlMovieId || waitingForAppPrefs()) return false;
     const canDraw = state.fallback ? settings.mode !== 'netflix' : state.cues.length > 0;
     return canDraw && mergedLayout();
   }
@@ -1225,45 +1287,52 @@
     // Write storage once, on release, not on every pointermove.
     if (finalValue !== settings.bottomOffset) {
       settings = Object.assign({}, settings, { bottomOffset: finalValue });
-      api.storage.local.set({ settings: settings }).catch(() => {});
+      api.storage.local.set({ settings: MS.storedSettings(settings) }).catch(() => {});
     }
   }
 
   // ===========================================================================
-  // 8. First-run mode chooser
+  // 8. One-time toast
   // ===========================================================================
-  // A small card in the player's top-right corner, in a shadow root so
-  // Netflix's styles can't reach it. Only the card takes pointer events;
-  // everything around it stays click-through to the player. (`chooser`
-  // itself is declared with the rest of the state in section 1.)
+  // Shown once per install, on the first watch page that plays: MultiSub is
+  // on, which mode and second language it uses, and where to change them.
+  // Nothing has to be chosen before subtitles show up (the mode defaults to
+  // MS.DEFAULT_MODE), so this only informs and never blocks: it sits in the
+  // player's top-right corner, leaves by itself after WELCOME_TOAST_MS, and
+  // everything but its close button is click-through to the player. It
+  // lives in the same container as #multisub-overlay, so it stays visible in
+  // fullscreen, and in a shadow root so Netflix's styles can't reach it.
 
-  const CHOOSER_CSS = [
+  const WELCOME_TOAST_MS = 8000;
+  // Matches the .leaving transition below.
+  const WELCOME_TOAST_FADE_MS = 300;
+  // storage.local key, outside `settings` (and outside the 'ms:' cache pool
+  // background.js prunes).
+  const WELCOME_SHOWN_KEY = 'welcomeShown';
+
+  const TOAST_CSS = [
     ':host { all: initial; }',
-    '.card { pointer-events: auto; box-sizing: border-box; width: 300px; max-width: calc(100vw - 32px);',
-    '  padding: 14px; border-radius: 12px; color: #f5f5f7;',
+    '.toast { position: relative; box-sizing: border-box; width: max-content; max-width: min(340px, calc(100vw - 32px));',
+    '  padding: 12px 38px 12px 14px; border-radius: 12px; color: #f5f5f7; pointer-events: none;',
     '  background: rgba(22, 22, 26, 0.86);',
     '  -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%);',
     '  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);',
     '  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "PingFang TC", system-ui, sans-serif;',
-    '  -webkit-font-smoothing: antialiased; }',
-    '.title { margin: 0 0 10px; font-size: 14px; font-weight: 600; }',
-    '.body { margin: 0 0 12px; color: rgba(245, 245, 247, 0.82); }',
-    '.modes { display: flex; flex-direction: column; gap: 6px; }',
-    'button { font: inherit; color: inherit; cursor: pointer; }',
-    '.mode { display: block; width: 100%; box-sizing: border-box; margin: 0; padding: 9px 11px; text-align: left;',
-    '  border-radius: 9px; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.06);',
-    '  transition: background 0.12s ease, border-color 0.12s ease; }',
-    '.mode:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.18); }',
-    '.label { display: block; font-weight: 600; }',
-    '.desc { display: block; margin-top: 2px; font-size: 12px; color: rgba(245, 245, 247, 0.66); }',
-    '.footer { display: flex; justify-content: flex-end; margin-top: 8px; }',
-    '.text-button { padding: 4px 8px; border: 0; border-radius: 6px; background: none;',
-    '  font-size: 12px; color: rgba(245, 245, 247, 0.7); }',
-    '.text-button:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }',
-    '.primary { padding: 6px 14px; border: 0; border-radius: 7px; background: #e5232f; color: #fff; font-weight: 600; }',
-    '.primary:hover { background: #f03a45; }',
-    'button:focus-visible { outline: 2px solid #ff6b72; outline-offset: 2px; }',
-    '@media (prefers-reduced-motion: reduce) { .mode { transition: none; } }'
+    '  -webkit-font-smoothing: antialiased;',
+    '  animation: ms-toast-in 0.2s ease-out; transition: opacity 0.3s ease, transform 0.3s ease; }',
+    '.toast.leaving { opacity: 0; transform: translateY(-6px); }',
+    '.title { margin: 0 0 4px; font-size: 14px; font-weight: 600; }',
+    '.body { margin: 0; color: rgba(245, 245, 247, 0.82); }',
+    '.close { pointer-events: auto; position: absolute; top: 6px; right: 6px; width: 26px; height: 26px;',
+    '  margin: 0; padding: 0; border: 0; border-radius: 7px; background: none; cursor: pointer;',
+    '  font: 18px/26px -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: rgba(245, 245, 247, 0.7); }',
+    '.close:hover { color: #fff; background: rgba(255, 255, 255, 0.1); }',
+    '.close:focus-visible { outline: 2px solid #ff6b72; outline-offset: 1px; }',
+    '@keyframes ms-toast-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }',
+    '@media (prefers-reduced-motion: reduce) {',
+    '  .toast { animation: none; transition: none; }',
+    '  .toast.leaving { transform: none; }',
+    '}'
   ].join('\n');
 
   function el(tag, className, text) {
@@ -1273,113 +1342,84 @@
     return node;
   }
 
-  function buildChooser() {
+  // Unreadable storage counts as seen: if the flag can't be read it likely
+  // can't be written either, and the toast must not come back on every page.
+  api.storage.local.get(WELCOME_SHOWN_KEY)
+    .then((res) => { toast.seen = !!(res && res[WELCOME_SHOWN_KEY]); })
+    .catch(() => { toast.seen = true; });
+
+  function buildToast() {
     const host = document.createElement('div');
-    host.id = 'multisub-chooser';
+    host.id = 'multisub-toast';
     host.style.cssText = 'position:absolute;top:max(64px,8%);right:3%;z-index:2147483001;pointer-events:none;';
     const root = host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    style.textContent = CHOOSER_CSS;
+    style.textContent = TOAST_CSS;
     root.appendChild(style);
-    // Keep clicks and keys on the card from reaching Netflix's player
-    // (play/pause on click, space, arrow-key seeking).
+    const card = el('div', 'toast');
+    card.setAttribute('role', 'status');
+    card.setAttribute('aria-live', 'polite');
+    card.appendChild(el('p', 'title', TEXT.toastTitle));
+    card.appendChild(el('p', 'body'));
+    card.appendChild(el('p', 'body hint', TEXT.toastHint));
+    const close = el('button', 'close', '×');
+    close.type = 'button';
+    close.setAttribute('aria-label', TEXT.toastClose);
+    close.addEventListener('click', hideToast);
+    card.appendChild(close);
+    root.appendChild(card);
+    // The close button is the only thing that takes pointer events; keep
+    // its clicks and keys from reaching Netflix's player (play/pause on
+    // click, space, arrow-key seeking).
     for (const type of ['click', 'dblclick', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'keydown', 'keyup', 'keypress']) {
       host.addEventListener(type, (e) => e.stopPropagation());
     }
-    host.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        if (chooser.step === 'modes') state.chooserDismissed = true;
-        removeChooser();
-      }
-    });
-    chooser.host = host;
-    chooser.root = root;
-    renderChooserModes();
+    toast.host = host;
+    toast.root = root;
+    renderToastText();
   }
 
-  function chooserCard(labelText) {
-    const old = chooser.root.querySelector('.card');
-    if (old) old.remove();
-    const card = el('div', 'card');
-    card.setAttribute('role', 'dialog');
-    card.setAttribute('aria-label', labelText);
-    chooser.root.appendChild(card);
-    return card;
+  function renderToastText() {
+    const body = toast.root && toast.root.querySelector('.body');
+    if (body) body.textContent = TEXT.toastBody(settings.mode, settings.targetLang);
   }
 
-  function renderChooserModes() {
-    chooser.step = 'modes';
-    const card = chooserCard(TEXT.chooserTitle);
-    card.appendChild(el('p', 'title', TEXT.chooserTitle));
-    const list = el('div', 'modes');
-    for (const m of MS.MODES) {
-      const button = el('button', 'mode');
-      button.type = 'button';
-      button.appendChild(el('span', 'label', m.label));
-      button.appendChild(el('span', 'desc', m.desc));
-      button.addEventListener('click', () => chooseMode(m.id));
-      list.appendChild(button);
-    }
-    card.appendChild(list);
-    const footer = el('div', 'footer');
-    const later = el('button', 'text-button', TEXT.later);
-    later.type = 'button';
-    later.addEventListener('click', () => {
-      state.chooserDismissed = true;
-      removeChooser();
-    });
-    footer.appendChild(later);
-    card.appendChild(footer);
+  // Waits for the startup ping (so a mode or language chosen in the app has
+  // been adopted) and for the video to play, so the toast isn't spent on a
+  // loading spinner.
+  function maybeShowToast(container, video) {
+    if (toast.seen !== false || !settings.enabled || !state.startupPingDone) return;
+    if (!container || video.paused) return;
+    toast.seen = true;
+    api.storage.local.set({ [WELCOME_SHOWN_KEY]: true }).catch(() => {});
+    buildToast();
+    container.appendChild(toast.host);
+    toast.timer = setTimeout(hideToast, WELCOME_TOAST_MS);
   }
 
-  function renderChooserEngineStep(keepFocus) {
-    chooser.step = 'engine';
-    const card = chooserCard(TEXT.engineStepTitle);
-    card.appendChild(el('p', 'title', TEXT.engineStepTitle));
-    card.appendChild(el('p', 'body', TEXT.engineStepBody));
-    const footer = el('div', 'footer');
-    const ok = el('button', 'primary', TEXT.gotIt);
-    ok.type = 'button';
-    ok.addEventListener('click', removeChooser);
-    footer.appendChild(ok);
-    card.appendChild(footer);
-    if (keepFocus) ok.focus();
+  // Fades out (instantly under prefers-reduced-motion, see TOAST_CSS), then
+  // removes it.
+  function hideToast() {
+    if (!toast.host) return;
+    clearTimeout(toast.timer);
+    const card = toast.root.querySelector('.toast');
+    if (card) card.classList.add('leaving');
+    toast.timer = setTimeout(removeToast, WELCOME_TOAST_FADE_MS);
   }
 
-  function chooseMode(modeId) {
-    const mode = MS.modeById(modeId);
-    if (!mode) return;
-    const keyboard = !!(chooser.root && chooser.root.activeElement);
-    const next = Object.assign({}, settings, { mode: modeId, prefsUpdatedAt: Date.now() });
-    // Engine status from the last ping; unknown counts as not ready, since an
-    // AI mode can't work without reaching the app either.
-    const engineReady = !!(state.engine && state.engine.active);
-    if (mode.needsEngine && !engineReady) renderChooserEngineStep(keyboard);
-    else removeChooser();
-    saveSettings(next);
-    sendPrefs(next);
+  function removeToast() {
+    clearTimeout(toast.timer);
+    toast.timer = null;
+    if (toast.host) toast.host.remove();
+    toast.host = null;
+    toast.root = null;
   }
 
-  function removeChooser() {
-    if (chooser.host) chooser.host.remove();
-    chooser.host = null;
-    chooser.root = null;
-    chooser.step = 'modes';
-  }
-
-  function updateChooser(container) {
-    if (chooser.host && chooser.step === 'engine') {
-      if (container && chooser.host.parentElement !== container) container.appendChild(chooser.host);
-      return;
-    }
-    const want = settings.enabled && !settings.mode && state.startupPingDone &&
-      !state.chooserDismissed && !!container;
-    if (!want) {
-      if (chooser.host) removeChooser();
-      return;
-    }
-    if (!chooser.host) buildChooser();
-    if (chooser.host.parentElement !== container) container.appendChild(chooser.host);
+  // Every tick: show it once the conditions hold, and follow the player if
+  // Netflix replaces the container (e.g. entering fullscreen).
+  function updateToast(container, video) {
+    if (!toast.host) { maybeShowToast(container, video); return; }
+    if (container && toast.host.parentElement !== container) container.appendChild(toast.host);
   }
 
   // ===========================================================================
@@ -1410,8 +1450,10 @@
     if (!video) return;
     const container = ensureOverlayAttached(video);
     updateNativeHidden();
-    updateChooser(container);
-    if (!settings.enabled || !settings.mode) {
+    updateToast(container, video);
+    // Nothing of ours until the mode is known (see waitingForAppPrefs);
+    // Netflix's own subtitles stay up meanwhile.
+    if (!settings.enabled || waitingForAppPrefs()) {
       render(EMPTY_FRAME);
       return;
     }
@@ -1477,7 +1519,7 @@
     if (state.trackPollTimer) { clearInterval(state.trackPollTimer); state.trackPollTimer = null; }
     updateNativeHidden();
     if (!movieId) {
-      removeChooser();
+      removeToast();
       return;
     }
     // The manifest may already have been captured, or not have arrived yet:

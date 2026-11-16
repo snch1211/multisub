@@ -27,23 +27,7 @@
     <button type="button" id="bannerAction" class="banner-button" hidden></button>
   </div>
 
-  <!-- First run: pick a mode -->
-  <section id="chooser" class="chooser" hidden aria-labelledby="chooserTitle">
-    <h2 id="chooserTitle" class="chooser-title">選擇字幕模式</h2>
-    <div id="modeCards" class="mode-cards" role="radiogroup" aria-labelledby="chooserTitle"></div>
-    <div class="field-row">
-      <label for="chooserTargetLang">第二語言</label>
-      <select id="chooserTargetLang"></select>
-    </div>
-    <div class="field-row" id="chooserLevelField" hidden>
-      <label for="chooserLevel">程度</label>
-      <select id="chooserLevel"></select>
-    </div>
-    <button type="button" id="startButton" class="primary-button">開始使用</button>
-  </section>
-
-  <!-- Everyday view -->
-  <section id="main" class="card" hidden>
+  <section id="main" class="card">
     <div id="modeSwitch" class="segmented" role="radiogroup" aria-label="字幕模式"></div>
     <p id="modeDesc" class="mode-desc"></p>
     <div class="field-row">

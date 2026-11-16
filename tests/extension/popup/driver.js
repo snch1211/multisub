@@ -127,11 +127,28 @@
       snaps.push({ at: 'after', chooserShown: visible('chooser'), mainShown: visible('main'), engineNotice: $('engineNotice').textContent, engineCard: visible('engineCard') });
       return { snaps };
     },
-    async 'very-slow-ping'() {
+    async 'defaults'() {
       await waitFor(() => !document.body.classList.contains('loading'), 6000);
-      const a = { chooserShown: visible('chooser'), startDisabled: $('startButton').disabled };
-      await waitFor(() => !$('startButton').disabled, 8000);
-      return { a, b: { startDisabled: $('startButton').disabled } };
+      await sleep(100);
+      const checked = Array.from($('modeSwitch').querySelectorAll('[aria-checked="true"]')).map((b) => b.dataset.mode);
+      return { checked, targetLang: $('targetLang').value, modeDesc: $('modeDesc').textContent,
+        mainShown: visible('main'), engineCard: visible('engineCard'), displaySettings: visible('displaySettings'),
+        vocabShown: visible('vocabSection'), chooser: !!document.getElementById('chooser'),
+        sentPrefs: window.__log.filter((m) => m.type === 'set-prefs'), stored: window.__store.settings || null };
+    },
+    async 'display-change'() {
+      await waitFor(() => !document.body.classList.contains('loading'), 6000);
+      $('mergedMode').checked = false;
+      fire($('mergedMode'), 'change');
+      await sleep(100);
+      return { stored: window.__store.settings || null, sentPrefs: window.__log.filter((m) => m.type === 'set-prefs') };
+    },
+    async 'pick-mode'() {
+      await waitFor(() => !document.body.classList.contains('loading'), 6000);
+      $('modeSwitch').querySelector('[data-mode="translate"]').click();
+      await sleep(100);
+      return { sentPrefs: window.__log.filter((m) => m.type === 'set-prefs'), stored: window.__store.settings,
+        engineCard: visible('engineCard') };
     }
   };
   (async () => {

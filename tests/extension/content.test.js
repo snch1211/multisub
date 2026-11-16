@@ -46,7 +46,7 @@ function matches(n, sel) {
 
 function makeEvent() { const l = []; return { addListener: (f) => l.push(f), l, fire: (...a) => l.map((f) => f(...a)) }; }
 
-function boot({ stored, ping, path = '/watch/81', scale = 1 }) {
+function boot({ stored, ping, path = '/watch/81', scale = 1, extraStore = {}, navigator }) {
   const html = new Node('html'); const head = new Node('head'); const body = new Node('body');
   html.append(head, body);
   const container = new Node('div'); container.classList.add('watch-video');
@@ -68,7 +68,7 @@ function boot({ stored, ping, path = '/watch/81', scale = 1 }) {
   window.window = window;
   const fromPage = (msg) => winListeners.forEach((f) => f({ source: window, data: Object.assign({ __multisub: true }, msg) }));
 
-  const store = { settings: stored };
+  const store = Object.assign({ settings: stored }, extraStore);
   const storageChanged = makeEvent();
   const onMessage = makeEvent();
   const ports = [];
@@ -99,6 +99,8 @@ function boot({ stored, ping, path = '/watch/81', scale = 1 }) {
   const locationObj = { pathname: path };
   const ctx = vm.createContext({
     browser, window, document, console, Promise, JSON,
+    // shared.js reads navigator.languages for the default second language.
+    ...(navigator ? { navigator } : {}),
     location: locationObj,
     getComputedStyle: () => ({ position: 'relative' }),
     // scale < 1 shortens the long delays (retries, timeouts) so tests can
@@ -119,6 +121,7 @@ function boot({ stored, ping, path = '/watch/81', scale = 1 }) {
     overlayText: () => html.querySelector('#multisub-text'),
     overlayOriginal: () => html.querySelector('#multisub-original'),
     hint: () => html.querySelector('#multisub-hint'),
+    toast: () => html.querySelector('#multisub-toast'),
     setSettings: (patch) => browser.storage.local.set({ settings: Object.assign({}, store.settings, patch) }),
     stop: () => intervals.forEach(clearInterval)
   };
@@ -319,48 +322,240 @@ async function test(name, fn) {
     t.stop();
   });
 
-  await test('first-run chooser: shows after the ping, saves the mode, asks for an engine', async () => {
-    const t = boot({ stored: undefined, ping: () => ({ ok: true, engine: { active: null } }) });
-    await sleep(200);
-    const host = t.html.querySelector('#multisub-chooser');
-    assert.ok(host, 'chooser attached');
-    assert.equal(host.parentElement, t.container);
-    const buttons = host.shadowRoot.querySelectorAll('.mode');
-    assert.equal(buttons.length, 3);
-    assert.equal(host.shadowRoot.querySelector('.title').textContent, 'MultiSub：選擇字幕模式');
-    buttons[1].dispatch('click');
-    await sleep(30);
-    assert.equal(t.store.settings.mode, 'translate');
-    assert.ok(t.store.settings.prefsUpdatedAt > 0);
-    assert.equal(t.store.settings.mergedMode, true);
-    const sp = t.runtimeMessages.find((m) => m.type === 'set-prefs');
-    assert.equal(sp.prefs.mode, 'translate');
-    assert.equal(host.shadowRoot.querySelector('.title').textContent, '還差一步');
+  await test('no stored settings: netflix mode by default, nothing stamped or pushed', async () => {
+    const t = boot({ stored: undefined, ping: () => ({ ok: true, engine: null, prefs: { updatedAt: 0 } }) });
     await sleep(150);
-    assert.ok(t.html.querySelector('#multisub-chooser'), 'engine step stays up');
-    host.shadowRoot.querySelector('.primary').dispatch('click');
+    t.fromPage({ type: 'active-track', movieId: '81', bcp47: 'en', audioBcp47: 'en' });
+    t.fromPage({ type: 'tracks', movieId: '81', tracks: TRACKS });
+    await sleep(10);
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cues: ZH_CUES });
     await sleep(150);
+    const st = await t.status();
+    assert.equal(st.mode, 'netflix');
+    assert.equal(st.status, 'ready');
+    assert.equal(t.overlayOriginal().textContent, 'line 7');
+    assert.equal(t.overlayText().textContent, '第 7 句');
+    assert.equal(t.ports.length, 0); // no AI job
     assert.equal(t.html.querySelector('#multisub-chooser'), null);
+    assert.ok(!t.runtimeMessages.some((m) => m.type === 'set-prefs'));
+    assert.ok(!t.store.settings || !t.store.settings.prefsUpdatedAt);
     t.stop();
 
-    // 稍後 hides it for this page load
-    const t2 = boot({ stored: undefined, ping: () => ({ ok: true, engine: cloudEngine }) });
-    await sleep(200);
-    const host2 = t2.html.querySelector('#multisub-chooser');
-    host2.shadowRoot.querySelector('.text-button').dispatch('click');
-    await sleep(250);
-    assert.equal(t2.html.querySelector('#multisub-chooser'), null);
-    assert.equal(t2.store.settings, undefined);
+    // A choice made in the app wins over the defaults; a field the app never
+    // set keeps the local value.
+    const t2 = boot({ stored: undefined, ping: () => ({ ok: true, engine: cloudEngine, prefs: { targetLang: 'ko', updatedAt: 7 } }) });
+    await sleep(60);
+    assert.equal(t2.store.settings.mode, 'netflix');
+    assert.equal(t2.store.settings.targetLang, 'ko');
+    assert.equal(t2.store.settings.prefsUpdatedAt, 7);
+    assert.ok(!t2.runtimeMessages.some((m) => m.type === 'set-prefs'));
+    t2.stop();
+  });
+
+  await test('nothing chosen yet: the default mode waits for the first ping, which may bring the app\'s choice', async () => {
+    // AI 翻譯 picked in the app's onboarding, then Netflix opened from there:
+    // the cues arrive before the (cold) native ping answers.
+    let answer;
+    const pinged = new Promise((r) => { answer = r; });
+    const t = boot({ stored: undefined, navigator: { languages: ['ja-JP'] },
+      ping: () => pinged.then(() => ({ ok: true, engine: cloudEngine, prefs: { mode: 'translate', targetLang: 'ja', updatedAt: 5 } })) });
+    await toFetch(t);
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    await sleep(150);
+    let st = await t.status();
+    assert.equal(st.status, 'fetching');
+    assert.equal(st.secondState, 'none'); // no full Japanese track: netflix mode would hint at AI 翻譯
+    assert.equal(t.overlayOriginal().style.display, 'none');
+    assert.equal(t.overlayText().style.display, 'none');
+    assert.equal(t.hint().textContent, '');
+    assert.ok(!t.html.classList.contains('multisub-native-hidden'), "Netflix's subtitles stay up meanwhile");
+    assert.equal(t.ports.length, 0);
+    answer();
+    await sleep(150);
+    st = await t.status();
+    assert.equal(st.mode, 'translate');
+    assert.equal(st.status, 'translating');
+    assert.equal(t.hint().textContent, '');
+    assert.equal(t.ports.length, 1);
+    assert.equal(t.port().posted.filter((m) => m.type === 'job').length, 1);
+    assert.equal(t.port().posted[0].targetLang, 'ja');
+    t.stop();
+
+    // The app has nothing chosen either: the default mode starts once it says so.
+    let answer2;
+    const pinged2 = new Promise((r) => { answer2 = r; });
+    const t2 = boot({ stored: undefined, ping: () => pinged2.then(() => ({ ok: true, engine: null, prefs: { updatedAt: 0 } })) });
+    await toFetch(t2);
+    t2.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    t2.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cues: ZH_CUES });
+    await sleep(150);
+    assert.equal(t2.overlayText().style.display, 'none');
+    answer2();
+    await sleep(150);
+    assert.equal((await t2.status()).status, 'ready');
+    assert.equal(t2.overlayOriginal().textContent, 'line 7');
+    assert.equal(t2.overlayText().textContent, '第 7 句');
+    assert.ok(t2.html.classList.contains('multisub-native-hidden'));
     t2.stop();
 
-    // netflix mode needs no engine: card just closes
-    const t3 = boot({ stored: undefined, ping: () => ({ ok: true, engine: { active: null } }) });
-    await sleep(200);
-    t3.html.querySelector('#multisub-chooser').shadowRoot.querySelectorAll('.mode')[0].dispatch('click');
+    // Something already chosen in the extension doesn't wait at all.
+    const t3 = boot({ stored: settingsWith({ mode: 'netflix' }), ping: () => new Promise(() => {}) });
+    await toFetch(t3);
+    t3.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    t3.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cues: ZH_CUES });
     await sleep(150);
-    assert.equal(t3.html.querySelector('#multisub-chooser'), null);
-    assert.equal(t3.store.settings.mode, 'netflix');
+    assert.equal(t3.overlayText().textContent, '第 7 句');
     t3.stop();
+  });
+
+  await test('nothing chosen yet, ping never answers: the default mode runs after the wait; a late choice clears its hint', async () => {
+    let answer;
+    const late = new Promise((r) => { answer = r; });
+    // scale 0.01: FIRST_PING_WAIT_MS (3 s) passes in 30 ms.
+    const t = boot({ stored: undefined, navigator: { languages: ['ja-JP'] }, scale: 0.01,
+      ping: () => late.then(() => ({ ok: true, engine: cloudEngine, prefs: { mode: 'translate', updatedAt: 5 } })) });
+    await toFetch(t);
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    await sleep(150);
+    assert.equal((await t.status()).status, 'ready');
+    assert.equal(t.overlayOriginal().textContent, 'line 7');
+    assert.equal(t.hint().textContent, '這部片沒有 Netflix 官方的日文字幕，可在 MultiSub 選單改用「AI 翻譯」');
+    answer();
+    await sleep(150);
+    const st = await t.status();
+    assert.equal(st.mode, 'translate');
+    assert.equal(st.status, 'translating');
+    assert.equal(t.hint().textContent, '', 'the netflix-mode hint went with the mode');
+    t.stop();
+  });
+
+  await test('saving with nothing chosen leaves mode, language and level out of storage', async () => {
+    const t = boot({ stored: undefined, navigator: { languages: ['ja-JP'] },
+      ping: () => ({ ok: true, engine: null, prefs: { updatedAt: 0 }, styles: { textColor: '#ffff00' } }) });
+    await sleep(150);
+    const keys = () => Object.keys(t.store.settings || {});
+    // adopting the app's styles wrote the settings
+    assert.equal(t.store.settings.styles.textColor, '#ffff00');
+    for (const k of ['mode', 'targetLang', 'annotateLevel']) assert.ok(!keys().includes(k), k);
+    // so does dragging the subtitles
+    await t.tabMessage({ type: 'set-drag-mode', enabled: true });
+    const text = t.overlayText();
+    text.dispatch('pointerdown', { pointerId: 1, clientY: 300 });
+    text.dispatch('pointermove', { pointerId: 1, clientY: 250 });
+    text.dispatch('pointerup', { pointerId: 1, clientY: 250 });
+    await sleep(20);
+    assert.equal(t.store.settings.bottomOffset, 20);
+    for (const k of ['mode', 'targetLang', 'annotateLevel']) assert.ok(!keys().includes(k), k);
+    assert.equal(t.store.settings.prefsUpdatedAt, 0);
+    assert.equal((await t.status()).mode, 'netflix');
+    t.stop();
+  });
+
+  await test('an AI mode without an engine still points to engine setup', async () => {
+    const t = boot({ stored: settingsWith({ mode: 'translate' }), ping: () => ({ ok: true, engine: { active: null } }) });
+    await toFetch(t);
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cues: ZH_CUES });
+    await sleep(20);
+    t.port().onMessage.fire({ type: 'error', kind: 'translate', code: 'engine-not-ready' });
+    await sleep(150);
+    assert.equal(t.hint().textContent, 'MultiSub：還沒設定 AI 引擎，點 Safari 工具列的 MultiSub 圖示設定');
+    assert.equal((await t.status()).errorCode, 'engine-not-ready');
+    t.stop();
+  });
+
+  const toastText = (host) => host.shadowRoot.querySelectorAll('p').map((p) => p.textContent);
+  const toastCss = (host) => host.shadowRoot.querySelector('style').textContent;
+
+  await test('toast: once per install, after the ping, on the player container, click-through', async () => {
+    let answer;
+    const pinged = new Promise((r) => { answer = r; });
+    const t = boot({ stored: undefined, ping: () => pinged.then(() => ({ ok: true, engine: null, prefs: { updatedAt: 0 } })) });
+    await sleep(250);
+    assert.equal(t.toast(), null, 'waits for the startup ping');
+    answer();
+    await sleep(150);
+    const host = t.toast();
+    assert.ok(host, 'toast shown');
+    assert.equal(host.parentElement, t.container); // same container as the overlay: visible in fullscreen
+    assert.equal(t.html.querySelector('#multisub-overlay').parentElement, t.container);
+    assert.deepEqual(toastText(host), ['MultiSub 已開啟', '目前使用 Netflix 雙語字幕，第二語言是繁體中文。',
+      '點 Safari 工具列的 MultiSub 按鈕可以換模式。']);
+    assert.equal(host.shadowRoot.querySelector('.toast').getAttribute('role'), 'status');
+    // Click-through: nothing takes pointer events except the close button.
+    assert.match(host.style.cssText, /pointer-events:none/);
+    assert.match(toastCss(host), /\.toast \{[^}]*pointer-events: none/);
+    assert.match(toastCss(host), /\.close \{[^}]*pointer-events: auto/);
+    assert.match(toastCss(host), /prefers-reduced-motion: reduce[\s\S]*animation: none; transition: none/);
+    assert.equal(host.shadowRoot.querySelector('.close').getAttribute('aria-label'), '關閉');
+    assert.ok((host.listeners.click || []).length, 'clicks on the close button stay away from the player');
+    assert.equal(t.store.welcomeShown, true);
+    // Showing it chose nothing: no mode or timestamp stored, nothing pushed.
+    assert.ok(!t.store.settings || !t.store.settings.prefsUpdatedAt);
+    assert.ok(!t.runtimeMessages.some((m) => m.type === 'set-prefs'));
+    // Netflix swaps the player container (e.g. entering fullscreen): the toast follows.
+    const full = new Node('div'); full.classList.add('watch-video');
+    t.html.querySelector('body').appendChild(full);
+    full.appendChild(t.video);
+    await sleep(150);
+    assert.equal(host.parentElement, full);
+    host.shadowRoot.querySelector('.close').dispatch('click');
+    assert.ok(host.shadowRoot.querySelector('.toast').classList.contains('leaving'));
+    await sleep(400);
+    assert.equal(t.toast(), null);
+    t.stop();
+
+    // Next page load: the flag is in storage, no toast.
+    const t2 = boot({ stored: undefined, extraStore: { welcomeShown: true }, ping: () => ({ ok: true, engine: null }) });
+    await sleep(400);
+    assert.equal(t2.toast(), null);
+    t2.stop();
+  });
+
+  await test('toast: leaves by itself, waits for playback, skipped while off', async () => {
+    // scale 0.01: the 8 s timer runs in 80 ms, then the 300 ms fade.
+    const t = boot({ stored: undefined, ping: () => ({ ok: true, engine: null }), scale: 0.01 });
+    await sleep(150);
+    assert.ok(t.toast());
+    await sleep(600);
+    assert.equal(t.toast(), null);
+    t.stop();
+
+    const t2 = boot({ stored: undefined, ping: () => ({ ok: true, engine: null }) });
+    t2.video.paused = true;
+    await sleep(300);
+    assert.equal(t2.toast(), null, 'not on a paused or loading player');
+    assert.equal(t2.store.welcomeShown, undefined);
+    t2.video.paused = false;
+    await sleep(150);
+    assert.ok(t2.toast());
+    t2.stop();
+
+    const t3 = boot({ stored: settingsWith({ enabled: false }), ping: () => ({ ok: true, engine: null }) });
+    await sleep(300);
+    assert.equal(t3.toast(), null);
+    assert.equal(t3.store.welcomeShown, undefined); // still owed once MultiSub is on
+    await t3.setSettings({ enabled: true });
+    await sleep(150);
+    assert.ok(t3.toast());
+    t3.stop();
+  });
+
+  await test('toast: says which mode and language are in use, and follows popup changes', async () => {
+    const t = boot({ stored: undefined, navigator: { languages: ['ja-JP', 'en-US'] }, ping: () => ({ ok: true, engine: null }) });
+    await sleep(200);
+    assert.equal(toastText(t.toast())[1], '目前使用 Netflix 雙語字幕，第二語言是日文。');
+    await t.setSettings({ mode: 'annotate', prefsUpdatedAt: 9 });
+    await sleep(20);
+    assert.equal(toastText(t.toast())[1], '目前使用生字標註，難字後面會標上日文的意思。');
+    await t.setSettings({ mode: 'translate', targetLang: 'ko', prefsUpdatedAt: 10 });
+    await sleep(20);
+    assert.equal(toastText(t.toast())[1], '目前使用 AI 翻譯雙語字幕，第二語言是韓文。');
+    await t.setSettings({ enabled: false });
+    await sleep(20);
+    assert.equal(t.toast(), null);
+    t.stop();
   });
 
   await test('DOM fallback: translate line requests; netflix hint', async () => {

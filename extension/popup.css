@@ -63,10 +63,10 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Until the first native ping answers (or ~0.7 s pass), everything but the
-   logo stays invisible, so the popup doesn't flash the chooser and then swap
-   it for the main view when the app already has a mode saved (nor flash the
-   switch off before settings load). */
+/* Until the first native ping answers (or a few seconds pass), everything
+   but the logo stays invisible, so the popup doesn't flash the default mode
+   and then switch to the one the app has saved (nor flash the switch off
+   before settings load). */
 body.loading > :not(.header),
 body.loading .switch { visibility: hidden; }
 
@@ -174,65 +174,6 @@ h1 {
   cursor: pointer;
 }
 .banner-button:hover { background: var(--accent-hover); }
-
-/* --- First-run chooser ------------------------------------------------ */
-.chooser { margin-bottom: 8px; }
-
-.chooser-title {
-  margin: 0 2px 8px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.mode-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.mode-card {
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 2px 10px;
-  width: 100%;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1.5px solid var(--border);
-  border-radius: 11px;
-  background: var(--card);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.12s ease, background 0.12s ease;
-}
-.mode-card:hover { border-color: var(--field-border); }
-.mode-card[aria-checked="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.mode-card .dot {
-  grid-row: 1 / span 2;
-  align-self: start;
-  width: 16px;
-  height: 16px;
-  margin-top: 1px;
-  border: 1.5px solid var(--field-border);
-  border-radius: 50%;
-}
-.mode-card[aria-checked="true"] .dot {
-  border: 5px solid var(--accent);
-}
-
-.mode-card .label { font-weight: 600; }
-.mode-card .desc {
-  grid-column: 2;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.chooser .field-row { padding: 0 2px; }
-.chooser .primary-button { margin-top: 4px; }
 
 /* --- Main view -------------------------------------------------------- */
 .segmented {
@@ -551,6 +492,6 @@ input[type="range"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mode-card, .switch .slider, .switch .slider::before, .details summary::after { transition: none; }
+  .switch .slider, .switch .slider::before, .details summary::after { transition: none; }
   body.loading > .loading-note { animation: none; }
 }

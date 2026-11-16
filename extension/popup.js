@@ -1,9 +1,10 @@
 // Toolbar popup. Loaded after shared.js.
 //
-// First run: pick a mode (three cards), a language and, for annotate, a
-// level. After that: a mode switch, the language/level pickers, one status
-// line for the current Netflix tab, the AI engine card (AI modes only) and
-// display settings tucked into a collapsed section.
+// A mode switch, the language/level pickers, one status line for the
+// current Netflix tab, the AI engine card (AI modes only) and display
+// settings tucked into a collapsed section. Nothing has to be chosen first:
+// until the user picks something, the mode and language are shared.js's
+// defaults (Netflix mode, the system language).
 'use strict';
 
 const api = typeof browser !== 'undefined' ? browser : chrome;
@@ -16,11 +17,9 @@ const STATUS_POLL_MS = 2000;
 const NATIVE_POLL_MS = 3000;
 // How long the popup waits for the first native ping (a cold app extension
 // can take a couple of seconds) before showing anything, so it doesn't show
-// the first-run chooser or an empty engine card the ping is about to replace.
+// the default mode while the app's choice is on its way, or an empty engine
+// card the ping is about to replace.
 const FIRST_PING_WAIT_MS = 3000;
-// 開始使用 stays disabled while that ping is still out (it would overwrite a
-// mode chosen in the app), but no longer than this.
-const START_HOLD_MAX_MS = 6000;
 // storage.local key of the engine form's draft (see saveDraft); a draft
 // older than the TTL is ignored.
 const ENGINE_DRAFT_KEY = 'engineDraft';
@@ -46,10 +45,6 @@ const view = {
   engineSavedAt: 0,
   pendingEngine: null, // { provider, candidate, latencyMs }: tested, waiting for the consent step
   draft: null, // { provider, model, baseURL, savedAt } from storage.local
-  startHoldOver: false,
-  chooserMode: 'netflix',
-  chooserLang: null,
-  chooserLevel: null,
   bannerKey: '',
   statusKey: '',
   tracksKey: ''
@@ -78,8 +73,10 @@ function option(value, label) {
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
+// Unchosen preferences stay out of storage (see MS.storedSettings), so a
+// display change doesn't freeze today's default second language.
 function saveSettingsNow() {
-  return api.storage.local.set({ settings: settings }).catch(() => {});
+  return api.storage.local.set({ settings: MS.storedSettings(settings) }).catch(() => {});
 }
 
 let saveTimer = null;
@@ -117,39 +114,8 @@ api.storage.onChanged.addListener((changes, area) => {
 // Static controls
 // ---------------------------------------------------------------------------
 function buildStaticControls() {
-  for (const id of ['chooserTargetLang', 'targetLang']) {
-    const select = $(id);
-    for (const lang of MS.LANGUAGES) select.appendChild(option(lang.code, lang.label));
-  }
-  for (const id of ['chooserLevel', 'annotateLevel']) {
-    const select = $(id);
-    for (const level of MS.LEVELS) select.appendChild(option(level.id, level.label));
-  }
-
-  const cards = $('modeCards');
-  for (const m of MS.MODES) {
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'mode-card';
-    card.setAttribute('role', 'radio');
-    card.dataset.mode = m.id;
-    const dot = document.createElement('span');
-    dot.className = 'dot';
-    dot.setAttribute('aria-hidden', 'true');
-    const label = document.createElement('span');
-    label.className = 'label';
-    label.textContent = m.label;
-    const desc = document.createElement('span');
-    desc.className = 'desc';
-    desc.textContent = m.desc;
-    card.append(dot, label, desc);
-    card.addEventListener('click', () => {
-      view.chooserMode = m.id;
-      renderChooser();
-    });
-    cards.appendChild(card);
-  }
-  radioKeys(cards, (btn) => { view.chooserMode = btn.dataset.mode; renderChooser(); });
+  for (const lang of MS.LANGUAGES) $('targetLang').appendChild(option(lang.code, lang.label));
+  for (const level of MS.LEVELS) $('annotateLevel').appendChild(option(level.id, level.label));
 
   const seg = $('modeSwitch');
   for (const m of MS.MODES) {
@@ -195,27 +161,10 @@ function setRadioGroup(group, selectedId) {
 // ---------------------------------------------------------------------------
 function render() {
   $('enabled').checked = settings.enabled;
-  const choosing = !settings.mode;
-  $('chooser').hidden = !choosing;
-  $('main').hidden = choosing;
-  // First run shows the chooser alone; the rest only matters once a mode is set.
-  $('displaySettings').hidden = choosing;
-  $('vocabSection').hidden = choosing;
-  if (choosing) renderChooser();
-  else renderMain();
+  renderMain();
   renderEngineCard();
   renderDisplaySettings();
   renderStatus();
-}
-
-function renderChooser() {
-  if (view.chooserLang == null) view.chooserLang = settings.targetLang;
-  if (view.chooserLevel == null) view.chooserLevel = settings.annotateLevel;
-  setRadioGroup($('modeCards'), view.chooserMode);
-  $('chooserTargetLang').value = view.chooserLang;
-  $('chooserLevel').value = view.chooserLevel;
-  $('chooserLevelField').hidden = view.chooserMode !== 'annotate';
-  $('startButton').disabled = view.nativeOk === null && !view.startHoldOver;
 }
 
 function renderMain() {
@@ -260,7 +209,6 @@ function setStatus(text, cls, action) {
 }
 
 function renderStatus() {
-  if (!settings.mode) return;
   if (!settings.enabled) { setStatus('MultiSub 已關閉'); return; }
   // Without access Safari hides the tab's URL and no content script runs,
   // so this may well be a Netflix tab: don't tell the viewer to open one.
@@ -1053,17 +1001,6 @@ function bindEvents() {
     render();
   });
 
-  $('chooserTargetLang').addEventListener('change', (e) => { view.chooserLang = e.target.value; });
-  $('chooserLevel').addEventListener('change', (e) => { view.chooserLevel = e.target.value; });
-  $('startButton').addEventListener('click', () => {
-    setPrefs({ mode: view.chooserMode, targetLang: view.chooserLang, annotateLevel: view.chooserLevel });
-    const mode = MS.modeById(view.chooserMode);
-    if (mode && mode.needsEngine && !engineReady()) {
-      // Straight on to the one setup step an AI mode still needs.
-      setTimeout(() => { const key = $('apiKey'); if (!key.closest('[hidden]')) key.focus(); }, 300);
-    }
-  });
-
   $('targetLang').addEventListener('change', (e) => setPrefs({ targetLang: e.target.value }));
   $('annotateLevel').addEventListener('change', (e) => setPrefs({ annotateLevel: e.target.value }));
 
@@ -1134,15 +1071,10 @@ async function init() {
   // Back from fetching a key: reopen the form the viewer left.
   if (view.draft) view.engineEditing = true;
   // Wait for the first ping (and the tab check) behind a neutral loading
-  // line, so a mode chosen in the app's onboarding is adopted before
-  // deciding between the chooser and the main view, and the engine card and
-  // status line don't show a state that's about to change.
-  const firstPing = refreshNative().finally(() => { if (!settings.mode) renderChooser(); });
-  setTimeout(() => {
-    view.startHoldOver = true;
-    if (!settings.mode) renderChooser();
-  }, START_HOLD_MAX_MS);
-  await Promise.race([Promise.all([firstPing, refreshTab()]), sleep(FIRST_PING_WAIT_MS)]);
+  // line, so a mode or language chosen in the app is adopted before the
+  // switch shows the default, and the engine card and status line don't
+  // show a state that's about to change.
+  await Promise.race([Promise.all([refreshNative(), refreshTab()]), sleep(FIRST_PING_WAIT_MS)]);
   render();
   document.body.classList.remove('loading');
   setInterval(refreshTab, STATUS_POLL_MS);
