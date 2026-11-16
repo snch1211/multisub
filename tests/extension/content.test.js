@@ -784,6 +784,51 @@ async function test(name, fn) {
     t.stop();
   });
 
+  await test('the lower line is drawn smaller only while it is the second of two lines', async () => {
+    const twoLines = (t) => t.html.querySelector('#multisub-overlay').classList.contains('multisub-two-lines');
+    const t = boot({ stored: settingsWith({ mode: 'translate' }), ping: () => ({ ok: true, engine: cloudEngine }) });
+    const port = await runningJob(t);
+    await sleep(150);
+    // the original alone while its translation is pending
+    assert.equal(t.overlayOriginal().textContent, 'line 7');
+    assert.equal(t.overlayText().style.display, 'none');
+    assert.ok(!twoLines(t));
+    port.onMessage.fire({ type: 'progress', kind: 'translate', start: 7, items: ['翻譯七'] });
+    await sleep(150);
+    assert.ok(twoLines(t), 'original + translation');
+    // Not merged, Netflix draws the original: still the second of two lines.
+    t.fromPage({ type: 'active-track', movieId: '81', bcp47: 'en', audioBcp47: 'en' });
+    await t.setSettings({ mergedMode: false });
+    await sleep(150);
+    assert.equal(t.overlayOriginal().style.display, 'none');
+    assert.equal(t.overlayText().textContent, '翻譯七');
+    assert.ok(twoLines(t), "under Netflix's own line");
+    // annotate: the one line is the original itself
+    await t.setSettings({ mode: 'annotate', mergedMode: true, prefsUpdatedAt: 20 });
+    await sleep(150);
+    assert.equal(t.overlayText().textContent, 'line 7');
+    assert.ok(!twoLines(t), 'annotate');
+    // back to two lines in netflix mode
+    await t.setSettings({ mode: 'netflix', prefsUpdatedAt: 30 });
+    await sleep(150);
+    assert.equal(t.overlayText().textContent, '第 7 句');
+    assert.ok(twoLines(t), 'netflix');
+    t.stop();
+
+    // passthrough: the original is already in the target language
+    const t2 = boot({ stored: settingsWith({ mode: 'translate', targetLang: 'en' }), ping: () => ({ ok: true, engine: cloudEngine }) });
+    await sleep(150);
+    t2.fromPage({ type: 'active-track', movieId: '81', bcp47: 'en', audioBcp47: 'en' });
+    t2.fromPage({ type: 'tracks', movieId: '81', tracks: TRACKS.slice(0, 1) });
+    await sleep(20);
+    t2.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    await sleep(150);
+    assert.equal((await t2.status()).status, 'passthrough');
+    assert.equal(t2.overlayText().textContent, 'line 7');
+    assert.ok(!twoLines(t2), 'passthrough');
+    t2.stop();
+  });
+
   // --- Several instances on one page (the extension reloaded under an open
   // tab) and an instance whose extension context is gone.
   const overlaysOn = (page) => page.html.querySelectorAll('#multisub-overlay');

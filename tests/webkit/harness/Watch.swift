@@ -27,7 +27,7 @@
 //       "extension": "...", "settings": { ... },            // optional, for "reload-extension"
 //       "expect": { "original": "...", "text": "...", "plain": "...",
 //                   "terms": [{ "term": "...", "gloss": "..." }], "hint": "...", "nativeHidden": true,
-//                   "nativeVisible": true, "overlays": 1, "overlaysInDOM": 1 } }
+//                   "nativeVisible": true, "overlays": 1, "overlaysInDOM": 1, "textScale": 0.8 } }
 //   ],
 //   "status": { "mode": "translate", "status": "done", ... },  // partial match of content.js get-status
 //   "native": { "translate": ">=1", "annotate": 0 },             // stub call counts
@@ -41,7 +41,8 @@
 // the visible ones, "overlaysInDOM" all of them (a content script left over
 // from before a reload may have its own). "nativeHidden" is the
 // html.multisub-native-hidden class, "nativeVisible" whether Netflix's own
-// .player-timedtext is displayed.
+// .player-timedtext is displayed. "textScale" is #multisub-text's font size
+// over the full single-line size, to two decimals (null while it's hidden).
 import AppKit
 import Foundation
 import WebKit
@@ -341,6 +342,10 @@ struct WatchRunner {
       const hint = $('multisub-hint');
       const video = document.querySelector('video');
       const nativeBox = document.querySelector('.player-timedtext');
+      // #multisub-text's font size over #multisub-original's, which is the
+      // full single-line size (computed even while that line is hidden).
+      const px = (el) => el ? parseFloat(getComputedStyle(el).fontSize) : NaN;
+      const scale = px(t) / px(o);
       return JSON.stringify({
         overlay: !!overlay,
         overlays: visible.length,
@@ -351,6 +356,7 @@ struct WatchRunner {
         plain: plain,
         terms: terms,
         hint: shown(hint) ? hint.textContent : '',
+        textScale: shown(t) && isFinite(scale) ? Math.round(scale * 100) / 100 : null,
         nativeHidden: document.documentElement.classList.contains('multisub-native-hidden'),
         nativeVisible: !!nativeBox && getComputedStyle(nativeBox).display !== 'none',
         currentTime: video ? video.currentTime : null,

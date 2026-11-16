@@ -48,10 +48,13 @@
   text-shadow: var(--multisub-outline, 0 0 4px rgba(0, 0, 0, 0.9));
 }
 
-/* The second-language line (#multisub-text) defaults to 80% of the original
-   line, so the language being watched stays the visual anchor. Users can still
-   scale both with the popup's font-size slider. */
-#multisub-text {
+/* While two lines are on screen, the second-language line (#multisub-text)
+   is 80% of the original line's size, so the language being watched stays
+   the visual anchor; content.js's render() sets .multisub-two-lines then.
+   On its own the line is full size: in annotate mode (and when the original
+   is already in the target language) it holds the original itself. Users
+   can still scale both with the popup's font-size slider. */
+#multisub-overlay.multisub-two-lines #multisub-text {
   font-size: calc(2.4vw * var(--multisub-font-scale, 1) * var(--multisub-second-scale, 0.8));
 }
 

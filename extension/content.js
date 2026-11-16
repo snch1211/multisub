@@ -1242,16 +1242,22 @@
     }
   }
 
-  // frame: { top, bottom, segments? } — `top` is the upper line (the original
-  // in merged layouts), `bottom` the lower one; `segments` renders `bottom`
-  // with glosses.
+  // frame: { top, bottom, segments?, nativeTop? } — `top` is the upper line
+  // (the original in merged layouts), `bottom` the lower one; `segments`
+  // renders `bottom` with glosses; `nativeTop`: Netflix itself draws the
+  // upper line right now (the non-merged layout).
   function render(frame) {
     if (!overlay) return;
     const hint = currentHint();
+    // overlay.css draws the lower line smaller only while it is the second
+    // of two, not when it is the only line (annotate mode's original with
+    // glosses, or an original already in the target language).
+    const twoLines = !!frame.bottom && !!(frame.top || frame.nativeTop);
     const segKey = frame.segments ? JSON.stringify(frame.segments) : '';
-    const key = frame.top + '\u0001' + frame.bottom + '\u0001' + segKey + '\u0001' + hint;
+    const key = frame.top + '\u0001' + frame.bottom + '\u0001' + segKey + '\u0001' + hint + '\u0001' + twoLines;
     if (state.lastRenderedKey === key) return;
     state.lastRenderedKey = key;
+    overlay.classList.toggle('multisub-two-lines', twoLines);
     setLines(overlayOriginal, frame.top);
     if (frame.segments) setAnnotatedLines(overlayText, frame.segments);
     else setLines(overlayText, frame.bottom);
@@ -1274,12 +1280,13 @@
       // Separate timelines: Netflix often splits lines differently per
       // language, and aligning would drop or merge some of them.
       const j = state.secondState === 'ready' ? MS.findCueIndex(state.secondCues, t) : -1;
-      return { top: merged ? original : '', bottom: j >= 0 ? state.secondCues[j].text || '' : '' };
+      return { top: merged ? original : '', bottom: j >= 0 ? state.secondCues[j].text || '' : '',
+        nativeTop: !merged && !!original };
     }
     if (state.status === 'passthrough') return { top: '', bottom: merged ? original : '' };
     if (mode === 'translate') {
       const tr = idx >= 0 && typeof state.items[idx] === 'string' ? state.items[idx] : '';
-      return { top: merged ? original : '', bottom: tr };
+      return { top: merged ? original : '', bottom: tr, nativeTop: !merged && !!original };
     }
     // annotate: a cue whose annotations aren't ready shows the plain line.
     if (idx < 0) return EMPTY_FRAME;
@@ -1297,7 +1304,7 @@
     if (!state.fallbackCache.has(key)) requestLine(mode, original);
     const result = state.fallbackCache.get(key);
     if (mode === 'translate') {
-      return { top: merged ? original : '', bottom: typeof result === 'string' ? result : '' };
+      return { top: merged ? original : '', bottom: typeof result === 'string' ? result : '', nativeTop: !merged };
     }
     const allowed = Array.isArray(result) ? fallbackAllowed(original, result) : null;
     return { top: '', bottom: original, segments: annotatedSegments(original, allowed) };

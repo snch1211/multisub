@@ -3,7 +3,8 @@
   "settings": { "enabled": true, "mode": "translate", "targetLang": "zh-TW", "annotateLevel": "B1",
                 "fontScale": 1, "bottomOffset": 10, "mergedMode": true, "prefsUpdatedAt": 1 },
   "checkpoints": [
-    { "time": 2, "expect": { "original": "Welcome back to the laboratory.", "text": "[zh] Welcome back to the laboratory.", "nativeHidden": true } },
+    { "time": 2, "expect": { "original": "Welcome back to the laboratory.", "text": "[zh] Welcome back to the laboratory.", "nativeHidden": true,
+                             "textScale": 0.8 } },
     { "time": 6, "expect": { "original": "Everything depends on this experiment.", "text": "[zh] Everything depends on this experiment." } },
     { "time": 10, "snapshot": true, "expect": { "original": "Nobody understands\nthe instructions.", "text": "[zh] Nobody understands\nthe instructions." } },
     { "time": 18, "expect": { "original": "Don't touch anything.", "text": "[zh] Don't touch anything." } },

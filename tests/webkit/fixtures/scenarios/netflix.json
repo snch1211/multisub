@@ -3,7 +3,8 @@
   "settings": { "enabled": true, "mode": "netflix", "targetLang": "zh-TW", "annotateLevel": "B1",
                 "fontScale": 1, "bottomOffset": 10, "mergedMode": true, "prefsUpdatedAt": 1 },
   "checkpoints": [
-    { "time": 2, "expect": { "original": "Welcome back to the laboratory.", "text": "歡迎回到實驗室。", "nativeHidden": true } },
+    { "time": 2, "expect": { "original": "Welcome back to the laboratory.", "text": "歡迎回到實驗室。", "nativeHidden": true,
+                             "textScale": 0.8 } },
     { "time": 6, "expect": { "original": "Everything depends on this experiment.", "text": "一切都取決於這個實驗。" } },
     { "time": 10, "snapshot": true, "expect": { "original": "Nobody understands\nthe instructions.", "text": "沒有人看得懂\n這些說明。" } },
     { "time": 18, "expect": { "original": "Don't touch anything.", "text": "什麼都別碰。" } }

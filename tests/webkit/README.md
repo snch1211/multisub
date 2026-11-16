@@ -86,7 +86,9 @@ on a mock Netflix watch page (`fixtures/netflix-watch.html`):
   `SafariWebExtensionHandler.swift`. `"nativeErrors"` in a scenario makes it
   answer an action with an error code instead.
 - At every checkpoint the harness reads `#multisub-original`,
-  `#multisub-text`, the `.ms-term`/`.ms-gloss` pairs and the hint, and checks
+  `#multisub-text`, the `.ms-term`/`.ms-gloss` pairs, the hint and
+  `#multisub-text`'s computed font size relative to a single line
+  (`textScale`: 0.8 under the original, 1 alone in annotate mode), and checks
   that no HTML entity such as `&lrm;` shows as text anywhere on the page.
 - At the end it opens the popup, which finds the tab with `tabs.query` and
   asks `content.js` for its status with `tabs.sendMessage`; the scenario can
