@@ -509,9 +509,9 @@ struct GeneralSettingsView: View {
 
     // MARK: - Test translation
 
-    /// The user's second language, falling back to the extension's default.
+    /// The user's second language, or the default the extension also uses.
     private var testTargetLang: String {
-        configStore.config.prefs?.targetLang ?? SubtitleChoices.defaultTargetLang
+        (configStore.config.prefs ?? SharedPrefs()).effectiveTargetLang
     }
 
     private var testLanguageLabel: String {

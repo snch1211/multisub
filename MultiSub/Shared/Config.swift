@@ -103,7 +103,20 @@ struct CloudSettings: Codable, Equatable, Sendable {
 /// Preferences both the extension (`storage.local.settings`) and the app
 /// can change. Whoever wrote last wins, decided by `updatedAt`, so the
 /// popup and the app's onboarding never silently undo each other.
+///
+/// A nil field means nobody has chosen it yet, and the `effective…` values
+/// fill in the defaults. Defaults are only ever read, never written into
+/// `prefs` or stamped with `updatedAt`: a default must not win the sync over
+/// a choice made in the extension. shared.js does the same
+/// (`DEFAULT_SETTINGS`, `prefsUpdatedAt` 0).
 struct SharedPrefs: Codable, Equatable, Sendable {
+    /// Netflix's own second-language subtitles: no AI, no setup. Same as
+    /// DEFAULT_MODE in shared.js.
+    static let defaultMode = "netflix"
+    static let defaultAnnotateLevel = "B1"
+    /// From the system's preferred languages, as the extension works it out.
+    static var defaultTargetLang: String { LanguageNames.defaultTargetLang() }
+
     /// "netflix" | "translate" | "annotate"
     var mode: String?
     /// e.g. "zh-TW"
@@ -132,6 +145,23 @@ struct SharedPrefs: Codable, Equatable, Sendable {
 
     /// Now, in the same unit as `updatedAt`.
     static var nowMs: Double { (Date().timeIntervalSince1970 * 1000).rounded() }
+
+    /// The mode in use: the chosen one, else `defaultMode`. An id this build
+    /// doesn't know also counts as unset, as in shared.js's mergeSettings.
+    var effectiveMode: String {
+        guard let mode, ["netflix", "translate", "annotate"].contains(mode) else { return Self.defaultMode }
+        return mode
+    }
+
+    var effectiveTargetLang: String {
+        guard let targetLang, !targetLang.isEmpty else { return Self.defaultTargetLang }
+        return targetLang
+    }
+
+    var effectiveAnnotateLevel: String {
+        guard let annotateLevel, ["A2", "B1", "B2", "C1"].contains(annotateLevel) else { return Self.defaultAnnotateLevel }
+        return annotateLevel
+    }
 }
 
 struct MultiSubConfig: Codable, Equatable {
