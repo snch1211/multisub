@@ -402,9 +402,10 @@
   // window.__multisubInjected guard), so after Safari reloads the extension
   // the new content.js talks to the inject.js the page loaded with. Read
   // its messages as the versions already shipped send them, treat any field
-  // added since as optional, and send only commands every shipped inject.js
-  // knows (fetch-track, get-tracks, get-title); the rule for changing the
-  // protocol is at the top of inject.js.
+  // added since as optional (cues' `cleaned`, see cuesFrom()), and send only
+  // commands every shipped inject.js knows (fetch-track, get-tracks,
+  // get-title); the rule for changing the protocol is at the top of
+  // inject.js.
   //
   // The same channel carries the announcements of other content.js
   // instances (INSTANCE_MSG, section 12), which inject.js ignores.
@@ -458,19 +459,41 @@
     selectTracks();
   }
 
+  // Netflix's direction marks, as characters or as entities left as text
+  // ("&lrm;", "&amp;lrm;").
+  const DIRECTION_MARK_ENTITIES = /&(?:amp;)*(?:lrm|rlm|#x200[ef]|#820[67]);/gi;
+  const BIDI_CONTROLS = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+
+  // The cues of a 'cues' message. inject.js cleans each cue's text and says
+  // so (`cleaned`); one from before that flag (still running in a page that
+  // was open when the extension was updated) left Netflix's direction marks
+  // in its TTML cues, so those are removed here, along with what else needs
+  // no entity decoding.
+  function cuesFrom(msg) {
+    const cues = Array.isArray(msg.cues) ? msg.cues : [];
+    if (msg.cleaned) return cues;
+    const out = [];
+    for (const c of cues) {
+      const text = String((c && c.text) || '').replace(DIRECTION_MARK_ENTITIES, '').replace(BIDI_CONTROLS, '')
+        .replace(/\u00A0/g, ' ').replace(/[ \t]*\n[ \t]*/g, '\n').trim();
+      if (text) out.push(Object.assign({}, c, { text: text }));
+    }
+    return out;
+  }
+
   function onCues(msg) {
     if (msg.movieId !== state.urlMovieId) return;
     if (msg.purpose === 'reference') {
       if (msg.trackId !== state.secondTrackId) return; // superseded by a newer choice
       clearSecondTimer();
-      state.secondCues = Array.isArray(msg.cues) ? msg.cues : [];
+      state.secondCues = cuesFrom(msg);
       state.secondState = state.secondCues.length ? 'ready' : 'failed';
       dbg('second track cues:', state.secondCues.length);
       onSecondSettled();
       return;
     }
     if (msg.trackId !== state.activeTrackId) return; // superseded by a newer track switch
-    state.cues = Array.isArray(msg.cues) ? msg.cues : [];
+    state.cues = cuesFrom(msg);
     dbg('primary cues:', state.cues.length);
     if (!state.cues.length) { enableFallback('empty-track'); return; }
     state.fallback = false;

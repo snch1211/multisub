@@ -21,6 +21,13 @@ final class NativeStub {
   private(set) var counts: [String: Int] = [:]
   /// Every request in order: action plus a short summary.
   private(set) var log: [[String: Any]] = []
+  /// Direction marks and entities left as text that reached the native side
+  /// in subtitle text (lines, context, reference lines, glossary pairs),
+  /// i.e. would end up in the AI prompts.
+  private(set) var markLeaks: [String] = []
+  static let markPattern = try! NSRegularExpression(
+    pattern: "[\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]|&(?:[a-z]{2,8}|#[0-9]{1,6}|#x[0-9a-f]{1,6});",
+    options: [.caseInsensitive])
 
   static let defaultEngine: [String: Any] = [
     "configured": "cloud", "active": "cloud", "provider": "openai", "providerName": "OpenAI",
@@ -40,6 +47,7 @@ final class NativeStub {
     var entry: [String: Any] = ["action": action]
     if !lines.isEmpty { entry["lines"] = lines.count }
     log.append(entry)
+    findMarks(action, msg)
     Out.debug("native \(action)\(lines.isEmpty ? "" : " lines=\(lines.count)")")
     if let code = errors[action] { return ["ok": false, "error": code, "detail": "stubbed error"] }
     switch action {
@@ -64,6 +72,28 @@ final class NativeStub {
     default:
       return ["ok": false, "error": "unknown-action"]
     }
+  }
+
+  private func findMarks(_ action: String, _ msg: [String: Any]) {
+    func strings(_ v: Any?) -> [String] {
+      if let s = v as? String { return [s] }
+      if let a = v as? [Any] { return a.flatMap { strings($0) } }
+      if let d = v as? [String: Any] { return d.keys.sorted().flatMap { strings(d[$0]) } }
+      return []
+    }
+    for key in ["lines", "context", "reference", "pairs"] {
+      for s in strings(msg[key]) {
+        let range = NSRange(s.startIndex..., in: s)
+        guard NativeStub.markPattern.firstMatch(in: s, range: range) != nil, markLeaks.count < 20 else { continue }
+        // The marks themselves are invisible: show them as code points.
+        let shown = s.unicodeScalars.map { NativeStub.isBidiControl($0) ? String(format: "<U+%04X>", $0.value) : String($0) }.joined()
+        markLeaks.append("\(action) \(key): \(shown)")
+      }
+    }
+  }
+
+  static func isBidiControl(_ u: Unicode.Scalar) -> Bool {
+    [0x200E, 0x200F].contains(u.value) || (0x202A...0x202E).contains(u.value) || (0x2066...0x2069).contains(u.value)
   }
 
   /// The first run of letters longer than six, as it appears in the line.

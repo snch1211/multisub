@@ -9,10 +9,10 @@
 //    (loopback server), one with the manifest read through JSON.parse;
 //  - the extension reloaded under the open tab, over a build whose content
 //    script doesn't step aside (as the versions already shipped don't);
-//  - copies of the extension with a known mistake (no entity decoding, a
-//    forced-narrative second line, no world: "MAIN" inject.js, a content
-//    script that doesn't announce itself, no stylesheet marker) that must
-//    fail.
+//  - copies of the extension with a known mistake (no cue text cleanup, none
+//    for TTML, a forced-narrative second line, no world: "MAIN" inject.js, a
+//    content script that doesn't announce itself, no stylesheet marker) that
+//    must fail.
 // Skips (exit 0) when not on macOS or when the harness doesn't build.
 const fs = require('fs');
 const os = require('os');
@@ -193,14 +193,14 @@ test('watch translate with the manifest read through JSON.parse (inject.js\'s ot
 // Copies of the extension with a known mistake, to prove the watch checks
 // catch it.
 
-// Without entity decoding in inject.js, Netflix's "&lrm;" reaches the
-// overlay as text.
-test('watch fails when inject.js stops decoding entities (&lrm; on screen)', () => {
-  const dir = extensionVariant('no-decode', (d) => {
+// Without inject.js's cleanup, Netflix's "&lrm;" reaches the overlay as
+// text.
+test('watch fails when inject.js stops cleaning cue text (&lrm; on screen)', () => {
+  const dir = extensionVariant('no-clean', (d) => {
     const file = path.join(d, 'inject.js');
     const src = fs.readFileSync(file, 'utf8');
-    const patched = src.replace(/function decodeEntities\(s\) \{/, 'function decodeEntities(s) { return s;');
-    assert.notEqual(patched, src, 'inject.js has no decodeEntities(s) any more; update this test');
+    const patched = src.replace(/function cleanText\(s\) \{/, 'function cleanText(s) { return s;');
+    assert.notEqual(patched, src, 'inject.js has no cleanText(s) any more; update this test');
     fs.writeFileSync(file, patched);
   });
   const scenario = path.join(tmp, 'lrm.json');
@@ -214,6 +214,30 @@ test('watch fails when inject.js stops decoding entities (&lrm; on screen)', () 
   const leak = failedChecks(res).find((c) => /no literal entities/.test(c.name));
   assert.ok(leak, 'no entity-leak failure: ' + describe(res));
   assert.deepEqual(leak.detail, ['&lrm;']);
+});
+
+// Netflix's Chinese tracks come as TTML, whose direction marks
+// (fixtures/zh-Hant.dfxp: "&amp;lrm;" at 13-16 s, "&#8206;" at 17-20 s) must
+// get the same cleanup as WebVTT's: on screen in netflix mode, and in the
+// reference lines translate sends to the AI.
+test('watch fails when inject.js\'s TTML parser skips the cleanup (&lrm; and U+200E on the second line and in the prompts)', () => {
+  const dir = extensionVariant('ttml-raw', (d) => {
+    const file = path.join(d, 'inject.js');
+    const src = fs.readFileSync(file, 'utf8');
+    const patched = src.replace("t = cleanText(t.replace(/\\s*\\n\\s*/g, '\\n'));", "t = t.replace(/\\s*\\n\\s*/g, '\\n').trim();");
+    assert.notEqual(patched, src, 'inject.js\'s parseTTML no longer calls cleanText that way; update this test');
+    fs.writeFileSync(file, patched);
+  });
+  const netflix = JSON.parse(fs.readFileSync(path.join(SCENARIOS, 'netflix.json'), 'utf8'));
+  const marked = netflix.checkpoints.filter((cp) => cp.time === 14 || cp.time === 18);
+  assert.equal(marked.length, 2, 'netflix.json has no checkpoints at 14 and 18 s any more; update this test');
+  const res = harness(['watch', dir, scenarioVariant('netflix.json', 'ttml-raw', { checkpoints: marked, status: undefined })]);
+  assert.deepEqual(assertFailedWith(res, 'no literal entities on the page at 14.0 s').detail, ['&lrm;']);
+  assert.match(assertFailedWith(res, 'overlay at 18.0 s').detail, /\u200E/);
+  const translate = JSON.parse(fs.readFileSync(path.join(SCENARIOS, 'translate.json'), 'utf8'));
+  const res2 = harness(['watch', dir, scenarioVariant('translate.json', 'ttml-raw', { checkpoints: translate.checkpoints.slice(0, 1) })]);
+  const leaks = assertFailedWith(res2, 'no direction marks or entities in subtitle text sent to native').detail;
+  assert.ok(leaks.some((l) => l.includes('&lrm;')) && leaks.some((l) => l.includes('<U+200E>')), JSON.stringify(leaks));
 });
 
 // fixtures/manifest.json lists the forced-narrative zh-Hant track before the

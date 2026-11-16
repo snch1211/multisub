@@ -346,7 +346,10 @@
       const text = await res.text();
       const cues = track.format === 'webvtt' ? parseWebVTT(text) : parseTTML(text);
       dbg('fetchTrack:', track.format, text.length, 'bytes,', cues.length, 'cues, purpose=', purpose);
-      post({ type: 'cues', movieId: movieId, trackId: trackId, purpose: purpose, cues: cues });
+      // `cleaned`: every cue's text went through cleanText(). content.js
+      // cleans cues from an inject.js that doesn't say so (one from before
+      // this field, whose TTML parser left direction marks in).
+      post({ type: 'cues', movieId: movieId, trackId: trackId, purpose: purpose, cues: cues, cleaned: true });
     } catch (e) {
       dbg('fetchTrack error:', e && e.message);
       // The URL may have expired. Forget what was posted, so the next
@@ -370,12 +373,10 @@
     return h * 3600 + m * 60 + (+secParts[0]) + (+(secParts[1] || 0)) / Math.pow(10, (secParts[1] || '').length || 1);
   }
 
-  // Netflix's WebVTT uses named entities beyond the basic five, notably
-  // &lrm;/&rlm; (left-to-right / right-to-left marks) in front of most lines,
-  // which used to show up literally as "&lrm;". A <textarea> decodes every
-  // named and numeric entity without parsing any markup. The marks themselves
-  // (and other invisible bidi controls) are then removed: the overlay sets its
-  // own direction and the AI prompts don't need them.
+  // Netflix's subtitle files use named entities beyond the basic five,
+  // notably &lrm;/&rlm; (left-to-right / right-to-left marks) in front of
+  // most lines, which used to show up literally as "&lrm;". A <textarea>
+  // decodes every named and numeric entity without parsing any markup.
   const entityDecoder = document.createElement('textarea');
   const BIDI_CONTROLS = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
   // Netflix's files sometimes encode the mark twice ("&amp;lrm;"), so decode
@@ -389,11 +390,21 @@
       entityDecoder.innerHTML = out;
       out = entityDecoder.value;
     }
-    return out.replace(LITERAL_MARKS, '').replace(BIDI_CONTROLS, '').replace(/\u00A0/g, ' ');
+    return out;
   }
 
-  function stripTags(s) {
-    return decodeEntities(s.replace(/<[^>]*>/g, ''));
+  // What both parsers do to a cue's text once its markup is gone, so a cue
+  // reads the same whether Netflix served WebVTT or TTML: entities decoded
+  // (in TTML the XML parser has decoded one level already, which turns
+  // Netflix's "&amp;lrm;" into the text "&lrm;"), then the direction marks
+  // and other invisible bidi controls removed, whether they came as
+  // characters (TTML's "&#8206;") or as entities left as text: the overlay
+  // sets its own direction, and the AI prompts must not get them in their
+  // reference lines. Non-breaking spaces become plain ones, and each line
+  // is trimmed.
+  function cleanText(s) {
+    return decodeEntities(s).replace(LITERAL_MARKS, '').replace(BIDI_CONTROLS, '').replace(/\u00A0/g, ' ')
+      .replace(/[ \t]*\n[ \t]*/g, '\n').trim();
   }
 
   function mergeCues(cues) {
@@ -420,7 +431,7 @@
       const end = clockTime(m[2]);
       const buf = [];
       for (i++; i < lines.length && lines[i].trim() !== ''; i++) buf.push(lines[i]);
-      const cueText = stripTags(buf.join('\n')).trim();
+      const cueText = cleanText(buf.join('\n').replace(/<[^>]*>/g, ''));
       if (cueText) cues.push({ start: start, end: end, text: cueText });
     }
     return mergeCues(cues);
@@ -453,7 +464,7 @@
           else walk(child);
         }
       })(p);
-      t = t.replace(/\s*\n\s*/g, '\n').trim();
+      t = cleanText(t.replace(/\s*\n\s*/g, '\n'));
       if (t) cues.push({ start: start, end: end, text: t });
     }
     return mergeCues(cues);

@@ -784,6 +784,35 @@ async function test(name, fn) {
     t.stop();
   });
 
+  await test('cues from an inject.js older than `cleaned` lose their direction marks; flagged ones are taken as they are', async () => {
+    const t = boot({ stored: settingsWith({ mode: 'netflix' }), ping: () => ({ ok: true, engine: null }) });
+    await toFetch(t);
+    const marked = (cues, f) => cues.map((c, i) => Object.assign({}, c, { text: f(c.text, i) }));
+    // What a shipped inject.js made of Netflix's TTML: "&amp;lrm;" as the
+    // text "&lrm;", "&#8206;" as U+200E, a double-encoded one, a mark alone.
+    const zh = marked(ZH_CUES, (text, i) => [
+      '&lrm;' + text, '‎' + text + ' ', '&amp;lrm;' + text, '&#x200F;‫' + text + '‬'][i % 4]);
+    zh.push({ start: 201, end: 202, text: '&lrm;' });
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'en:SUBTITLES:0', purpose: 'source', cues: EN_CUES });
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cues: zh });
+    await sleep(150);
+    for (const [time, want] of [[13, '第 3 句'], [17, '第 4 句'], [21, '第 5 句'], [25, '第 6 句'], [30, '第 7 句']]) {
+      t.video.currentTime = time;
+      await sleep(120);
+      assert.equal(JSON.stringify(t.overlayText().textContent), JSON.stringify(want), 'at ' + time + ' s');
+    }
+    t.video.currentTime = 201.5;
+    await sleep(120);
+    assert.equal(t.overlayText().style.display, 'none', 'a cue that was only a mark is gone');
+    // An inject.js that cleans its cues says so, and they are used as sent.
+    t.fromPage({ type: 'cues', movieId: '81', trackId: 'zh:SUBTITLES:2', purpose: 'reference', cleaned: true,
+      cues: [{ start: 0, end: 200, text: 'A&B  as sent ' }] });
+    t.video.currentTime = 30;
+    await sleep(120);
+    assert.equal(t.overlayText().textContent, 'A&B  as sent ');
+    t.stop();
+  });
+
   await test('the lower line is drawn smaller only while it is the second of two lines', async () => {
     const twoLines = (t) => t.html.querySelector('#multisub-overlay').classList.contains('multisub-two-lines');
     const t = boot({ stored: settingsWith({ mode: 'translate' }), ping: () => ({ ok: true, engine: cloudEngine }) });

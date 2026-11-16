@@ -73,7 +73,8 @@ on a mock Netflix watch page (`fixtures/netflix-watch.html`):
   take part. The harness checks that the request asked for the WebVTT profile.
 - English comes as WebVTT with `&lrm;`, a double-encoded `&amp;lrm;`, an
   uppercase `&AMP;LRM;`, `<c>` tags and a two-line cue; Traditional Chinese
-  comes as TTML (DFXP), next to a forced-narrative track that must not be
+  comes as TTML (DFXP) with the marks as Netflix writes them there
+  (`&amp;lrm;`, `&#8206;`), next to a forced-narrative track that must not be
   picked. The manifest lists the forced track first on purpose: a second-line
   choice that took the first zh-Hant track would pick it.
 - A 30-second silent video made with ffmpeg (once, kept in `.build/`) is
@@ -84,7 +85,9 @@ on a mock Netflix watch page (`fixtures/netflix-watch.html`):
   with the first word longer than six letters as the term and
   `"zh:" + lowercased word` as the gloss, in the reply shapes of
   `SafariWebExtensionHandler.swift`. `"nativeErrors"` in a scenario makes it
-  answer an action with an error code instead.
+  answer an action with an error code instead. Every run checks that no
+  direction mark or entity reached it in subtitle text (lines, context,
+  reference lines, glossary pairs): that text goes into the AI prompts.
 - At every checkpoint the harness reads `#multisub-original`,
   `#multisub-text`, the `.ms-term`/`.ms-gloss` pairs, the hint and
   `#multisub-text`'s computed font size relative to a single line
@@ -112,7 +115,9 @@ with CORS headers and byte ranges, and runs translate again with
 captures the manifest. It also checks that copies of the extension with a
 known mistake fail:
 
-- `inject.js` doesn't decode entities: `&lrm;` on screen;
+- `inject.js` doesn't clean cue text: `&lrm;` on screen;
+- `inject.js` doesn't clean TTML cues: `&lrm;` and U+200E on the second
+  line in netflix mode, and in the reference lines sent to the stub;
 - `content.js` doesn't skip forced tracks for the second line: the forced
   track's one cue at 18 s instead of the full track's line;
 - `inject.js` is no longer a `world: "MAIN"` content script: the overlay

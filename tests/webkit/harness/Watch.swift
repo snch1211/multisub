@@ -245,6 +245,8 @@ struct WatchRunner {
     // Native calls
     result["nativeCalls"] = native.counts
     result["nativeLog"] = native.log
+    checks.add("no direction marks or entities in subtitle text sent to native", native.markLeaks.isEmpty,
+               native.markLeaks.isEmpty ? nil : native.markLeaks)
     if let want = scenario["native"] as? [String: Any] {
       for (action, rule) in want.sorted(by: { $0.key < $1.key }) {
         let n = native.counts[action] ?? 0
