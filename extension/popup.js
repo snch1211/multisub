@@ -61,9 +61,10 @@ function sleep(ms) {
 
 async function send(msg) {
   try {
-    return (await api.runtime.sendMessage(msg)) || { ok: false, error: 'native-unavailable' };
+    return (await api.runtime.sendMessage(msg)) ||
+      { ok: false, error: 'native-unavailable', detail: '背景程式沒有回應' };
   } catch (e) {
-    return { ok: false, error: 'native-unavailable' };
+    return { ok: false, error: 'native-unavailable', detail: String(e && e.message || e) };
   }
 }
 
@@ -333,7 +334,7 @@ function renderBanner() {
     text = '需要重新整理 Netflix 分頁才能啟用 MultiSub';
     action = { label: '重新整理', run: reloadNetflixTab };
   } else if (view.nativeOk === false) {
-    text = MS.errorText('native-unavailable');
+    text = MS.errorText('native-unavailable') + (view.nativeDetail ? '（' + view.nativeDetail + '）' : '');
   }
   const key = text + '|' + (action ? action.label : '');
   if (key === view.bannerKey) return;
@@ -468,6 +469,9 @@ async function refreshNative() {
   const res = await send({ type: 'ping-native' });
   const wasOk = view.nativeOk;
   view.nativeOk = !!(res && res.ok);
+  // Shown under the banner so a report from the field says *why*, not just
+  // that the app couldn't be reached.
+  view.nativeDetail = view.nativeOk ? '' : [res && res.error, res && res.detail].filter(Boolean).join('：');
   if (view.nativeOk) {
     let next = settings;
     if (res.styles && !stylesEqual(res.styles, settings.styles)) {
