@@ -40,8 +40,10 @@ struct GeneralSettingsView: View {
     /// Measured on disk, downloaded models only. Sizes of the others come
     /// from `downloadManager.sizeEstimates` (Hugging Face).
     @State private var diskSizes: [String: Int64] = [:]
-    /// What a download cut short left on disk, for models that aren't
-    /// downloaded: 0 when there's nothing, missing until measured.
+    /// What a download cut short left on disk, in the model's folder and
+    /// its partial folder (`MultiSubPaths.unfinishedDownloadBytes`), for
+    /// models that aren't downloaded: 0 when there's nothing, missing until
+    /// measured.
     @State private var unfinishedSizes: [String: Int64] = [:]
     /// Collapsed by default: the rows inside are what ask Hugging Face for
     /// sizes, and opening 一般設定 alone shouldn't contact it.
@@ -247,6 +249,10 @@ struct GeneralSettingsView: View {
         // becoming active) or another view, not only this view's own edits.
         .onChange(of: configStore.config.modelID) { _, newValue in selectedModelID = newValue }
         .onChange(of: configStore.config.idleUnloadMinutes) { _, newValue in idleUnloadMinutes = newValue }
+        // A download that just ended (done, failed, or started from the
+        // engine setup) is measured now, not at the next poll, so its row
+        // doesn't say 重試下載 for a few seconds before 繼續下載.
+        .onChange(of: downloadManager.activeDownloadIDs) { _, _ in refreshDiskSizes() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             // Back from Safari's settings: show the new state right away.
             Task { extensionState = await SafariExtensionState.fetch() }
@@ -407,20 +413,21 @@ struct GeneralSettingsView: View {
     }
 
     /// Measures downloaded models on disk (no network), and what a download
-    /// cut short left for the others. `force` re-measures one whose size is
-    /// already known; otherwise only entries whose downloaded state just
-    /// changed do any work.
+    /// cut short left for the others. `force` re-measures a downloaded one
+    /// whose size is already known; otherwise only entries whose downloaded
+    /// state just changed do any work there. What an unfinished download
+    /// left is a handful of files, so it's measured on every call: Finder
+    /// may have deleted part of it.
     private func refreshDiskSizes(force: Bool = false) {
         for entry in allEntries {
             guard Translator.isModelDownloaded(entry.id) else {
                 // Deleted (here or in Finder): a later re-download is measured afresh.
                 diskSizes[entry.id] = nil
-                if downloadManager.isDownloading(entry.id) {
-                    // Growing by the second; the row shows the progress instead.
-                    unfinishedSizes[entry.id] = nil
-                } else if force || unfinishedSizes[entry.id] == nil {
-                    unfinishedSizes[entry.id] = ModelCatalog.directorySize(modelID: entry.id)
-                }
+                // While downloading it grows by the second; the row shows
+                // the progress instead.
+                unfinishedSizes[entry.id] = downloadManager.isDownloading(entry.id)
+                    ? nil
+                    : MultiSubPaths.unfinishedDownloadBytes(for: entry.id)
                 continue
             }
             unfinishedSizes[entry.id] = nil
@@ -430,8 +437,9 @@ struct GeneralSettingsView: View {
         }
     }
 
-    /// Bytes a download cut short left behind, nil when there are none (or
-    /// the model is downloaded, or still downloading).
+    /// Bytes a download cut short left behind, partial folder included; nil
+    /// when there are none (or the model is downloaded, or still
+    /// downloading). Also what the row's 繼續下載 and trash button go by.
     private func unfinishedSize(for modelID: String) -> Int64? {
         guard !downloadManager.isDownloading(modelID),
               let bytes = unfinishedSizes[modelID], bytes > 0
@@ -510,8 +518,11 @@ struct GeneralSettingsView: View {
                 return
             }
             try? FileManager.default.removeItem(at: MultiSubPaths.modelRepoDirectory(for: entry.id))
+            // What it kept for resuming too, or those gigabytes stay on disk
+            // and the row goes on offering 繼續下載.
+            ModelDownloader.removePartialDownload(modelID: entry.id)
             diskSizes[entry.id] = nil
-            unfinishedSizes[entry.id] = nil
+            unfinishedSizes[entry.id] = 0
             // A 下載失敗 note would offer to resume from files that are gone.
             downloadManager.dismissError(modelID: entry.id)
             extraModelEntries.removeAll { $0.id == entry.id }

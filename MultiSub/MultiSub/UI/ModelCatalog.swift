@@ -38,7 +38,8 @@ extension ModelCatalog {
     /// `entries` — so a manually-installed model still shows up somewhere.
     /// One that isn't complete (a download cut short, or a copy missing a
     /// file) is listed too, under 「可下載的模型」 marked 下載未完成, so its
-    /// files can still be deleted from the app.
+    /// files can still be deleted from the app; so is one whose only
+    /// leftovers are in its partial folder (`MultiSubPaths.modelIDsOnDisk`).
     static func discoverExtraModels() -> [ModelCatalogEntry] {
         let knownIDs = Set(entries.map(\.id))
         return MultiSubPaths.modelIDsOnDisk()
@@ -52,9 +53,11 @@ extension ModelCatalog {
         entries.first { $0.id == modelID }?.displayName ?? modelID
     }
 
-    /// Bytes on disk in a model's folder, downloaded or cut short
+    /// Bytes on disk in a downloaded model's folder
     /// (`MultiSubPaths.modelRepoDirectory`, the folder
-    /// `Translator.isModelDownloaded` checks).
+    /// `Translator.isModelDownloaded` checks). What a download cut short
+    /// left, partial folder included, is
+    /// `MultiSubPaths.unfinishedDownloadBytes`.
     static func directorySize(modelID: String) -> Int64 {
         let root = MultiSubPaths.modelRepoDirectory(for: modelID)
         guard let enumerator = FileManager.default.enumerator(

@@ -126,37 +126,99 @@ extension MultiSubPaths {
         try JSONEncoder().encode(ExpectedFiles(files: files.sorted())).write(to: url, options: .atomic)
     }
 
-    /// Every model with a folder holding at least one file, downloaded or
-    /// not: a download cut short leaves gigabytes there that only deleting
-    /// the folder gives back. Best-effort reverse of `modelRepoDirectory`:
-    /// splits the folder name on the *first* "--" only, which is lossy if
-    /// an org or model name itself contains "--", but matches every real
-    /// repo id this project deals with.
+    /// Every model with files on disk, downloaded or not (`hasModelFiles`):
+    /// a download cut short leaves gigabytes that only deleting gives back.
+    /// Found from the repo folders (`models--<org>--<name>`) and from the
+    /// partial folders (`.download-tmp/<org>--<name>`), so a model whose
+    /// repo folder was deleted in Finder while its partial folder stayed is
+    /// still listed. Best-effort reverse of those names: splits on the
+    /// *first* "--" only, which is lossy if an org or model name itself
+    /// contains "--", but matches every real repo id this project deals with.
     static func modelIDsOnDisk(in root: URL = MultiSubPaths.modelsRoot) -> [String] {
-        guard let dirs = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
-        else { return [] }
-        return dirs.compactMap { dir -> String? in
-            let name = dir.lastPathComponent
-            guard name.hasPrefix("models--") else { return nil }
-            let rest = name.dropFirst("models--".count)
-            guard let separator = rest.range(of: "--") else { return nil }
-            let id = String(rest[..<separator.lowerBound]) + "/" + rest[separator.upperBound...]
-            return hasModelFiles(for: id, in: root) ? id : nil
+        let fm = FileManager.default
+        func modelID(fromFolderName name: Substring) -> String? {
+            guard let separator = name.range(of: "--") else { return nil }
+            return String(name[..<separator.lowerBound]) + "/" + name[separator.upperBound...]
         }
-        .sorted()
+        var ids = Set<String>()
+        for name in (try? fm.contentsOfDirectory(atPath: root.path)) ?? [] where name.hasPrefix("models--") {
+            if let id = modelID(fromFolderName: name.dropFirst("models--".count)) { ids.insert(id) }
+        }
+        // The UUID-named folders older builds left have no "--".
+        for name in (try? fm.contentsOfDirectory(atPath: modelPartialRoot(in: root).path)) ?? [] {
+            if let id = modelID(fromFolderName: Substring(name)) { ids.insert(id) }
+        }
+        return ids.filter { hasModelFiles(for: $0, in: root) }.sorted()
     }
 
-    /// Whether `modelID` has a folder with any file in it, complete or not.
+    /// Whether `modelID` has data on disk, complete or not: a file with
+    /// bytes in it under its repo folder or its partial folder. The
+    /// expected-files list alone doesn't count (see `unfinishedDownloadBytes`).
+    /// Stops at the first such file, so it's cheap enough for a row's body.
     static func hasModelFiles(for modelID: String, in root: URL = MultiSubPaths.modelsRoot) -> Bool {
+        dataBytes(in: modelRepoDirectory(for: modelID, in: root), stopAtFirst: true) > 0
+            || dataBytes(in: modelPartialDirectory(for: modelID, in: root), stopAtFirst: true) > 0
+    }
+
+    /// What a download of `modelID` that didn't finish left on disk, in
+    /// bytes: the stored files under its repo folder (blobs and refs; the
+    /// snapshot's links into `blobs/` aren't counted twice) plus the
+    /// unfinished files in its partial folder. Hidden files are left out:
+    /// the expected-files list alone, from a download that stopped before
+    /// any data arrived, is 0, as there is nothing to resume from or to get
+    /// back (a Finder `.DS_Store` is 0 too). Meant for a model that isn't
+    /// downloaded; for a downloaded one this is its whole size.
+    static func unfinishedDownloadBytes(for modelID: String, in root: URL = MultiSubPaths.modelsRoot) -> Int64 {
+        dataBytes(in: modelRepoDirectory(for: modelID, in: root))
+            + dataBytes(in: modelPartialDirectory(for: modelID, in: root))
+    }
+
+    /// Bytes in the regular, non-empty, non-hidden files under `directory`
+    /// (hidden folders such as `.multisub-expected-files` are skipped whole,
+    /// links aren't followed). 0 when it doesn't exist.
+    private static func dataBytes(in directory: URL, stopAtFirst: Bool = false) -> Int64 {
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey]
         guard let enumerator = FileManager.default.enumerator(
-            at: modelRepoDirectory(for: modelID, in: root),
-            includingPropertiesForKeys: [.isRegularFileKey], options: [], errorHandler: nil)
-        else { return false }
-        for case let url as URL in enumerator
-        where (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
-            return true
+            at: directory, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles], errorHandler: nil)
+        else { return 0 }
+        var total: Int64 = 0
+        for case let url as URL in enumerator {
+            guard let values = try? url.resourceValues(forKeys: keys), values.isRegularFile == true,
+                  let size = values.fileSize, size > 0
+            else { continue }
+            total += Int64(size)
+            if stopAtFirst { break }
         }
-        return false
+        return total
+    }
+
+    // MARK: Partial downloads
+
+    /// `<root>/.download-tmp`: the files `ModelDownloader` hasn't finished,
+    /// one folder per model.
+    static func modelPartialRoot(in root: URL = MultiSubPaths.modelsRoot) -> URL {
+        root.appendingPathComponent(".download-tmp", isDirectory: true)
+    }
+
+    /// `<root>/.download-tmp/<org>--<name>`: where `modelID`'s unfinished
+    /// files (`<etag>.partial`) wait, from one attempt and one app run to
+    /// the next, until every file is stored. Named like the repo folder,
+    /// with anything but letters, digits, "-", "_" and "." replaced by "_"
+    /// (a leading "." too, so the name never reaches outside the folder).
+    static func modelPartialDirectory(for modelID: String, in root: URL = MultiSubPaths.modelsRoot) -> URL {
+        var name = modelID.replacingOccurrences(of: "/", with: "--")
+            .map { $0.isLetter || $0.isNumber || "-_.".contains($0) ? String($0) : "_" }
+            .joined()
+        if name.isEmpty || name.hasPrefix(".") { name = "_" + name.dropFirst() }
+        return modelPartialRoot(in: root).appendingPathComponent(name, isDirectory: true)
+    }
+
+    /// Deletes what an unfinished download of `modelID` kept for resuming,
+    /// if anything. Deleting a model must do this too, or its gigabytes stay
+    /// behind and the row keeps offering 繼續下載. Never while that model
+    /// downloads.
+    static func removePartialDownload(for modelID: String, in root: URL = MultiSubPaths.modelsRoot) {
+        try? FileManager.default.removeItem(at: modelPartialDirectory(for: modelID, in: root))
     }
 
     private struct ExpectedFiles: Codable {

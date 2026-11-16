@@ -22,8 +22,11 @@
 //  A download that stops (an error, or the app quitting) resumes on the next
 //  attempt, in this run or a later one: files already in the snapshot are
 //  skipped, and the file that was in flight waits as a `.partial` in the
-//  model's own folder under `models/.download-tmp/`, which is removed only
-//  once every file is stored.
+//  model's own folder under `models/.download-tmp/`
+//  (`MultiSubPaths.modelPartialDirectory`), which is removed once every file
+//  is stored, or when 一般設定 deletes the model (`removePartialDownload`).
+//  What both folders hold until then is what 一般設定 shows as
+//  下載未完成 (`MultiSubPaths.unfinishedDownloadBytes`).
 //
 //  App target only — the extension never downloads (every `Translator`
 //  request loads the model with `allowDownload: false`). Besides this
@@ -122,7 +125,7 @@ enum ModelDownloader {
         // etag-named partial. ModelDownloadManager never runs two downloads
         // of the same model at once.
         removeAbandonedTempDirs()
-        let tempDir = partialDirectory(for: modelID)
+        let tempDir = MultiSubPaths.modelPartialDirectory(for: modelID)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
         let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
@@ -154,23 +157,12 @@ enum ModelDownloader {
         try? FileManager.default.removeItem(at: tempDir)
     }
 
-    private static var tempRoot: URL {
-        MultiSubPaths.modelsRoot.appendingPathComponent(".download-tmp", isDirectory: true)
-    }
-
-    /// Where `modelID`'s unfinished files wait for the next attempt.
-    private static func partialDirectory(for modelID: String) -> URL {
-        // "org/name" -> "org--name", like the Hugging Face cache's own folders.
-        let name = modelID.replacingOccurrences(of: "/", with: "--")
-            .map { $0.isLetter || $0.isNumber || "-_.".contains($0) ? String($0) : "_" }
-            .joined()
-        return tempRoot.appendingPathComponent(name, isDirectory: true)
-    }
-
-    /// Whether an earlier attempt left part of `modelID` behind, so 下載
-    /// can say it will continue rather than start over.
-    static func hasPartialDownload(modelID: String) -> Bool {
-        FileManager.default.fileExists(atPath: partialDirectory(for: modelID).path)
+    /// Deletes what an unfinished download of `modelID` kept for resuming
+    /// (`MultiSubPaths.modelPartialDirectory`). 一般設定 calls this when it
+    /// deletes a model, downloaded or not, and never while that model is
+    /// downloading.
+    static func removePartialDownload(modelID: String) {
+        MultiSubPaths.removePartialDownload(for: modelID)
     }
 
     /// Builds before resumable folders used a fresh UUID-named folder per
@@ -178,6 +170,7 @@ enum ModelDownloader {
     /// can resume from those any more; they only take up disk space.
     private static func removeAbandonedTempDirs() {
         let fm = FileManager.default
+        let tempRoot = MultiSubPaths.modelPartialRoot()
         guard let names = try? fm.contentsOfDirectory(atPath: tempRoot.path) else { return }
         for name in names where UUID(uuidString: name) != nil {
             try? fm.removeItem(at: tempRoot.appendingPathComponent(name, isDirectory: true))

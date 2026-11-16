@@ -55,6 +55,10 @@ final class ModelDownloadManager {
 
     var hasActiveDownloads: Bool { !tasks.isEmpty }
 
+    /// The models downloading right now, for a view that measures disk use
+    /// when a download starts or ends.
+    var activeDownloadIDs: Set<String> { Set(tasks.keys) }
+
     /// Set when the last window closed mid-download
     /// (`AppDelegate.applicationShouldTerminateAfterLastWindowClosed`): the
     /// app stays up for the download and quits once it's over.

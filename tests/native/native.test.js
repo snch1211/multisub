@@ -2,11 +2,13 @@
 // Builds the Swift files in MultiSub/Shared that the checks need (the app
 // and the extension both compile them) together with tests/native/main.swift,
 // and runs the result. The checks cover what decides, on disk alone, whether
-// a local model is downloaded, and which model folders the app lists
-// (MultiSubPaths), and which custom server addresses can be saved
-// (CloudSettings.baseURLProblem). For each address it accepts, this file
-// then checks that the WHATWG URL parser, which the popup uses to name the
-// server in its consent step, finds the host and port Foundation sends to.
+// a local model is downloaded, which model folders the app lists and what an
+// unfinished download left, partial folders included (MultiSubPaths), which
+// custom server addresses can be saved (CloudSettings.baseURLProblem), and
+// how consent is keyed per custom address, older "custom" records included
+// (CloudSettings.normalizedBaseURL, MultiSubConfig.consentKey). For each
+// address it accepts, this file then checks that the WHATWG URL parser finds
+// the host and port Foundation sends to.
 // Skips (exit 0) when not on macOS or when there is no Swift compiler.
 const fs = require('fs');
 const os = require('os');

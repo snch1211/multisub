@@ -26,9 +26,12 @@ struct ModelRow: View {
     /// (so the risk is visible before the user commits the disk space).
     let dotColor: Color
     let isDownloaded: Bool
-    /// Not downloaded, but a download cut short left files behind: next to
-    /// 下載, the row then offers to delete them (when `onDelete` is set).
-    var hasUnfinishedDownload = false
+    /// Not downloaded, but an earlier attempt left files to resume from, in
+    /// the model's folder or its partial folder: 下載 then says 繼續下載,
+    /// and with `onDelete` set a trash button next to it deletes them. Nil
+    /// reads the disk here (`MultiSubPaths.hasModelFiles`); 一般設定 passes
+    /// what it measured, so the row agrees with its 下載未完成 note.
+    var hasUnfinishedDownload: Bool? = nil
     /// Nil hides the delete button (the engine setup only downloads; deleting
     /// lives in 一般設定's full list) and shows a "已下載" mark instead.
     let onDelete: (() -> Void)?
@@ -72,13 +75,14 @@ struct ModelRow: View {
                         .foregroundStyle(.green)
                 }
             } else {
-                if hasUnfinishedDownload, let onDelete {
+                let resumable = hasUnfinishedDownload ?? MultiSubPaths.hasModelFiles(for: modelID)
+                if resumable, let onDelete {
                     Button("刪除下載到一半的檔案", systemImage: "trash", role: .destructive, action: onDelete)
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
                         .help("刪除下載到一半的檔案")
                 }
-                downloadButton
+                downloadButton(resumable: resumable)
             }
         }
         // Only a row on screen asks for its size (Hugging Face isn't
@@ -92,18 +96,25 @@ struct ModelRow: View {
     /// 下載 waits for the size: a multi-GB download must not start before
     /// the user has seen how big it is and, in 一般設定, the memory warning.
     @ViewBuilder
-    private var downloadButton: some View {
+    private func downloadButton(resumable: Bool) -> some View {
         switch downloadManager.sizeEstimates[modelID] {
         case .known?:
-            // An earlier attempt's files are kept, so this picks up where it stopped.
-            Button(downloadState?.failed == true || ModelDownloader.hasPartialDownload(modelID: modelID) ? "繼續下載" : "下載",
-                   action: onDownload)
+            Button(downloadTitle(resumable: resumable), action: onDownload)
         case .failed?:
             Button("重新查詢大小") { downloadManager.retrySizeEstimate(modelID: modelID) }
         case .loading?, nil:
-            Button("下載", action: onDownload)
+            Button(downloadTitle(resumable: resumable), action: onDownload)
                 .disabled(true)
                 .help("查到模型大小後才能下載")
         }
+    }
+
+    /// 繼續下載 when earlier files are kept to pick up from, whether the last
+    /// attempt failed in this run or the app quit halfway. 重試下載 after a
+    /// failure that left nothing to resume (say it stopped before any data
+    /// arrived), so the button never promises to continue from nothing.
+    private func downloadTitle(resumable: Bool) -> String {
+        if resumable { return "繼續下載" }
+        return downloadState?.failed == true ? "重試下載" : "下載"
     }
 }

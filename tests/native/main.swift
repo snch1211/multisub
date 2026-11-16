@@ -153,6 +153,12 @@ test("the snapshot refs/main names is tried first") {
     try expect(downloaded("t/prefers-main"), "zzz")
 }
 
+/// Writes `bytes` bytes to `url`, creating its folder.
+func write(_ bytes: Int, to url: URL) throws {
+    try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data(repeating: 0x78, count: bytes).write(to: url)
+}
+
 test("models on disk: downloaded ones and ones a download cut short, not empty folders") {
     let root = modelsRoot.appendingPathComponent("listing", isDirectory: true)
     try MultiSubPaths.recordExpectedFiles(gemmaFiles, modelID: "org/whole", commit: "c1", in: root)
@@ -160,20 +166,98 @@ test("models on disk: downloaded ones and ones a download cut short, not empty f
     // One shard of two stored, then the app quit.
     try MultiSubPaths.recordExpectedFiles(gemmaFiles, modelID: "org/cut-short", commit: "c1", in: root)
     try snapshot("org/cut-short", "c1", Array(gemmaFiles.prefix(4)), refMain: true, in: root)
-    // Cut short before the first file was stored: only the list is there.
+    // Cut short before any data arrived: only the list is there, nothing
+    // to resume from or to get back.
     try MultiSubPaths.recordExpectedFiles(gemmaFiles, modelID: "org/list-only", commit: "c1", in: root)
+    // Its repo folder deleted in Finder, the file in flight still waiting.
+    try write(4096, to: MultiSubPaths.modelPartialDirectory(for: "org/partial-only", in: root)
+        .appendingPathComponent("e1.partial"))
+    // A file in flight with no bytes yet.
+    try write(0, to: MultiSubPaths.modelPartialDirectory(for: "org/empty-partial", in: root)
+        .appendingPathComponent("e1.partial"))
     try fm.createDirectory(at: MultiSubPaths.modelRepoDirectory(for: "org/empty", in: root)
         .appendingPathComponent("snapshots/c1"), withIntermediateDirectories: true)
     try fm.createDirectory(at: root.appendingPathComponent(".download-tmp/x"), withIntermediateDirectories: true)
+    // An older build's per-attempt folder: not a model.
+    try write(10, to: root.appendingPathComponent(".download-tmp/\(UUID().uuidString)/e1.partial"))
     try fm.createDirectory(at: root.appendingPathComponent("not-a-model"), withIntermediateDirectories: true)
     try Data("x".utf8).write(to: root.appendingPathComponent("not-a-model/file"))
 
-    try expect(MultiSubPaths.modelIDsOnDisk(in: root), ["org/cut-short", "org/list-only", "org/whole"])
+    try expect(MultiSubPaths.modelIDsOnDisk(in: root), ["org/cut-short", "org/partial-only", "org/whole"])
     try expect(MultiSubPaths.modelSnapshotDirectory(for: "org/cut-short", in: root), nil, "cut short")
     try expect(MultiSubPaths.hasModelFiles(for: "org/cut-short", in: root), true, "cut short")
+    try expect(MultiSubPaths.hasModelFiles(for: "org/partial-only", in: root), true, "partial folder only")
+    try expect(MultiSubPaths.hasModelFiles(for: "org/list-only", in: root), false, "the list alone")
+    try expect(MultiSubPaths.hasModelFiles(for: "org/empty-partial", in: root), false, "an empty partial file")
     try expect(MultiSubPaths.hasModelFiles(for: "org/empty", in: root), false, "empty folders")
     try expect(MultiSubPaths.hasModelFiles(for: "org/never", in: root), false, "no folder")
     try expect(MultiSubPaths.modelIDsOnDisk(in: root.appendingPathComponent("missing")), [], "no models folder")
+}
+
+// MARK: - Partial downloads
+
+test("a model's partial folder is named like its repo folder, inside .download-tmp") {
+    let root = URL(fileURLWithPath: "/models", isDirectory: true)
+    func name(_ id: String) -> String {
+        let dir = MultiSubPaths.modelPartialDirectory(for: id, in: root)
+        return dir.deletingLastPathComponent().path == "/models/.download-tmp" ? dir.lastPathComponent : "outside: \(dir.path)"
+    }
+    try expect(name("mlx-community/gemma-4-e4b-it-4bit"), "mlx-community--gemma-4-e4b-it-4bit")
+    try expect(name("Org_1/Model.v2"), "Org_1--Model.v2")
+    try expect(name("org/a b:c"), "org--a_b_c", "anything but letters, digits, - _ . becomes _")
+    for id in ["..", ".", "", "../x", ".hidden/x"] {
+        let n = name(id)
+        try expect(n.hasPrefix("_"), true, "\(id.debugDescription) -> \(n)")
+    }
+}
+
+test("unfinished bytes: the repo folder's stored files plus the partial folder") {
+    let root = modelsRoot.appendingPathComponent("unfinished", isDirectory: true)
+    // Two small files stored (blobs plus links), the shard in flight half done.
+    try MultiSubPaths.recordExpectedFiles(gemmaFiles, modelID: "org/both", commit: "c1", in: root)
+    try snapshot("org/both", "c1", ["chat_template.jinja", "config.json"], refMain: true, in: root)
+    try write(5000, to: MultiSubPaths.modelPartialDirectory(for: "org/both", in: root)
+        .appendingPathComponent("e3.partial"))
+    // blobs: 2 x 1 byte, refs/main: 2 bytes ("c1"); the list and the links aren't counted.
+    try expect(MultiSubPaths.unfinishedDownloadBytes(for: "org/both", in: root), 5004)
+
+    try MultiSubPaths.recordExpectedFiles(gemmaFiles, modelID: "org/repo-only", commit: "c1", in: root)
+    try snapshot("org/repo-only", "c1", ["config.json"], refMain: true, in: root)
+    try expect(MultiSubPaths.unfinishedDownloadBytes(for: "org/repo-only", in: root), 3, "partial folder deleted")
+
+    try write(7000, to: MultiSubPaths.modelPartialDirectory(for: "org/partial-only", in: root)
+        .appendingPathComponent("e1.partial"))
+    try expect(MultiSubPaths.unfinishedDownloadBytes(for: "org/partial-only", in: root), 7000, "repo folder deleted")
+
+    try MultiSubPaths.recordExpectedFiles(gemmaFiles, modelID: "org/list-only", commit: "c1", in: root)
+    try write(0, to: MultiSubPaths.modelPartialDirectory(for: "org/list-only", in: root)
+        .appendingPathComponent("e1.partial"))
+    try write(6148, to: MultiSubPaths.modelRepoDirectory(for: "org/list-only", in: root)
+        .appendingPathComponent(".DS_Store"))
+    try expect(MultiSubPaths.unfinishedDownloadBytes(for: "org/list-only", in: root), 0,
+               "the list, an empty partial and Finder's .DS_Store")
+
+    try expect(MultiSubPaths.unfinishedDownloadBytes(for: "org/never", in: root), 0, "nothing at all")
+}
+
+test("removing a partial download deletes that model's partial folder only") {
+    let root = modelsRoot.appendingPathComponent("remove-partial", isDirectory: true)
+    let mine = MultiSubPaths.modelPartialDirectory(for: "org/mine", in: root)
+    let other = MultiSubPaths.modelPartialDirectory(for: "org/other", in: root)
+    try write(100, to: mine.appendingPathComponent("e1.partial"))
+    try write(100, to: other.appendingPathComponent("e1.partial"))
+    try snapshot("org/mine", "c1", ["config.json"], refMain: true, in: root)
+
+    MultiSubPaths.removePartialDownload(for: "org/mine", in: root)
+    try expect(fm.fileExists(atPath: mine.path), false, "its partial folder")
+    try expect(fm.fileExists(atPath: other.appendingPathComponent("e1.partial").path), true, "another model's")
+    try expect(fm.fileExists(atPath: MultiSubPaths.modelRepoDirectory(for: "org/mine", in: root).path), true,
+               "the repo folder is the caller's to delete")
+    try expect(MultiSubPaths.unfinishedDownloadBytes(for: "org/mine", in: root), 3, "only the stored file is left")
+    // Nothing there: nothing happens.
+    MultiSubPaths.removePartialDownload(for: "org/mine", in: root)
+    MultiSubPaths.removePartialDownload(for: "org/never", in: root)
+    try expect(fm.fileExists(atPath: MultiSubPaths.modelPartialRoot(in: root).path), true, ".download-tmp stays")
 }
 
 func unwrap<T>(_ value: T?, line: Int = #line) throws -> T {
@@ -266,6 +350,96 @@ for url in acceptedBaseURLs {
     ]
     let data = try JSONSerialization.data(withJSONObject: probe)
     print("PROBE " + String(decoding: data, as: UTF8.self))
+}
+
+// MARK: - Consent per custom address
+
+test("normalizedBaseURL: one address however it's typed") {
+    let cases: [(String, String?)] = [
+        ("http://localhost:1234/v1", "http://localhost:1234/v1"),
+        ("HTTP://LocalHost:1234/v1/", "http://localhost:1234/v1"),
+        ("  http://localhost:1234/v1//  ", "http://localhost:1234/v1"),
+        ("http://localhost:80/v1", "http://localhost/v1"),
+        ("https://api.example.com:443/v1", "https://api.example.com/v1"),
+        ("https://api.example.com:80/v1", "https://api.example.com:80/v1"),
+        ("http://host.example:8080/v1?x=1#f", "http://host.example:8080/v1"),
+        ("http://user:pass@host.example/v1", "http://host.example/v1"),
+        ("http://[2001:DB8::1]:1234/v1", "http://[2001:db8::1]:1234/v1"),
+        ("http://host.example", "http://host.example"),
+        ("http://host.example/", "http://host.example"),
+        ("ftp://host.example/v1", nil), ("localhost:1234/v1", nil), ("", nil), ("http:///v1", nil),
+    ]
+    for (raw, want) in cases {
+        try expect(CloudSettings.normalizedBaseURL(raw), want, raw.debugDescription)
+    }
+}
+
+test("consentKey: a named provider by name, a custom server by its address") {
+    try expect(MultiSubConfig.consentKey(for: .openai, baseURL: ""), "openai")
+    try expect(MultiSubConfig.consentKey(for: .anthropic, baseURL: "http://localhost:1234/v1"), "anthropic",
+               "a saved custom address doesn't matter to a named provider")
+    try expect(MultiSubConfig.consentKey(for: .custom, baseURL: "HTTP://LocalHost:1234/v1/"),
+               "custom:http://localhost:1234/v1")
+    try expect(MultiSubConfig.consentKey(for: .custom, baseURL: ""), nil, "no address, nothing to agree to")
+    try expect(MultiSubConfig.consentKey(for: .custom, baseURL: "localhost:1234"), nil, "not http(s)")
+}
+
+test("agreeing to one custom address covers it typed differently, not another server") {
+    var config = MultiSubConfig()
+    config.recordCloudConsent(for: .custom, baseURL: "http://localhost:1234/v1", at: 1)
+    try expect(config.hasCloudConsent(for: .custom, baseURL: "HTTP://localhost:1234/v1/"), true, "same address")
+    try expect(config.hasCloudConsent(for: .custom, baseURL: "http://localhost:1234/v2"), false, "another path")
+    try expect(config.hasCloudConsent(for: .custom, baseURL: "http://localhost:5678/v1"), false, "another port")
+    try expect(config.hasCloudConsent(for: .custom, baseURL: "https://llm.example.com/v1"), false, "another host")
+    try expect(config.hasCloudConsent(for: .openai, baseURL: ""), false, "a named provider needs its own")
+    try expect(config.hasCloudConsent(for: CloudSettings(provider: .custom, baseURL: "http://localhost:1234/v1")), true)
+    config.recordCloudConsent(for: .custom, baseURL: "", at: 2)
+    try expect(config.cloudConsent, ["custom:http://localhost:1234/v1": 1], "no address records nothing")
+    config.recordCloudConsent(for: .custom, baseURL: "https://llm.example.com/v1", at: 3)
+    config.recordCloudConsent(for: .openai, baseURL: "http://ignored.example", at: 4)
+    try expect(config.consentedCustomBaseURLs, ["http://localhost:1234/v1", "https://llm.example.com/v1"])
+    try expect(config.hasCloudConsent(for: .openai, baseURL: ""), true)
+}
+
+func decodeConfig(_ json: String) throws -> MultiSubConfig {
+    try JSONDecoder().decode(MultiSubConfig.self, from: Data(json.utf8))
+}
+
+test("an older build's plain \"custom\" consent moves to the base URL saved with it") {
+    let config = try decodeConfig("""
+        {"cloud": {"provider": "custom", "baseURL": "HTTP://LocalHost:1234/v1/"},
+         "cloudConsent": {"custom": 1700000000000, "openai": 5}}
+        """)
+    try expect(config.cloudConsent, ["custom:http://localhost:1234/v1": 1700000000000, "openai": 5])
+    try expect(config.hasCloudConsent(for: config.cloud), true)
+    try expect(config.hasCloudConsent(for: .custom, baseURL: "http://other.example/v1"), false,
+               "it covers the saved address only")
+    // The next write stores the moved key, so reading it back has nothing left to move.
+    let reread = try JSONDecoder().decode(MultiSubConfig.self, from: JSONEncoder().encode(config))
+    try expect(reread.cloudConsent, config.cloudConsent, "written and read back")
+}
+
+test("legacy \"custom\" consent: dropped without a usable address, never over a newer one") {
+    let noURL = try decodeConfig("""
+        {"cloud": {"provider": "custom", "baseURL": ""}, "cloudConsent": {"custom": 1, "gemini": 2}}
+        """)
+    try expect(noURL.cloudConsent, ["gemini": 2], "no saved address")
+    let badURL = try decodeConfig("""
+        {"cloud": {"provider": "custom", "baseURL": "localhost:1234"}, "cloudConsent": {"custom": 1}}
+        """)
+    try expect(badURL.cloudConsent, [:], "an address that isn't http(s)")
+    let both = try decodeConfig("""
+        {"cloud": {"provider": "custom", "baseURL": "http://localhost:1234/v1"},
+         "cloudConsent": {"custom": 1, "custom:http://localhost:1234/v1": 9}}
+        """)
+    try expect(both.cloudConsent, ["custom:http://localhost:1234/v1": 9], "the per-address record wins")
+    // The base URL is kept across provider changes, so it still names the
+    // server that consent was given for.
+    let switched = try decodeConfig("""
+        {"cloud": {"provider": "openai", "baseURL": "http://localhost:1234/v1"}, "cloudConsent": {"custom": 1}}
+        """)
+    try expect(switched.cloudConsent, ["custom:http://localhost:1234/v1": 1], "provider switched away")
+    try expect(try decodeConfig("{}").cloudConsent, [:], "no consent at all")
 }
 
 print("RESULT {\"passed\":\(passed),\"failed\":\(failed)}")
