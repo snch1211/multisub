@@ -1,0 +1,17 @@
+{
+  "name": "extension reloaded under the open tab: the new content script takes over; turned off: Netflix's own subtitles come back",
+  "settings": { "enabled": true, "mode": "netflix", "targetLang": "zh-TW", "annotateLevel": "B1",
+                "fontScale": 1, "bottomOffset": 10, "mergedMode": true, "prefsUpdatedAt": 1 },
+  "checkpoints": [
+    { "time": 2, "expect": { "original": "Welcome back to the laboratory.", "text": "歡迎回到實驗室。",
+                             "overlays": 1, "overlaysInDOM": 1, "nativeHidden": true } },
+    { "time": 6, "action": "reload-extension", "snapshot": true, "waitMs": 8000,
+      "settings": { "enabled": true, "mode": "translate", "targetLang": "zh-TW", "annotateLevel": "B1",
+                    "fontScale": 1, "bottomOffset": 10, "mergedMode": true, "prefsUpdatedAt": 2 },
+      "expect": { "original": "Everything depends on this experiment.", "text": "[zh] Everything depends on this experiment.",
+                  "overlays": 1, "overlaysInDOM": 1, "nativeHidden": true } },
+    { "time": 10, "action": "unload-extension", "waitMs": 4000,
+      "expect": { "overlays": 0, "overlaysInDOM": 0, "nativeHidden": false, "nativeVisible": true } }
+  ],
+  "native": { "ping": ">=2", "translate": ">=1", "annotate": 0 }
+}

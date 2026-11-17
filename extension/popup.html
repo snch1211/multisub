@@ -1,12 +1,13 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-Hant-TW">
 <head>
   <meta charset="utf-8">
   <meta name="color-scheme" content="light dark">
+  <title>MultiSub</title>
   <link rel="stylesheet" href="popup.css">
 </head>
-<body>
-  <header>
+<body class="loading">
+  <header class="header">
     <div class="brand">
       <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
         <rect x="6" y="24" width="52" height="14" rx="5" fill="currentColor" class="logo-bar-a"/>
@@ -15,56 +16,98 @@
       <h1>MultiSub</h1>
     </div>
     <label class="switch">
-      <input type="checkbox" id="enabled">
-      <span class="slider"></span>
+      <input type="checkbox" id="enabled" role="switch" aria-label="啟用 MultiSub">
+      <span class="slider" aria-hidden="true"></span>
     </label>
   </header>
+  <p id="loadingNote" class="loading-note" role="status">載入中…</p>
 
-  <section class="card">
-    <label for="targetLang">翻譯成</label>
-    <select id="targetLang">
-      <option value="zh-TW">繁體中文</option>
-      <option value="zh-CN">简体中文</option>
-      <option value="en">English</option>
-      <option value="ja">日本語</option>
-      <option value="ko">한국어</option>
-      <option value="es">Español</option>
-      <option value="fr">Français</option>
-      <option value="de">Deutsch</option>
-      <option value="pt">Português</option>
-      <option value="vi">Tiếng Việt</option>
-      <option value="th">ไทย</option>
-      <option value="id">Bahasa Indonesia</option>
-    </select>
-    <div id="trackSection" class="control-group" hidden>
-      <label for="sourceTrack">來源字幕軌</label>
-      <select id="sourceTrack"></select>
+  <div id="banner" class="banner" role="status" hidden>
+    <p id="bannerText" class="banner-text"></p>
+    <button type="button" id="bannerAction" class="banner-button" hidden></button>
+  </div>
+
+  <section id="main" class="card">
+    <div id="modeSwitch" class="segmented" role="radiogroup" aria-label="字幕模式"></div>
+    <p id="modeDesc" class="mode-desc"></p>
+    <div class="field-row">
+      <label for="targetLang">第二語言</label>
+      <select id="targetLang"></select>
+    </div>
+    <div class="field-row" id="levelField" hidden>
+      <label for="annotateLevel">程度</label>
+      <select id="annotateLevel"></select>
+    </div>
+    <div class="status-line" role="status" aria-live="polite">
+      <span id="statusText" class="status-text">—</span>
+      <button type="button" id="statusAction" class="link-button" hidden></button>
     </div>
   </section>
 
-  <section class="card">
-    <label for="fontScale">第二字幕大小 <span id="fontScaleValue"></span></label>
-    <input type="range" id="fontScale" min="0.5" max="2" step="0.05">
-    <div class="control-group">
-      <label for="bottomOffset">垂直位置（距底部）<span id="bottomOffsetValue"></span></label>
-      <input type="range" id="bottomOffset" min="0" max="40" step="1">
+  <!-- AI engine (translate / annotate only): what it is, or a way to the
+       app to set one up. The setup itself lives in the app. -->
+  <section id="engineCard" class="card" hidden aria-labelledby="engineTitle">
+    <h2 id="engineTitle" class="card-title">AI 引擎</h2>
+    <div id="engineSummary" class="engine-summary" hidden>
+      <span id="engineSummaryText" class="engine-summary-text"></span>
+      <button type="button" id="engineChange" class="link-button" title="在 MultiSub App 變更 AI 引擎">到 App 變更</button>
     </div>
-    <label class="drag-toggle"><input type="checkbox" id="dragMode"> 在 Netflix 影片上拖曳定位</label>
-    <label class="drag-toggle"><input type="checkbox" id="mergedMode"> 隱藏原生字幕，顯示雙語合併</label>
+    <div id="engineSetup" class="engine-setup" hidden>
+      <p id="engineSetupText" class="engine-setup-text"></p>
+      <button type="button" id="engineOpenApp" class="primary-button">打開 MultiSub App 設定</button>
+    </div>
+    <p id="engineNotice" class="engine-notice" role="status" aria-live="polite" hidden></p>
   </section>
 
-  <section class="card">
-    <button type="button" id="openStyles" class="secondary-button">進階樣式設定…</button>
-    <div id="openStylesHint"></div>
-    <button type="button" id="organizeVocab" class="secondary-button control-group" disabled>整理本集單字</button>
-    <div id="organizeVocabHint"></div>
+  <details id="displaySettings" class="card details">
+    <summary>顯示設定</summary>
+    <!-- One row per setting: open, this section still has to fit in Safari's
+         popover (about 600 px tall) together with everything above it. -->
+    <div class="details-body">
+      <div class="slider-row">
+        <label for="fontScale">字幕大小</label>
+        <input type="range" id="fontScale" min="0.5" max="2" step="0.05">
+        <span id="fontScaleValue" class="value" aria-hidden="true"></span>
+      </div>
+      <div class="slider-row" title="字幕離影片底部的距離">
+        <label for="bottomOffset">垂直位置</label>
+        <input type="range" id="bottomOffset" min="0" max="40" step="1">
+        <span id="bottomOffsetValue" class="value" aria-hidden="true"></span>
+      </div>
+      <div class="check-group">
+        <label class="check-row"><input type="checkbox" id="mergedMode"> 雙語合併顯示</label>
+        <label class="check-row"><input type="checkbox" id="dragMode"> 拖曳字幕調整位置</label>
+      </div>
+      <div class="field-row" id="trackField" hidden>
+        <label for="sourceTrack">原文字幕</label>
+        <select id="sourceTrack"></select>
+      </div>
+      <div class="details-links">
+        <button type="button" id="openStyles" class="link-button small">更多字幕樣式…</button>
+      </div>
+      <p id="openStylesHint" class="hint"></p>
+    </div>
+  </details>
+
+  <section id="vocabSection" class="vocab">
+    <button type="button" id="organizeVocab" class="secondary-button" title="把這集的英文生字整理進 App 的生詞本" disabled>整理本集單字</button>
+    <p id="organizeVocabHint" class="hint"></p>
+    <!-- Where the app's organizing stands for this episode (vocab-status). -->
+    <div id="vocabStatus" class="vocab-status" role="status" aria-live="polite" hidden>
+      <span id="vocabSpinner" class="spinner" aria-hidden="true" hidden></span>
+      <div class="vocab-status-body">
+        <p id="vocabStatusText" class="vocab-status-text"></p>
+        <p id="vocabStatusSub" class="vocab-status-sub"></p>
+        <button type="button" id="openVocab" class="link-button small" hidden>打開生詞本</button>
+      </div>
+    </div>
   </section>
 
-  <section class="status">
-    <div id="episodeStatus">—</div>
-    <div id="nativeStatus">檢查主程式中…</div>
-  </section>
+  <footer class="footer">
+    <button type="button" id="openNetflix" class="link-button small" hidden>開啟 Netflix</button>
+  </footer>
 
+  <script src="shared.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

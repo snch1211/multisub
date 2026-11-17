@@ -28,3 +28,6 @@ scripts/dmg-assets/dmg-background.png
 
 # Node (only used for `node --check`, no deps expected)
 node_modules/
+
+# Local secrets for manual testing (API keys)
+.env

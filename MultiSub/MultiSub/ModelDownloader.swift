@@ -2,9 +2,8 @@
 //  ModelDownloader.swift
 //  MultiSub
 //
-//  S1 (PLAN.md Phase S): swift-huggingface's bundled download path gets stuck
-//  around 1% on large (multi-GB) LFS files on flaky connections. Root cause
-//  (see memory model-download-xet-cdn-resume-bug / CLAUDE.md 已知缺陷): its
+//  swift-huggingface's bundled download path gets stuck around 1% on large
+//  (multi-GB) LFS files on flaky connections. Root cause: its
 //  `URLSession.download(for:delegate:)` call writes partial data to a private
 //  system temp file that's discarded when the connection drops, and is never
 //  persisted to `incompleteBlobPath` — so every retry restarts from byte 0.
@@ -14,12 +13,25 @@
 //  file we own (resumed via `Range` headers), then hands off to `HubCache`'s
 //  own public `storeFile` API to place it under the exact
 //  `blobs/<etag>` + `snapshots/<commit>/<filename>` layout `HubClient`
-//  expects. `Translator.loadModel` (unchanged) then finds every matching file
-//  already cached via `HubClient+Files.swift`'s per-file fast path and does
-//  zero network I/O for the weights.
+//  expects. The files it sets out to fetch are recorded first
+//  (`MultiSubPaths.recordExpectedFiles`), and the snapshot counts as complete
+//  only once all of them are there. `Translator.loadModel` then finds it
+//  complete on disk (`MultiSubPaths.modelSnapshotDirectory`) and loads it
+//  from there with no network I/O at all.
 //
-//  App target only — the extension never downloads (`Translator.translate`
-//  always calls `loadModel(allowDownload: false)`).
+//  A download that stops (an error, or the app quitting) resumes on the next
+//  attempt, in this run or a later one: files already in the snapshot are
+//  skipped, and the file that was in flight waits as a `.partial` in the
+//  model's own folder under `models/.download-tmp/`
+//  (`MultiSubPaths.modelPartialDirectory`), which is removed once every file
+//  is stored, or when 一般設定 deletes the model (`removePartialDownload`).
+//  What both folders hold until then is what 一般設定 shows as
+//  下載未完成 (`MultiSubPaths.unfinishedDownloadBytes`).
+//
+//  App target only — the extension never downloads (every `Translator`
+//  request loads the model with `allowDownload: false`). Besides this
+//  download, only `estimatedSize` (a row showing a model that isn't
+//  downloaded yet) contacts Hugging Face.
 //
 
 import CryptoKit
@@ -95,31 +107,57 @@ enum ModelDownloader {
             throw DownloadError(message: "無法解析 \(modelID) 的版本")
         }
 
-        // Unique per call (not a shared ".download-tmp"): with concurrent
-        // downloads of different models now possible (ModelDownloadManager),
-        // a shared temp dir meant one model finishing would `defer`-delete
-        // the *other* model's still-in-flight partial files out from under
-        // it — and two models that happen to share an identical small file
-        // (e.g. the same tokenizer config) would race on the same
-        // etag-named partial path. Verified against the real symptom: two
-        // concurrent downloads, one file in the second model ends up with
-        // actual size 0.
-        let tempDir = MultiSubPaths.modelsRoot.appendingPathComponent(".download-tmp", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        // Before the first file is stored: the model counts as downloaded
+        // only once every file listed here is in the snapshot, so a
+        // download cut short on any file (the small tokenizer_config.json
+        // listed last included) can't pass for a finished one. Every attempt
+        // writes it again; the same commit lists the same files.
+        try MultiSubPaths.recordExpectedFiles(files.map(\.entry.path), modelID: modelID, commit: commitHash)
+
+        // One folder per model, kept from one attempt (and one app run) to
+        // the next: a download that failed, or an app that quit halfway,
+        // picks up where it stopped. Files already in the snapshot are
+        // skipped below, and `downloadResumable` resumes whatever `.partial`
+        // file is already here. It goes once every file is in the cache.
+        // Per model, not shared: one model finishing must not delete
+        // another's files still in flight, and two models with an identical
+        // small file (the same tokenizer config) must not write the same
+        // etag-named partial. ModelDownloadManager never runs two downloads
+        // of the same model at once.
+        removeAbandonedTempDirs()
+        let tempDir = MultiSubPaths.modelPartialDirectory(for: modelID)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        func isStored(_ path: String) -> Bool {
+            cache.cachedFilePath(repo: repo, kind: .model, revision: commitHash, filename: path) != nil
+        }
+        func partialFile(etag: String) -> URL {
+            tempDir.appendingPathComponent(cache.normalizeEtag(etag) + ".partial")
+        }
+
+        // Refuse up front what the disk can't hold, rather than fill it to
+        // the last byte and fail partway (the write then fails with the
+        // same message). Counts only what is left to fetch. A volume that
+        // doesn't say, or says 0, is left to that first write.
+        let bytesLeft = files.reduce(Int64(0)) { sum, file in
+            isStored(file.entry.path) ? sum : sum + max(0, file.size - fileSize(at: partialFile(etag: file.etag)))
+        }
+        if let available = try? tempDir.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            .volumeAvailableCapacityForImportantUsage, available > 0, bytesLeft > available {
+            throw DownloadWriteError(underlying: CocoaError(.fileWriteOutOfSpace))
+        }
 
         let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
         let tracker = ProgressTracker(totalBytes: totalBytes, onFraction: progress)
 
         for file in files {
             // Already cached from an earlier attempt (this run or a prior one).
-            if cache.cachedFilePath(repo: repo, kind: .model, revision: commitHash, filename: file.entry.path) != nil {
+            if isStored(file.entry.path) {
                 tracker.fileCompleted(bytes: file.size)
                 continue
             }
 
-            let partialURL = tempDir.appendingPathComponent(cache.normalizeEtag(file.etag) + ".partial")
+            let partialURL = partialFile(etag: file.etag)
             try await downloadResumable(
                 repo: repo, filePath: file.entry.path, revision: commitHash,
                 to: partialURL, expectedSize: file.size, verifySHA256: file.isLFS ? file.etag : nil
@@ -134,6 +172,27 @@ enum ModelDownloader {
             try? FileManager.default.removeItem(at: partialURL)
 
             tracker.fileCompleted(bytes: file.size)
+        }
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    /// Deletes what an unfinished download of `modelID` kept for resuming
+    /// (`MultiSubPaths.modelPartialDirectory`). 一般設定 calls this when it
+    /// deletes a model, downloaded or not, and never while that model is
+    /// downloading.
+    static func removePartialDownload(modelID: String) {
+        MultiSubPaths.removePartialDownload(for: modelID)
+    }
+
+    /// Builds before resumable folders used a fresh UUID-named folder per
+    /// attempt and left it behind when the app quit mid-download. Nothing
+    /// can resume from those any more; they only take up disk space.
+    private static func removeAbandonedTempDirs() {
+        let fm = FileManager.default
+        let tempRoot = MultiSubPaths.modelPartialRoot()
+        guard let names = try? fm.contentsOfDirectory(atPath: tempRoot.path) else { return }
+        for name in names where UUID(uuidString: name) != nil {
+            try? fm.removeItem(at: tempRoot.appendingPathComponent(name, isDirectory: true))
         }
     }
 
@@ -172,7 +231,8 @@ enum ModelDownloader {
 
     /// Downloads a single file to `destination`, resuming via `Range` headers
     /// against whatever `destination` already contains, retrying transient
-    /// failures. `verifySHA256`, when given (LFS files only — the etag *is*
+    /// failures (a file it can't write, `DownloadWriteError`, is reported at
+    /// once). `verifySHA256`, when given (LFS files only — the etag *is*
     /// the sha256 for those, unlike small git-native files), is checked
     /// against the fully-downloaded bytes before returning.
     private static func downloadResumable(
@@ -202,6 +262,10 @@ enum ModelDownloader {
                 try await runDownload(request: request, to: destination, resumeOffset: existing, onBytes: onBytes)
                 lastError = nil
                 break
+            } catch let error as DownloadWriteError {
+                // A full disk stays full: say so now, not 20 attempts
+                // later. What was written waits for 繼續下載.
+                throw error
             } catch {
                 lastError = error
                 if attempt == maxAttempts { break }
@@ -210,22 +274,28 @@ enum ModelDownloader {
         }
         if let lastError { throw lastError }
 
+        // A file that is too short is kept: the next attempt resumes it. One
+        // that is too long, or whose bytes don't check out, can't be
+        // repaired by resuming, so it goes and that file starts over.
         let finalSize = fileSize(at: destination)
         if expectedSize > 0, finalSize != expectedSize {
+            if finalSize > expectedSize { try? FileManager.default.removeItem(at: destination) }
             throw DownloadError(message: "\(filePath) 下載大小不符（預期 \(expectedSize)，實際 \(finalSize)）")
         }
         if let verifySHA256 {
             let normalized = verifySHA256.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
                 .replacingOccurrences(of: "W/", with: "")
             guard normalized.count == 64, let actual = try? sha256Hex(of: destination), actual == normalized else {
+                try? FileManager.default.removeItem(at: destination)
                 throw DownloadError(message: "\(filePath) 的 SHA256 驗證失敗，檔案可能損毀")
             }
         }
     }
 
     /// One attempt: streams the response body directly into `destination` via
-    /// a data-task delegate — never through a system-managed temp file, which
-    /// is exactly the mechanism that loses partial downloads on disconnect.
+    /// a data-task delegate (`StreamingDownloadDelegate`) — never through a
+    /// system-managed temp file, which is exactly the mechanism that loses
+    /// partial downloads on disconnect.
     private static func runDownload(
         request: URLRequest, to destination: URL, resumeOffset: Int64,
         onBytes: @escaping @Sendable (Int64) -> Void
@@ -257,70 +327,5 @@ enum ModelDownloader {
             hasher.update(data: chunk)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
-    }
-}
-
-/// Streams a data task's response body straight to a file handle we control,
-/// resuming an existing `.partial` file when the server honors our `Range`
-/// request (HTTP 206). If it ignores `Range` and returns 200 instead, we
-/// truncate and restart that file fresh rather than risk appending full
-/// content onto a partial one.
-private final class StreamingDownloadDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    private let destination: URL
-    private let resumeOffset: Int64
-    private let onBytes: (Int64) -> Void
-    private var handle: FileHandle?
-    private var written: Int64 = 0
-    private var statusCode: Int?
-    var completion: ((Result<Void, Error>) -> Void)?
-
-    init(destination: URL, resumeOffset: Int64, onBytes: @escaping (Int64) -> Void) {
-        self.destination = destination
-        self.resumeOffset = resumeOffset
-        self.onBytes = onBytes
-    }
-
-    func urlSession(
-        _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
-        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
-    ) {
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            statusCode = (response as? HTTPURLResponse)?.statusCode
-            completionHandler(.cancel)
-            return
-        }
-        statusCode = http.statusCode
-        let isResuming = resumeOffset > 0 && http.statusCode == 206
-        if !isResuming {
-            FileManager.default.createFile(atPath: destination.path, contents: nil)
-            written = 0
-        } else {
-            written = resumeOffset
-        }
-        guard let handle = try? FileHandle(forWritingTo: destination) else {
-            completionHandler(.cancel)
-            return
-        }
-        if isResuming { handle.seekToEndOfFile() }
-        self.handle = handle
-        completionHandler(.allow)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        handle?.write(data)
-        written += Int64(data.count)
-        onBytes(written)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        try? handle?.close()
-        if let error {
-            completion?(.failure(error))
-        } else if let statusCode, (200..<300).contains(statusCode) {
-            completion?(.success(()))
-        } else {
-            completion?(.failure(ModelDownloader.DownloadError(message: "HTTP \(statusCode ?? -1)")))
-        }
-        completion = nil
     }
 }

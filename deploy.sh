@@ -11,7 +11,7 @@
 #
 # Usage:
 #   ./deploy.sh            dev install: Debug build → /Applications (default)
-#   ./deploy.sh --release  R3 packaging: Release build → build/MultiSub.app
+#   ./deploy.sh --release  packaging: Release build → build/MultiSub.app
 #                          (does NOT install to /Applications or touch Safari;
 #                           feed the result to scripts/make-dmg.sh)
 #
@@ -21,19 +21,30 @@ REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$REPO_DIR/MultiSub"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
-# ── R3: Release build for DMG packaging ──────────────────────────────────────
-# Uses the same mandatory flags as the Debug path (see CLAUDE.md), only with
-# -configuration Release. Route 1 (free signing) — no hardened runtime / no
+# Every build gets a build number (CFBundleVersion) of its own, so Safari
+# always sees an update and reloads the extension's files instead of going on
+# with the ones it has from the previous build of the same version. The
+# version (CFBundleShortVersionString, and the extension's manifest version)
+# stays as set in the project. Same scheme as scripts/archive-appstore.sh
+# (YYYYMMDDHHMM), plus the seconds as a second component, so two builds in one
+# minute still differ and the numbers keep sorting with the App Store ones.
+# Override with BUILD_NUMBER=… if needed.
+BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M.%-S)}"
+
+# ── Release build for DMG packaging ──────────────────────────────────────────
+# Uses the same mandatory flags as the Debug path below, only with
+# -configuration Release. Free signing — no hardened runtime / no
 # notarization. Stages a clean copy at build/MultiSub.app and stops there.
 if [ "${1:-}" = "--release" ]; then
   OUT_DIR="$REPO_DIR/build"
   echo "▶︎ (1/3) 建置 App（Release，第一次或大改動可能要幾分鐘）…"
   cd "$PROJECT_DIR"
   xcodebuild -project MultiSub.xcodeproj -scheme MultiSub -configuration Release \
-    ENABLE_DEBUG_DYLIB=NO -skipPackagePluginValidation -skipMacroValidation \
+    ENABLE_DEBUG_DYLIB=NO CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+    -skipPackagePluginValidation -skipMacroValidation \
     -allowProvisioningUpdates build >/tmp/multisub-build.log 2>&1 \
     || { echo "✗ 建置失敗，詳見 /tmp/multisub-build.log"; tail -20 /tmp/multisub-build.log; exit 1; }
-  echo "  ✓ BUILD SUCCEEDED"
+  echo "  ✓ BUILD SUCCEEDED (build $BUILD_NUMBER)"
 
   BUILT_APP="$(ls -td ~/Library/Developer/Xcode/DerivedData/MultiSub-*/Build/Products/Release/MultiSub.app 2>/dev/null | head -1)"
   if [ -z "$BUILT_APP" ] || [ ! -d "$BUILT_APP" ]; then
@@ -62,10 +73,11 @@ fi
 echo "▶︎ (1/5) 建置 App（第一次或大改動可能要幾分鐘）…"
 cd "$PROJECT_DIR"
 xcodebuild -project MultiSub.xcodeproj -scheme MultiSub -configuration Debug \
-  ENABLE_DEBUG_DYLIB=NO -skipPackagePluginValidation -skipMacroValidation \
+  ENABLE_DEBUG_DYLIB=NO CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+  -skipPackagePluginValidation -skipMacroValidation \
   -allowProvisioningUpdates build >/tmp/multisub-build.log 2>&1 \
   || { echo "✗ 建置失敗，詳見 /tmp/multisub-build.log"; tail -20 /tmp/multisub-build.log; exit 1; }
-echo "  ✓ BUILD SUCCEEDED"
+echo "  ✓ BUILD SUCCEEDED (build $BUILD_NUMBER)"
 
 # Find the freshly built app inside Xcode's hidden build folder (DerivedData).
 BUILT_APP="$(ls -td ~/Library/Developer/Xcode/DerivedData/MultiSub-*/Build/Products/Debug/MultiSub.app 2>/dev/null | head -1)"
@@ -87,12 +99,16 @@ echo "▶︎ (4/5) 驗證簽章 + 只登錄 /Applications 這一份（移除 Der
 codesign --verify --deep --strict /Applications/MultiSub.app \
   && echo "  ✓ 簽章有效" || { echo "✗ 簽章驗證失敗"; exit 1; }
 "$LSREGISTER" -u "$BUILT_APP" >/dev/null 2>&1 || true   # unregister the temp copy
+# Delete it too: if anything launches the DerivedData copy later (Xcode's Run,
+# a script, Spotlight), LaunchServices registers it again and Safari lists a
+# second MultiSub that can't reach its app. The next build recreates it.
+rm -rf "$BUILT_APP"
 "$LSREGISTER" -f /Applications/MultiSub.app             # register the real one
 
 echo "▶︎ (5/5) 完成 ✓"
 echo ""
-echo "接下來要讓 Safari 載入新版："
-echo "  1. Safari 設定 → 擴充功能 → MultiSub 取消勾選再重新勾選（重載資源）"
-echo "  2. Netflix 分頁按 ⌘R 重新整理"
+echo "每次建置的版本號都不同，Safari 會自己載入新版。接下來："
+echo "  1. Netflix 分頁按 ⌘R 重新整理"
+echo "  2. 選單看起來還是舊的，再到 Safari 設定 → 延伸功能，把 MultiSub 取消勾選再勾回來"
 echo ""
 echo "只是想用 App：⌘空白鍵 打 MultiSub 開啟即可，不用進 Xcode。"

@@ -1,0 +1,48 @@
+// MultiSub.xcconfig — build settings shared by the app and the Safari extension.
+//
+// Everything that identifies *who* is building lives here as a variable, so a
+// fresh clone builds under any Apple developer team without touching the
+// project file. Override the values for your machine in Local.xcconfig
+// (gitignored; copy Local.xcconfig.example to start).
+
+// Bundle ID of the host app. The Safari extension is "<this>.Extension".
+// Bundle IDs are globally unique per Apple team, so anyone who is not the
+// original author must pick their own (e.g. com.yourname.multisub).
+MULTISUB_BUNDLE_ID = com.seanhuang.multisub
+
+// Your 10-character Apple Team ID (Xcode ▸ Settings ▸ Accounts). Empty here on
+// purpose: set it in Local.xcconfig.
+DEVELOPMENT_TEAM =
+
+// MLX only runs on Apple silicon, so there is no Intel slice to build.
+ARCHS = arm64
+
+// Distribution channel. "direct" (DMG from GitHub Releases) keeps the in-app
+// update checker; scripts/archive-appstore.sh switches this to "appstore",
+// which compiles the updater out and uses the App Store entitlements.
+MULTISUB_DISTRIBUTION = direct
+MULTISUB_APP_ENTITLEMENTS_direct = MultiSub/MultiSub.entitlements
+MULTISUB_APP_ENTITLEMENTS_appstore = MultiSub/MultiSub-AppStore.entitlements
+MULTISUB_SWIFT_FLAGS_direct =
+MULTISUB_SWIFT_FLAGS_appstore = APP_STORE
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(MULTISUB_SWIFT_FLAGS_$(MULTISUB_DISTRIBUTION))
+
+// App icon per channel. The App Store icon avoids a lone "N" letterform so the
+// listing can't be mistaken for Netflix's mark (App Review guideline 4.1).
+MULTISUB_APP_ICON_direct = AppIcon
+MULTISUB_APP_ICON_appstore = AppIconStore
+
+// Linked from the app's 一般設定 › 關於 (App Review guideline 5.1.1 asks for
+// the privacy policy inside the app). `/$()/` keeps xcconfig from reading
+// "//" as a comment.
+MULTISUB_PRIVACY_URL = https:/$()/github.com/ncchen99/Multisub/blob/main/PRIVACY.md
+MULTISUB_SOURCE_URL = https:/$()/github.com/snch1211/multisub
+
+// Only the OS's own TLS (URLSession) is used, which is exempt from export
+// documentation; this skips the encryption questionnaire on every upload.
+INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO
+
+// Required for Mac App Store uploads (ITMS-90242); matches the Education listing.
+INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.education
+
+#include? "Local.xcconfig"

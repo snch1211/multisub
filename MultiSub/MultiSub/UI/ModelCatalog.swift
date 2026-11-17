@@ -2,7 +2,7 @@
 //  ModelCatalog.swift
 //  MultiSub
 //
-//  C3: curated list of Gemma 4 4-bit quantized models shown in
+//  Curated list of Gemma 4 4-bit quantized models shown in
 //  GeneralSettingsView's model picker, plus the device-memory tiering used
 //  to warn about / block models too large for this machine. IDs were given
 //  directly by the user, not independently verified against Hugging Face
@@ -32,36 +32,57 @@ enum ModelMemoryTier {
 }
 
 extension ModelCatalog {
-    /// C3: models present under the shared `models/` directory (whether
+    /// Models present under the shared `models/` directory (whether
     /// downloaded through the picker or dropped in manually by the user via
     /// "在 Finder 中打開模型資料夾") that aren't already one of the curated
     /// `entries` — so a manually-installed model still shows up somewhere.
-    /// Best-effort reverse of `"models--" + id.replacingOccurrences(of: "/",
-    /// with: "--")`: splits the dir name on the *first* "--" only, which is
-    /// lossy if an org or model name itself contains "--", but matches every
-    /// real repo id this project deals with.
+    /// One that isn't complete (a download cut short, or a copy missing a
+    /// file) is listed too, under 「可下載的模型」 marked 下載未完成, so its
+    /// files can still be deleted from the app; so is one whose only
+    /// leftovers are in its partial folder (`MultiSubPaths.modelIDsOnDisk`).
     static func discoverExtraModels() -> [ModelCatalogEntry] {
         let knownIDs = Set(entries.map(\.id))
-        guard let dirs = try? FileManager.default.contentsOfDirectory(
-            at: MultiSubPaths.modelsRoot, includingPropertiesForKeys: nil
-        ) else { return [] }
-        var extras: [ModelCatalogEntry] = []
-        for dir in dirs {
-            let name = dir.lastPathComponent
-            guard name.hasPrefix("models--") else { continue }
-            let rest = String(name.dropFirst("models--".count))
-            guard let separatorRange = rest.range(of: "--") else { continue }
-            let id = rest[..<separatorRange.lowerBound] + "/" + rest[separatorRange.upperBound...]
-            let id2 = String(id)
-            guard !knownIDs.contains(id2), Translator.isModelDownloaded(id2) else { continue }
-            extras.append(ModelCatalogEntry(id: id2, displayName: id2))
-        }
-        return extras
+        return MultiSubPaths.modelIDsOnDisk()
+            .filter { !knownIDs.contains($0) }
+            .map { ModelCatalogEntry(id: $0, displayName: $0) }
     }
 }
 
-/// PLAN.md C3（2026-07-05 使用者拍板）：磁碟大小 ÷ 實體記憶體 > 40% 警告、> 60% 阻擋
-/// （阻擋門檻可強制選用，需經確認 alert）。
+extension ModelCatalog {
+    static func displayName(for modelID: String) -> String {
+        entries.first { $0.id == modelID }?.displayName ?? modelID
+    }
+
+    /// Bytes on disk in a downloaded model's folder
+    /// (`MultiSubPaths.modelRepoDirectory`, the folder
+    /// `Translator.isModelDownloaded` checks). What a download cut short
+    /// left, partial folder included, is
+    /// `MultiSubPaths.unfinishedDownloadBytes`.
+    static func directorySize(modelID: String) -> Int64 {
+        let root = MultiSubPaths.modelRepoDirectory(for: modelID)
+        guard let enumerator = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: [.fileSizeKey], options: [], errorHandler: nil
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let url as URL in enumerator {
+            if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += Int64(size)
+            }
+        }
+        return total
+    }
+
+    static func formatBytes(_ bytes: Int64) -> String {
+        let kb = Double(bytes) / 1024
+        if kb < 1024 { return String(format: "%.1f KB", kb) }
+        let mb = kb / 1024
+        if mb < 1024 { return String(format: "%.1f MB", mb) }
+        return String(format: "%.2f GB", mb / 1024)
+    }
+}
+
+/// Disk size ÷ physical memory above 40% warns, above 60% blocks (a blocked
+/// model can still be forced after a confirmation alert).
 enum ModelMemoryAdvisor {
     static let warningRatio = 0.4
     static let blockedRatio = 0.6
@@ -72,5 +93,26 @@ enum ModelMemoryAdvisor {
         if ratio > blockedRatio { return .blocked }
         if ratio > warningRatio { return .warning }
         return .ok
+    }
+
+    /// Whether to ask before downloading or selecting a model of this size.
+    /// An unknown size asks too: it could be the one that doesn't fit.
+    static func needsConfirmation(diskBytes: Int64?) -> Bool {
+        guard let diskBytes else { return true }
+        return tier(diskBytes: diskBytes) == .blocked
+    }
+
+    /// Title and message of that confirmation, shared by 一般設定 and the
+    /// engine setup so both ask the same way.
+    static func confirmationTitle(sizeKnown: Bool) -> String {
+        sizeKnown ? "這個模型可能超出記憶體" : "查不到這個模型的大小"
+    }
+
+    static func confirmationMessage(sizeKnown: Bool) -> String {
+        if sizeKnown {
+            return "模型大小超過這台 Mac 記憶體的 \(Int(blockedRatio * 100))%，載入時可能讓系統變慢或當機。"
+        }
+        let memory = ModelCatalog.formatBytes(Int64(ProcessInfo.processInfo.physicalMemory))
+        return "不確定它會不會超出這台 Mac 的記憶體（\(memory)）。太大的話，載入時可能讓系統變慢或當機。"
     }
 }

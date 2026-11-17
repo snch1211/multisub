@@ -2,13 +2,12 @@
 //  CacheManagementView.swift
 //  MultiSub
 //
-//  Style guide v2 §5.3. Behavior ported from ViewController.buildCacheTab()
-//  and its neighboring methods (reloadCacheEntries/rebuildCacheRows/
-//  cacheItemDisplayTitle/deleteCacheSelected/clearAllCacheTapped) — see
-//  PLAN.md G4. Grouping rule (2+ entries per series+season get a header,
-//  singletons render flat) is unchanged; presentation swaps the AppKit
-//  hand-rolled `GroupedRow` for `Table`'s native row-grouping (`Section`
-//  inside the `rows:` builder), per style guide §4's table row.
+//  快取管理. Behavior ported from the old AppKit ViewController's cache tab
+//  (reloadCacheEntries/rebuildCacheRows/cacheItemDisplayTitle/
+//  deleteCacheSelected/clearAllCacheTapped). Grouping rule (2+ entries per
+//  series+season get a header, singletons render flat) is unchanged;
+//  presentation swaps the AppKit hand-rolled `GroupedRow` for `Table`'s
+//  native row-grouping (`Section` inside the `rows:` builder).
 //
 
 import SwiftUI
@@ -42,7 +41,10 @@ struct CacheManagementView: View {
         VStack(alignment: .leading, spacing: 16) {
             summarySection
             if entries.isEmpty {
-                ContentUnavailableView("尚無快取", systemImage: "internaldrive")
+                // What the cache is, said where it's empty rather than as a
+                // standing caption above the table.
+                ContentUnavailableView("還沒有快取", systemImage: "internaldrive",
+                                       description: Text("AI 翻譯過的字幕會存在這裡，重看時不用再翻。"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 table
@@ -55,14 +57,20 @@ struct CacheManagementView: View {
 
     // MARK: - Sections
 
+    /// Totals and sync time on the left, refresh on the right.
     private var summarySection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("共 \(entries.count) 集・共 \(Self.formatBytes(totalBytes))")
-            Text(stalenessOverride ?? Self.stalenessText(syncedAt))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button("重新整理") { reload() }
-                .padding(.top, 4)
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(entries.count) 集・\(Self.formatBytes(totalBytes))")
+                    .font(.headline)
+                Text(stalenessOverride ?? Self.stalenessText(syncedAt))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("重新整理", systemImage: "arrow.clockwise") { reload() }
+                .labelStyle(.iconOnly)
+                .help("重新整理")
         }
     }
 
@@ -102,8 +110,9 @@ struct CacheManagementView: View {
                 ) {
                     Button("刪除", role: .destructive) { deleteSelected() }
                 } message: {
-                    Text("刪除會排入佇列，下次 Safari 擴充功能同步時才會實際生效（通常在你回到 Netflix 播放頁或打開 popup 後數秒到一分鐘內）。")
+                    Text(Self.deleteTiming)
                 }
+            Spacer()
             Button("清除全部快取") { showClearAllConfirm = true }
                 .confirmationDialog(
                     "確定要清除全部 \(entries.count) 集快取嗎？",
@@ -111,7 +120,7 @@ struct CacheManagementView: View {
                 ) {
                     Button("清除全部", role: .destructive) { clearAll() }
                 } message: {
-                    Text("此動作無法復原。刪除會排入佇列，下次 Safari 擴充功能同步時才會實際生效。")
+                    Text("無法復原。" + Self.deleteTiming)
                 }
         }
     }
@@ -135,7 +144,7 @@ struct CacheManagementView: View {
         // real the next time it pings and pushes a fresh index.
         entries.removeAll { keys.contains(CacheGroupKey(movieId: $0.movieId, targetLang: $0.targetLang, sourceLang: $0.sourceLang)) }
         selection.removeAll()
-        stalenessOverride = "已排入清除佇列，實際生效需等 Safari 擴充功能下次同步"
+        stalenessOverride = Self.queuedNote
     }
 
     private func clearAll() {
@@ -143,8 +152,13 @@ struct CacheManagementView: View {
         CacheSync.queueDelete(CacheDeleteRequest(clearAll: true, groups: []))
         entries = []
         selection.removeAll()
-        stalenessOverride = "已排入清除佇列，實際生效需等 Safari 擴充功能下次同步"
+        stalenessOverride = Self.queuedNote
     }
+
+    /// The cache lives in the extension's storage, so a delete waits for its
+    /// next sync (a Netflix watch page or the popup, within about a minute).
+    private static let deleteTiming = "下次打開 Netflix 或 MultiSub 選單時才會真正刪除。"
+    private static let queuedNote = "已排入刪除，下次同步時生效"
 
     // MARK: - Grouping (rule ported from ViewController.rebuildCacheRows; see EpisodeGrouping.swift)
 
@@ -172,13 +186,13 @@ struct CacheManagementView: View {
 
     private static func stalenessText(_ syncedAt: Date?) -> String {
         guard let syncedAt else {
-            return "尚未收到 Safari 擴充功能的同步資料——開啟 Netflix 播放頁或點開 popup 後再回來按「重新整理」"
+            return "還沒同步。打開 Netflix 或 MultiSub 選單後，再回來重新整理。"
         }
         let formatter = DateFormatter()
         formatter.dateStyle = .none
         formatter.timeStyle = .short
         formatter.locale = Locale(identifier: "zh_TW")
-        return "資料來自 Safari 擴充功能同步，非即時。最後同步：\(formatter.string(from: syncedAt))"
+        return "最後同步：\(formatter.string(from: syncedAt))"
     }
 
     private static func formatBytes(_ bytes: Int) -> String {

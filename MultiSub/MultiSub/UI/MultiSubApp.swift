@@ -2,10 +2,10 @@
 //  MultiSubApp.swift
 //  MultiSub
 //
-//  SwiftUI lifecycle entry point (Phase G, replaces Main.storyboard).
-//  AppDelegate is kept via NSApplicationDelegateAdaptor for the
-//  application(_:open:) / pendingOpenURL handling (see AppDelegate.swift
-//  and CLAUDE.md's D1 cold-start note) — deliberately not `.onOpenURL`.
+//  SwiftUI lifecycle entry point. AppDelegate is kept via
+//  NSApplicationDelegateAdaptor for the application(_:open:) /
+//  pendingOpenURL handling (see AppDelegate.swift for the cold-start case
+//  `.onOpenURL` can't cover) — deliberately not `.onOpenURL`.
 //
 
 import SwiftUI
@@ -14,23 +14,35 @@ import SwiftUI
 @MainActor
 struct MultiSubApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var router = AppRouter()
+    @State private var router: AppRouter
     @State private var configStore = ConfigStore()
-    @State private var modelDownloadManager = ModelDownloadManager()
-    @State private var vocabExtractionManager = VocabExtractionManager()
+    @State private var modelDownloadManager: ModelDownloadManager
+    @State private var vocabExtractionManager: VocabExtractionManager
+    #if !APP_STORE
+    // Direct (DMG) builds only: the App Store build updates through the
+    // App Store and must not contain a self-updater.
     @State private var updateChecker = UpdateChecker()
     @State private var updateDownloadManager = UpdateDownloadManager()
+    #endif
+
+    init() {
+        // The router hands `multisub://vocab` straight to the extraction
+        // queue, so both exist before the first URL can be routed (the
+        // router drains `AppDelegate.pendingOpenURL` in its init).
+        let vocab = VocabExtractionManager()
+        _vocabExtractionManager = State(initialValue: vocab)
+        _router = State(initialValue: AppRouter(vocab: vocab))
+        AppDelegate.vocabExtraction = vocab
+        let downloads = ModelDownloadManager()
+        _modelDownloadManager = State(initialValue: downloads)
+        AppDelegate.modelDownloads = downloads
+    }
 
     var body: some Scene {
         Window("MultiSub", id: "main") {
-            ContentView()
-                .environment(router)
-                .environment(configStore)
-                .environment(modelDownloadManager)
-                .environment(vocabExtractionManager)
-                .environment(updateChecker)
-                .environment(updateDownloadManager)
-                // C4(a): 760 used to be narrower than the sidebar's own
+            rootView
+                .modifier(MainWindowOpenerHandoff())
+                // 760 used to be narrower than the sidebar's own
                 // reserved minimum (190, see SidebarView's
                 // navigationSplitViewColumnWidth) plus the vocab tab's inner
                 // HSplitView minimums (episode list 200 + word pane 400) —
@@ -46,5 +58,34 @@ struct MultiSubApp: App {
         // so content — including the sidebar — runs up to the traffic
         // lights instead of sitting below a separate title strip.
         .windowStyle(.hiddenTitleBar)
+    }
+
+    private var rootView: some View {
+        let view = ContentView()
+            .environment(router)
+            .environment(configStore)
+            .environment(modelDownloadManager)
+            .environment(vocabExtractionManager)
+        #if APP_STORE
+        return view
+        #else
+        return view
+            .environment(updateChecker)
+            .environment(updateDownloadManager)
+        #endif
+    }
+}
+
+/// Gives `AppDelegate` this window's `openWindow` action, so a
+/// `multisub://` URL that arrives while the window is closed (the app keeps
+/// running while vocabulary is being organized) can open it again.
+private struct MainWindowOpenerHandoff: ViewModifier {
+    @Environment(\.openWindow) private var openWindow
+
+    func body(content: Content) -> some View {
+        content.onAppear {
+            let openWindow = openWindow
+            AppDelegate.openMainWindow = { openWindow(id: "main") }
+        }
     }
 }

@@ -1,42 +1,134 @@
 :root {
   color-scheme: light dark;
   --accent: #e5232f;
-  --accent-dark: #b91c26;
-  --bg: #f6f6f7;
-  --card-bg: rgba(255, 255, 255, 0.72);
-  --text: #1c1c1e;
-  --text-dim: #6b6b70;
-  --border: rgba(0, 0, 0, 0.06);
-}
-
-* { box-sizing: border-box; }
-
-body {
-  width: 300px;
-  margin: 0;
-  padding: 16px;
-  font-family: -apple-system, "PingFang TC", system-ui, sans-serif;
-  font-size: 13px;
-  color: var(--text);
-  background: var(--bg);
+  --accent-hover: #cc1d28;
+  --accent-text: #d01f2a;
+  --accent-soft: rgba(229, 35, 47, 0.08);
+  --bg: #f5f5f7;
+  --card: #ffffff;
+  --text: #1d1d1f;
+  --text-dim: #6e6e73;
+  --border: rgba(0, 0, 0, 0.08);
+  --field: #ffffff;
+  --field-border: rgba(0, 0, 0, 0.15);
+  --seg-bg: rgba(0, 0, 0, 0.06);
+  --seg-active: #ffffff;
+  --seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  --ok: #157a3a;
+  --err: #c62f26;
+  --warn-bg: #fff4e0;
+  --warn-border: rgba(196, 120, 0, 0.25);
+  --warn-text: #7a4300;
+  --focus: rgba(229, 35, 47, 0.45);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --accent: #e5232f;
+    --accent-hover: #cc1d28;
+    --accent-text: #ff6b6b;
+    --accent-soft: rgba(255, 90, 90, 0.12);
     --bg: #1c1c1e;
-    --card-bg: rgba(58, 58, 61, 0.6);
-    --text: #f2f2f2;
-    --text-dim: #a0a0a5;
+    --card: #2c2c2e;
+    --text: #f5f5f7;
+    --text-dim: #aeaeb2;
     --border: rgba(255, 255, 255, 0.08);
+    --field: #3a3a3c;
+    --field-border: rgba(255, 255, 255, 0.12);
+    --seg-bg: rgba(255, 255, 255, 0.08);
+    --seg-active: #636366;
+    --seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --ok: #34c759;
+    --err: #ff6961;
+    --warn-bg: rgba(255, 159, 10, 0.14);
+    --warn-border: rgba(255, 159, 10, 0.3);
+    --warn-text: #ffc36b;
+    --focus: rgba(255, 107, 107, 0.55);
   }
-  select, input[type="range"] { color-scheme: dark; }
 }
 
-header {
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+/* Safari sizes the popover to the page, up to about 600 px tall, and
+   scrolls the page past that. A classic scrollbar would then take ~15 px,
+   and Safari widens the popover by that much on the right only, which reads
+   as a lopsided margin. The page still scrolls (wheel, trackpad, keyboard);
+   it just has no bar. Opening the display settings scrolls them into view
+   (popup.js), so nothing ends up hidden below the edge. */
+html { scrollbar-width: none; }
+::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+/* With no scrollbar, a fade along the bottom edge says the page goes on
+   below; popup.js (updateMoreBelow) shows it until the bottom is reached. */
+body::after {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 32px;
+  background: linear-gradient(to bottom, transparent, var(--bg));
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+body.more-below::after { opacity: 1; }
+
+body {
+  width: 340px;
+  margin: 0;
+  padding: 12px 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Until the first native ping answers (or a few seconds pass), everything
+   but the logo stays invisible, so the popup doesn't flash the default mode
+   and then switch to the one the app has saved (nor flash the switch off
+   before settings load). */
+body.loading > :not(.header),
+body.loading .switch { visibility: hidden; }
+
+/* Neutral placeholder while waiting; it fades in late so a quick ping
+   never flashes it. Absolutely placed (against the body, not the window,
+   which can be wider than the popup) so it doesn't change the layout the
+   hidden content already takes up. */
+body { position: relative; }
+.loading-note { display: none; }
+body.loading > .loading-note {
+  display: block;
+  visibility: visible;
+  position: absolute;
+  top: 56px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  animation: loading-note-in 0.2s ease 0.4s both;
+}
+@keyframes loading-note-in { from { opacity: 0; } to { opacity: 1; } }
+
+button, select, input { font: inherit; color: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* --- Header ---------------------------------------------------------- */
+.header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
   padding: 0 2px;
 }
 
@@ -46,133 +138,347 @@ header {
   gap: 8px;
 }
 
-.logo {
-  width: 22px;
-  height: 22px;
-  flex-shrink: 0;
-}
+.logo { width: 22px; height: 22px; flex-shrink: 0; }
 .logo-bar-a { color: var(--text); opacity: 0.85; }
 .logo-bar-b { color: var(--accent); }
 
 h1 {
+  margin: 0;
   font-size: 16px;
   font-weight: 700;
-  margin: 0;
   letter-spacing: -0.01em;
 }
 
+/* --- Cards ----------------------------------------------------------- */
 .card {
-  background: var(--card-bg);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 12px 14px;
   margin-bottom: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
-/* Spacing between grouped controls stacked inside one card (2026-07-05
-   popup consolidation — several cards now hold multiple label+input pairs
-   instead of one each, to fit the popup without scrolling). */
-.control-group {
-  margin-top: 10px;
-}
-
-label {
-  display: block;
-  margin-bottom: 6px;
+.card-title {
+  margin: 0 0 6px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text);
-}
-
-label span {
-  font-weight: 400;
+  letter-spacing: 0.02em;
   color: var(--text-dim);
 }
 
+/* --- Diagnostics banner ---------------------------------------------- */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 9px 10px 9px 12px;
+  border: 1px solid var(--warn-border);
+  border-radius: 10px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.banner-text {
+  flex: 1;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.banner-button {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.banner-button:hover { background: var(--accent-hover); }
+
+/* --- Main view -------------------------------------------------------- */
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--seg-bg);
+}
+
+.segmented button {
+  min-width: 0;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.segmented button[aria-checked="true"] {
+  background: var(--seg-active);
+  box-shadow: var(--seg-shadow);
+  font-weight: 600;
+}
+
+/* Every mode's line fits on one line; the min-height keeps switching modes
+   from shifting the controls below. */
+.mode-desc {
+  min-height: 1.4em;
+  margin: 7px 2px 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+.field-row label {
+  flex-shrink: 0;
+  font-weight: 500;
+}
+.field-row select { width: 60%; }
+
+.status-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-height: 2.8em;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.status-text.ok { color: var(--ok); }
+.status-text.err { color: var(--err); }
+
+/* --- Form controls ---------------------------------------------------- */
+.value { font-weight: 400; color: var(--text-dim); }
+
 select {
   width: 100%;
-  box-sizing: border-box;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--field-border);
+  border-radius: 7px;
+  background: var(--field);
   font-size: 13px;
 }
 
 input[type="range"] {
   width: 100%;
-  box-sizing: border-box;
-  accent-color: var(--accent);
   margin: 2px 0;
+  accent-color: var(--accent);
 }
 
-.drag-toggle {
+.check-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 6px 0 0;
-  font-weight: 400;
+  gap: 7px;
+  margin-top: 10px;
   font-size: 12px;
-  color: var(--text-dim);
 }
-.drag-toggle input {
-  accent-color: var(--accent);
-}
+.check-row input { margin: 0; accent-color: var(--accent); }
+.check-row.disabled { color: var(--text-dim); }
 
-.secondary-button {
+/* --- Buttons ---------------------------------------------------------- */
+.primary-button {
+  display: block;
   width: 100%;
-  box-sizing: border-box;
-  padding: 8px 10px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 0;
   border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  font-size: 13px;
+  background: var(--accent);
+  color: #fff;
   font-weight: 600;
   cursor: pointer;
 }
-.secondary-button:hover { background: var(--border); }
-.secondary-button:active { opacity: 0.8; }
-.secondary-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-  background: var(--bg);
+.primary-button:hover { background: var(--accent-hover); }
+.primary-button:disabled { opacity: 0.55; cursor: default; }
+
+.secondary-button {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  background: var(--card);
+  font-weight: 500;
+  cursor: pointer;
+}
+.secondary-button:hover:not(:disabled) { background: var(--seg-bg); }
+.secondary-button:disabled { opacity: 0.5; cursor: default; }
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font-weight: 500;
+  cursor: pointer;
+}
+.link-button:hover { text-decoration: underline; }
+.link-button:disabled { color: var(--text-dim); cursor: default; text-decoration: none; }
+.link-button.small { font-size: 12px; }
+
+/* --- Engine card ------------------------------------------------------ */
+.engine-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.engine-summary-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A long model id must truncate the summary, not squeeze 「到 App 變更」 onto two lines. */
+.engine-summary .link-button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
-#openStylesHint, #organizeVocabHint {
+.engine-notice {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ok);
+}
+.engine-notice.err { color: var(--err); }
+.engine-notice.dim { color: var(--text-dim); }
+
+/* No engine yet: why, and the way to the app to set one up. */
+.engine-setup-text {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.engine-setup .primary-button { margin-top: 8px; }
+
+/* --- Display settings ------------------------------------------------- */
+.details { padding: 0; }
+.details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
+  border-radius: 12px;
+}
+.details summary::-webkit-details-marker { display: none; }
+.details summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--text-dim);
+  border-bottom: 1.5px solid var(--text-dim);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.details[open] summary::after { transform: rotate(45deg); }
+.details-body { padding: 0 12px 12px; }
+
+/* Label, slider and value on one line. */
+.slider-row {
+  display: grid;
+  grid-template-columns: auto 1fr 3em;
+  align-items: center;
+  gap: 10px;
   margin-top: 6px;
+}
+.slider-row:first-child { margin-top: 0; }
+.slider-row label { font-weight: 500; }
+.slider-row input[type="range"] { margin: 0; }
+.slider-row .value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.check-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+}
+.check-group .check-row { margin-top: 0; }
+
+.details-links { margin-top: 10px; }
+
+/* --- Hints, vocab, footer --------------------------------------------- */
+.hint {
+  margin: 6px 0 0;
   font-size: 11px;
   color: var(--text-dim);
 }
-/* Both hints are empty <div>s most of the time (popup.js only fills them in
-   on error) — without this, an empty hint's margin-top still counts, so the
-   gap above the *next* button ends up bigger than the gap below the button
-   before it. :empty collapses that phantom space so the rhythm around
-   #openStyles/#organizeVocab stays even whether or not a hint is showing. */
-#openStylesHint:empty, #organizeVocabHint:empty {
-  margin-top: 0;
-}
-#openStylesHint.err, #organizeVocabHint.err { color: #d1382f; }
+/* Hints are empty most of the time; without this their margin still adds a
+   gap under the button. */
+.hint:empty { margin: 0; }
+.hint.err { color: var(--err); }
 
-.status {
-  background: var(--card-bg);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 12px 14px;
-  line-height: 1.6;
+.vocab { margin-top: 8px; }
+
+.vocab-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 0 2px;
+  font-size: 12px;
+}
+.vocab-status-body { flex: 1; min-width: 0; }
+.vocab-status-text { margin: 0; }
+.vocab-status-text.ok { color: var(--ok); }
+.vocab-status-text.err { color: var(--err); }
+.vocab-status-sub {
+  margin: 2px 0 0;
+  font-size: 11px;
   color: var(--text-dim);
-  margin-bottom: 0;
+}
+.vocab-status-sub:empty { display: none; }
+.vocab-status-sub.err { color: var(--err); }
+.vocab-status .link-button { margin-top: 4px; }
+
+.spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  border: 2px solid var(--seg-bg);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: vocab-spin 0.9s linear infinite;
+}
+@keyframes vocab-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
 }
 
-#nativeStatus.ok { color: #1a9247; font-weight: 500; }
-#nativeStatus.err { color: #d1382f; font-weight: 500; }
+.footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+.footer:empty, .footer:not(:has(:not([hidden]))) { margin-top: 0; }
 
-/* Toggle switch */
+/* --- Switch ----------------------------------------------------------- */
 .switch {
   position: relative;
   display: inline-block;
@@ -181,26 +487,44 @@ input[type="range"] {
   margin: 0;
   flex-shrink: 0;
 }
-.switch input { opacity: 0; width: 0; height: 0; }
+.switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
 .switch .slider {
   position: absolute;
   inset: 0;
-  cursor: pointer;
-  background: #bfbfc4;
   border-radius: 22px;
+  background: #bfbfc4;
+  pointer-events: none;
   transition: background 0.15s ease;
 }
 .switch .slider::before {
   content: "";
   position: absolute;
-  height: 18px;
-  width: 18px;
-  left: 2px;
   top: 2px;
-  background: #fff;
+  left: 2px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
+  background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
   transition: transform 0.15s ease;
 }
 .switch input:checked + .slider { background: var(--accent); }
 .switch input:checked + .slider::before { transform: translateX(18px); }
+.switch input:focus-visible + .slider { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+@media (prefers-color-scheme: dark) {
+  .switch .slider { background: #48484a; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch .slider, .switch .slider::before, .details summary::after, body::after { transition: none; }
+  body.loading > .loading-note { animation: none; }
+}

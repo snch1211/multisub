@@ -1,30 +1,64 @@
 {
   "manifest_version": 3,
-  "name": "MultiSub for Netflix",
-  "version": "1.0.0",
-  "description": "Netflix 雙語字幕：以本地 AI 模型翻譯並顯示第二字幕。",
-  "permissions": ["storage", "nativeMessaging"],
-  "host_permissions": ["*://*.netflix.com/*"],
+  "name": "MultiSub",
+  "version": "1.1.0",
+  "description": "Netflix 雙語字幕：疊上 Netflix 官方字幕、用 AI 翻譯，或在難字旁標上意思。",
+  "icons": {
+    "48": "icon-48.png",
+    "96": "icon-96.png",
+    "128": "icon-128.png",
+    "256": "icon-256.png",
+    "512": "icon-512.png"
+  },
+  "permissions": [
+    "storage",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "*://*.netflix.com/*"
+  ],
   "background": {
-    "scripts": ["background.js"],
+    "page": "background.html",
     "persistent": false
   },
   "content_scripts": [
     {
-      "matches": ["*://*.netflix.com/*"],
-      "js": ["content.js"],
-      "css": ["overlay.css"],
+      "matches": [
+        "*://*.netflix.com/*"
+      ],
+      "js": [
+        "shared.js",
+        "content.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
       "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://*.netflix.com/*"
+      ],
+      "js": [
+        "inject.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["inject.js"],
-      "matches": ["*://*.netflix.com/*"]
+      "resources": [
+        "inject.js"
+      ],
+      "matches": [
+        "*://*.netflix.com/*"
+      ]
     }
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "MultiSub"
+    "default_title": "MultiSub",
+    "default_icon": "toolbar-icon.svg"
   }
 }

@@ -1,0 +1,17 @@
+{
+  "name": "translate: AI line under the original, Netflix's own line hidden",
+  "settings": { "enabled": true, "mode": "translate", "targetLang": "zh-TW", "annotateLevel": "B1",
+                "fontScale": 1, "bottomOffset": 10, "mergedMode": true, "prefsUpdatedAt": 1 },
+  "checkpoints": [
+    { "time": 2, "expect": { "original": "Welcome back to the laboratory.", "text": "[zh] Welcome back to the laboratory.", "nativeHidden": true,
+                             "textScale": 0.8 } },
+    { "time": 6, "expect": { "original": "Everything depends on this experiment.", "text": "[zh] Everything depends on this experiment." } },
+    { "time": 10, "snapshot": true, "expect": { "original": "Nobody understands\nthe instructions.", "text": "[zh] Nobody understands\nthe instructions." } },
+    { "time": 18, "expect": { "original": "Don't touch anything.", "text": "[zh] Don't touch anything." } },
+    { "time": 16.5, "expect": { "original": "", "text": "" } }
+  ],
+  "status": { "mode": "translate", "status": "done", "totalCues": 5, "translatedCount": 5, "fallback": false,
+              "secondState": "ready", "errorCode": null },
+  "native": { "ping": ">=1", "translate": ">=1", "annotate": 0 },
+  "manifest": { "webvttRequested": true }
+}

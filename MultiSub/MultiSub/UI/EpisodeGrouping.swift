@@ -2,10 +2,9 @@
 //  EpisodeGrouping.swift
 //  MultiSub
 //
-//  Shared "group by series+season" rule used by the cache-management (G4)
-//  and vocabulary (G5) episode lists — extracted during G6 consolidation
-//  since both views had implemented the identical bucket/group/flatten logic
-//  independently. Presentation (Table vs List) stays with each view; this
+//  Shared "group by series+season" rule used by the cache-management and
+//  vocabulary episode lists — extracted since both views had implemented
+//  the identical bucket/group/flatten logic independently. Presentation (Table vs List) stays with each view; this
 //  just produces the grouped/flat row structure, mirroring the original
 //  AppKit `GroupedRow`/`buildGroupedRows`'s rule: 2+ items sharing a group
 //  key get a labeled group, a lone item renders flat with no label.

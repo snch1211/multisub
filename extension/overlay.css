@@ -1,3 +1,11 @@
+/* Marks the page as having this stylesheet. WebKit removes an extension's
+   content stylesheets from open pages when the extension is turned off,
+   but keeps its content scripts running there, with runtime.id still set:
+   content.js's extensionGone() notices the marker gone and steps aside. */
+:root {
+  --multisub-stylesheet: 1;
+}
+
 #multisub-overlay {
   position: absolute;
   left: 0;
@@ -11,17 +19,15 @@
   pointer-events: none;
 }
 
-/* C6: #multisub-text and #multisub-original share one style block (both
-   fully styled by the user's settings, see below) and use flex-column +
-   per-line children instead of a single text node with CSS line-height.
-   Reason: line-height on a block whose content IS its background box
-   inflates that box with "half-leading" above/below the glyphs — visible
-   as the background not hugging the text once lineHeight is raised past
-   the default. Splitting each \n-separated line into its own child (see
-   content.js's setOverlayLines()) with a fixed tight line-height, and
-   turning the user's lineHeight into a `gap` between children instead,
-   keeps the padding box snug to the glyphs at any lineHeight value while
-   still spacing out multi-line cues (2026-07-05 bug, fixed as C6). */
+/* #multisub-text and #multisub-original share one style block (both fully
+   styled by the user's settings) and use flex-column + per-line children
+   instead of a single text node with CSS line-height. Line-height on a block
+   whose content IS its background box inflates that box with half-leading
+   above and below the glyphs, so the background stops hugging the text once
+   lineHeight is raised. Splitting each \n-separated line into its own child
+   (content.js's setLines()) with a fixed tight line-height, and turning the
+   user's lineHeight into a `gap` between children, keeps the box snug at any
+   lineHeight while still spacing out multi-line cues. */
 #multisub-text, #multisub-original {
   display: none;
   flex-direction: column;
@@ -30,12 +36,9 @@
   padding: 0.08em 0.45em;
   border-radius: 0.15em;
   gap: calc((var(--multisub-line-height, 1.35) - 1) * 1em);
-  /* D1: overlay style is user-adjustable from the App (MultiSubConfig.styles);
-     content.js sets these variables in applySettingsToOverlay() on every
-     settings change. Fallbacks match the pre-D1 hardcoded values. C6: both
-     lines now share every style var — previously #multisub-original had
-     its own hardcoded plain look, which read as inconsistent once merged
-     display mode showed both lines stacked with the same background. */
+  /* The style is user-adjustable from the app (MultiSubConfig.styles);
+     content.js sets these variables in applySettingsToOverlay(). Both lines
+     share every variable so the stacked merged layout reads as one style. */
   background: var(--multisub-bg, rgba(0, 0, 0, 0.5));
   color: var(--multisub-color, #fff);
   font-family: var(--multisub-font, "Netflix Sans", "Helvetica Neue", "PingFang TC", "Noto Sans TC", sans-serif);
@@ -45,33 +48,71 @@
   text-shadow: var(--multisub-outline, 0 0 4px rgba(0, 0, 0, 0.9));
 }
 
+/* The second-language line (#multisub-text under the original, ours or
+   Netflix's own) is 80% of the original line's size, so the language being
+   watched stays the visual anchor; content.js's render() sets
+   .multisub-two-lines then, for the whole of a second-language cue even
+   while the original track has none. When the line holds the original
+   itself (annotate mode, or an original already in the target language) it
+   is full size. Users can still scale both with the popup's font-size
+   slider. */
+#multisub-overlay.multisub-two-lines #multisub-text {
+  font-size: calc(2.4vw * var(--multisub-font-scale, 1) * var(--multisub-second-scale, 0.8));
+}
+
 #multisub-text .ms-line, #multisub-original .ms-line {
   line-height: 1.2;
 }
 
 #multisub-hint {
   display: none;
-  font-family: system-ui, sans-serif;
+  max-width: 80%;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", system-ui, sans-serif;
   font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
   color: #ffd75e;
-  background: rgba(0, 0, 0, 0.65);
-  padding: 2px 8px;
-  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 4px 10px;
+  border-radius: 6px;
 }
 
-/* D3: hides Netflix's own subtitle line when merged mode is on (popup's
-   "mergedMode" setting), toggled via a class on <html> in applySettingsToOverlay().
-   !important guards against Netflix's own higher-specificity rules. */
+/* Annotate mode: a term in the original line gets a quiet dotted underline
+   in its own colour, followed by the gloss in a smaller accent-coloured span.
+   The gloss keeps the line's outline (a blur-free text-shadow, see
+   content.js's outlineShadow()), since a blurred shadow smears glyphs this
+   small. */
+.ms-term {
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+  text-decoration-thickness: 0.07em;
+  text-underline-offset: 0.18em;
+}
+
+.ms-gloss {
+  margin-left: 0.18em;
+  font-size: 0.72em;
+  font-weight: 500;
+  color: var(--multisub-gloss, #ffd76a);
+  white-space: nowrap;
+}
+
+/* Merged layout (and annotate mode): Netflix's own subtitle line is hidden
+   and MultiSub draws every line, toggled via a class on <html> by content.js's
+   updateNativeHidden(). !important beats Netflix's own higher-specificity
+   rules. The element stays in the DOM, so the DOM fallback can still read it. */
 html.multisub-native-hidden .player-timedtext {
   display: none !important;
 }
 
-/* D2: drag-to-position mode, toggled by content.js only while the popup's
-   "dragMode" checkbox is on (see CLAUDE.md's set-drag-mode message). Scoped
-   to this modifier class rather than the base #multisub-text rule so
-   pointer-events stays 'none' (inherited from #multisub-overlay above,
-   click-through to the Netflix player) whenever drag mode is off — must not
-   touch #multisub-text's base `display` rule (CLAUDE.md 禁止事項 #9). */
+/* Drag-to-position, toggled by content.js only while the popup's drag
+   checkbox is on (set-drag-mode). Scoped to this modifier class rather than
+   the base #multisub-text rule so pointer-events stays 'none' (inherited from
+   #multisub-overlay, click-through to the player) whenever drag mode is off.
+   It must not touch #multisub-text's base `display` rule, which content.js
+   overrides inline to show and hide the line. */
 #multisub-overlay.multisub-drag-enabled #multisub-text {
   pointer-events: auto;
   cursor: grab;

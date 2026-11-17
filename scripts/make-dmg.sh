@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# make-dmg.sh — package the Release build into a distributable DMG (R4).
+# make-dmg.sh — package the Release build into a distributable DMG.
 #
 # Produces build/MultiSub-<version>.dmg (UDZO) with a styled install window:
 # a dark on-brand background, the app icon on the left, an /Applications
 # symlink on the right, and a "drag here" arrow between them. Also writes a
 # .sha256 checksum for the GitHub Release.
 #
-# Route 1 (free signing, PLAN.md R1): NOT notarized. On other machines
+# Free signing: NOT notarized. On other machines
 # Gatekeeper blocks it until the user approves it manually — the Release notes
 # and website cover that step. No npm / create-dmg dependency; hdiutil +
 # Finder (AppleScript) only.

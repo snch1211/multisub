@@ -1,0 +1,20 @@
+{
+  "name": "annotate: original line only, a gloss after each hard word",
+  "settings": { "enabled": true, "mode": "annotate", "targetLang": "zh-TW", "annotateLevel": "B1",
+                "fontScale": 1, "bottomOffset": 10, "mergedMode": true, "prefsUpdatedAt": 1 },
+  "checkpoints": [
+    { "time": 2, "expect": { "original": "", "plain": "Welcome back to the laboratory.",
+                             "terms": [{ "term": "Welcome", "gloss": "zh:welcome" }], "nativeHidden": true,
+                             "textScale": 1 } },
+    { "time": 6, "expect": { "original": "", "plain": "Everything depends on this experiment.",
+                             "terms": [{ "term": "Everything", "gloss": "zh:everything" }] } },
+    { "time": 10, "snapshot": true, "expect": { "original": "", "plain": "Nobody understands\nthe instructions.",
+                             "terms": [{ "term": "understands", "gloss": "zh:understands" }] } },
+    { "time": 14, "expect": { "original": "", "plain": "Stay calm.", "terms": [], "textScale": 1 } },
+    { "time": 18, "expect": { "original": "", "plain": "Don't touch anything.",
+                              "terms": [{ "term": "anything", "gloss": "zh:anything" }] } }
+  ],
+  "status": { "mode": "annotate", "status": "done", "totalCues": 5, "translatedCount": 5, "fallback": false },
+  "native": { "ping": ">=1", "annotate": ">=1", "translate": 0 },
+  "manifest": { "webvttRequested": true }
+}

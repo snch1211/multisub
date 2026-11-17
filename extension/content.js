@@ -1,449 +1,1705 @@
-// Content script (isolated world) for netflix.com.
+// Content script (isolated world) for netflix.com. Loaded after shared.js.
 //
-// Responsibilities:
-//  - Inject inject.js into the page world to capture subtitle tracks.
-//  - Pick a source track, request its cues, and ask the background script
-//    to translate the whole episode (pre-translation + cache).
-//  - Render the translated second subtitle in an overlay synced to
-//    video.currentTime, with user-configurable size/position.
-//  - DOM-observer fallback: if track capture fails, translate whatever
-//    subtitle text Netflix renders, line by line.
+// What it does, by section:
+//  1. Setup and state.
+//  2. Settings and native sync: settings from storage.local, styles,
+//     preferences and engine status from the native `ping`.
+//  3. Page-world messages: track lists, cues and the player's selected tracks
+//     reported by inject.js.
+//  4. Track selection: the primary (original-language) track and the
+//     second-language track.
+//  5. Pipelines per mode (netflix / translate / annotate) and the job port to
+//     background.js.
+//  6. DOM fallback: when no track data was captured, work from the subtitle
+//     text Netflix renders, line by line.
+//  7. Overlay rendering, including drag-to-position.
+//  8. The one-time toast on the first watch page.
+//  9. Sync loop (renders the cue at video.currentTime, detects seeks).
+// 10. Navigation between episodes.
+// 11. Popup messaging and the vocabulary hand-off.
+// 12. Instances: the newest content.js on the page takes over from older
+//     ones, and an instance whose extension is gone steps aside.
 (() => {
   'use strict';
   const api = typeof browser !== 'undefined' ? browser : chrome;
+  const MS = globalThis.MS;
+  if (!MS) return; // shared.js didn't load; nothing below can work without it
 
-  // Debug logging for A3 interception diagnosis. Set to false once resolved.
   const DEBUG = false;
   function dbg() {
     if (!DEBUG) return;
     try { console.log.apply(console, ['[MultiSub][content]'].concat([].slice.call(arguments))); } catch (e) { /* ignore */ }
   }
 
-  // D1: overlay subtitle style, single source of truth = App's config.json
-  // (MultiSubConfig.styles). Defaults mirror the pre-D1 hardcoded overlay.css
-  // values so upgrading doesn't change the look before the App has ever set
-  // anything. Kept in sync with SubtitleStyle in TranslatorCore.swift.
-  const DEFAULT_STYLES = {
-    textColor: '#ffffff',
-    backgroundColor: '#000000',
-    backgroundOpacity: 0.5,
-    outlineEnabled: true,
-    outlineColor: '#000000',
-    fontFamily: '"Netflix Sans", "Helvetica Neue", "PingFang TC", "Noto Sans TC", sans-serif',
-    lineHeight: 1.35,
-    boldEnabled: false
-  };
+  // Every timer this instance starts goes through these two, which shadow
+  // the global ones inside this file, so that teardown() (section 12) can
+  // stop them all and none fires once the instance is gone.
+  const liveTimeouts = new Set();
+  const liveIntervals = new Set();
+  function setTimeout(fn, ms) {
+    const id = globalThis.setTimeout(() => {
+      liveTimeouts.delete(id);
+      if (!torn) fn();
+    }, ms);
+    liveTimeouts.add(id);
+    return id;
+  }
+  function clearTimeout(id) {
+    liveTimeouts.delete(id);
+    globalThis.clearTimeout(id);
+  }
+  function setInterval(fn, ms) {
+    const id = globalThis.setInterval(() => { if (!torn) fn(); }, ms);
+    liveIntervals.add(id);
+    return id;
+  }
+  function clearInterval(id) {
+    liveIntervals.delete(id);
+    globalThis.clearInterval(id);
+  }
 
-  const DEFAULT_SETTINGS = {
-    enabled: true,
-    targetLang: 'zh-TW',
-    fontScale: 1.0,
-    bottomOffset: 10, // percent from bottom of the player
-    styles: DEFAULT_STYLES,
-    mergedMode: false // D3: hide Netflix's native subtitle, show original+translation in our own overlay
-  };
+  // This instance (section 12). Safari injects the content scripts again
+  // into open tabs whenever it reloads the extension, next to the instance
+  // already running there.
+  const INSTANCE_ID = newInstanceId();
+  const STARTED_AT = pageClock();
+  // window.postMessage marker of the announcements between instances.
+  const INSTANCE_MSG = '__multisub_instance';
+  // Attribute naming the instance an element on the page belongs to.
+  const INSTANCE_ATTR = 'data-ms-instance';
+  // Set by teardown(): nothing of this instance may run any more.
+  let torn = false;
 
-  // D2: must match popup.html's #bottomOffset slider min/max.
+  // ===========================================================================
+  // 1. Setup and state
+  // ===========================================================================
+
+  // Must match popup.html's #bottomOffset slider min/max.
   const DRAG_MIN_OFFSET = 0;
   const DRAG_MAX_OFFSET = 40;
+  // A jump in currentTime bigger than this between two ticks is a seek.
+  const SEEK_JUMP_SEC = 20;
+  // Safari unloads the background page 30 s after its last event and doesn't
+  // count a pending native call, but it does count port traffic.
+  const KEEPALIVE_MS = 15000;
+  const NATIVE_PING_MS = 60000;
+  // A stuck second-language fetch must not hold translation back forever.
+  const SECOND_TRACK_TIMEOUT_MS = 5000;
+  // How long a fresh track list waits for the player to report which
+  // subtitle the viewer has selected, so we don't start a job on the wrong
+  // track and pay for it twice.
+  const ACTIVE_TRACK_WAIT_MS = 1500;
+  // How long a page with nothing chosen in the extension waits for the first
+  // native ping before running the default mode (see waitingForAppPrefs). A
+  // cold app extension can take a couple of seconds; same as popup.js.
+  const FIRST_PING_WAIT_MS = 3000;
+  const NOTICE_MS = 8000;
+  // Each term is glossed for its first few annotated cues only, so repeated
+  // words stop cluttering the line.
+  const GLOSS_REPEAT_LIMIT = 3;
+  const FALLBACK_CACHE_MAX = 2000;
+  // How many results of modes left earlier in the episode stay in memory
+  // (state.kept): one per mode, language and level the viewer went through.
+  const KEPT_RESULTS_MAX = 4;
+  const FALLBACK_ERROR_PAUSE_MS = 10000;
+  const AUTO_RETRY_MS = 30000;
+  const AUTO_RETRY_MAX = 5;
+  // A failed download of the primary track is retried this many times (after
+  // these delays) before falling back to reading Netflix's rendered text: a
+  // CDN hiccup shouldn't cost the whole episode its full-track mode, and an
+  // expired URL is replaced once Netflix fetches a fresh manifest.
+  const PRIMARY_FETCH_RETRY_MS = [2000, 6000];
+  // After a fetch failure put the episode in fallback, a fresh track list
+  // from Netflix gets this many more tries at the full track.
+  const FALLBACK_RECOVERY_MAX = 2;
+  // Errors that a different engine setup can fix: retry when it changes.
+  const ENGINE_FIXABLE_CODES = new Set(['engine-not-ready', 'model-not-ready', 'auth-failed', 'consent-required', 'native-unavailable']);
+  // Errors that may clear up by themselves: retry after a pause.
+  const AUTO_RETRY_CODES = new Set(['rate-limited', 'network', 'provider-error', 'native-unavailable']);
 
-  function hexToRgba(hex, opacity) {
-    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
-    if (!m) return 'rgba(0, 0, 0, ' + opacity + ')';
-    const n = parseInt(m[1], 16);
-    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-    return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + opacity + ')';
-  }
+  const TEXT = {
+    noData: '沒抓到字幕資料，請重新整理頁面（⌘R）',
+    noSecond: (lang) => '這部片沒有官方' + MS.languageName(lang) + '字幕，可在 MultiSub 選單改用 AI 翻譯',
+    toastTitle: 'MultiSub 已開啟',
+    // Mode and language, e.g. 「Netflix 雙語字幕・繁體中文」.
+    toastBody: (mode, lang) => MS.modeById(mode).label + '・' + MS.languageName(lang),
+    toastHint: '點 Safari 工具列的 MultiSub 按鈕可以換模式。',
+    toastClose: '關閉',
+    // A job that finished with some chunks failed (see background.js runJob).
+    partial: (kind, retrying) => 'MultiSub：有部分字幕' + (kind === 'annotate' ? '標註' : '翻譯') +
+      '失敗' + (retrying ? '，稍後會自動補上' : '')
+  };
 
-  // D1: approximates overlay.css's outline as a 4-direction text-shadow
-  // (no reliable cross-engine text-stroke), toggled off entirely via 'none'.
-  function outlineShadow(enabled, color) {
-    if (!enabled) return 'none';
-    return [
-      '-1px -1px 0 ' + color,
-      '1px -1px 0 ' + color,
-      '-1px 1px 0 ' + color,
-      '1px 1px 0 ' + color
-    ].join(', ');
-  }
-
-  // D1: merges a `styles` object from a native `ping` response into
-  // storage.local.settings if it differs, which content.js's own
-  // storage.onChanged listener (below) then applies via applySettingsToOverlay().
-  function mergeStylesFromNative(res) {
-    if (!res || !res.ok || !res.styles) return;
-    if (JSON.stringify(res.styles) === JSON.stringify(settings.styles)) return;
-    const next = Object.assign({}, settings, { styles: res.styles });
-    api.storage.local.set({ settings: next }).catch(() => {});
-  }
-
-  let settings = Object.assign({}, DEFAULT_SETTINGS);
+  let settings = MS.mergeSettings(null);
 
   const state = {
+    // --- episode and tracks
     urlMovieId: null,
     tracks: [],
-    activeTrackId: null,
-    sourceMode: 'auto', // 'auto' (follow Netflix's player selection) | 'manual' (user picked in popup)
-    netflixActiveBcp47: null, // last bcp47 reported by inject.js's active-track detector, or null if unknown/off
-    cues: [],
-    referenceTrackId: null,
-    referenceCues: null, // null = not yet resolved; [] = resolved, no official target-lang track
-    referenceLines: null, // aligned to `cues`, same length, String|null per entry
-    referencePollTimer: null,
-    translations: [],
-    status: 'idle', // idle | waiting-tracks | fetching | translating | done | fallback | error
-    errorHint: '',
-    translatedCount: 0,
-    port: null,
-    lastRenderedKey: null,
+    tracksAt: 0,
+    activeTrackId: null, // primary track
+    sourceMode: 'auto', // 'auto' (follow Netflix's player) | 'manual' (picked in the popup)
+    manualTrackId: null,
+    activeTrackReported: false,
+    netflixActiveBcp47: null, // subtitle selected in Netflix's player, null = off/unknown
+    netflixActiveForced: false, // ...and it is a forced-narrative track
+    netflixAudioBcp47: null,
+    selectTimer: null,
     trackPollTimer: null,
-    // DOM fallback
+    cues: [], // primary track cues [{start, end, text}]
+    primaryRetries: 0, // failed fetches of the current primary track
+    primaryRetryTimer: null,
+    fallbackReason: null,
+    fallbackRecoveries: 0,
+    secondTrackId: null,
+    secondState: 'unknown', // unknown | loading | ready | none | failed
+    secondCues: [],
+    secondTimer: null,
+    secondTimedOut: false,
+    // --- pipeline
+    status: 'idle', // idle | off | waiting-tracks | fetching | ready | translating | annotating | done | passthrough | fallback | error
+    errorCode: null,
+    errorHint: '',
+    itemsKind: null,
+    items: [], // per cue: translation (string) or annotations ([{term, gloss}]); null = pending
+    readyCount: 0,
+    itemsSig: null, // jobSignature() of what `items` holds
+    // jobSignature() -> { items, readyCount }: what an AI mode had when the
+    // viewer switched away from it in this episode, so switching back shows
+    // it at once instead of blanking the overlay and waiting for
+    // background.js to replay its cache (see startJob).
+    kept: new Map(),
+    glossPlan: null,
+    glossPlanDirty: true,
+    segMemo: null,
+    job: null, // { kind, msg, finished }
+    partialMissing: 0, // lines the last finished job couldn't do (done.partial)
+    waitingForReference: false,
+    port: null,
+    reconnectTimer: null,
+    reconnectAttempts: 0,
+    retryTimer: null,
+    autoRetries: 0,
+    lastVideoTime: null,
+    // --- DOM fallback
     fallback: false,
-    fallbackCache: new Map(), // original text -> translation
+    fallbackCache: new Map(), // kind + '\0' + text -> translation | annotations
     fallbackInflight: new Set(),
-    fallbackCurrentText: '',
-    // D2: drag-to-position mode. Lives only here (not storage.local) so it
-    // doesn't linger enabled across page reloads; popup reads it back via
-    // get-status's dragMode field.
+    fallbackPausedUntil: 0,
+    fallbackGlossCounts: new Map(),
+    fallbackGlossPlan: new Map(),
+    // --- overlay and UI
+    lastRenderedKey: null,
+    notice: null, // { text, until }
+    noSecondHintShown: false,
+    noDataHintShown: false,
+    // Drag mode lives only here (not storage.local) so it can't linger
+    // enabled across page reloads; the popup reads it back via get-status.
     dragModeEnabled: false,
-    // 2026-07-07: movieId -> [resolver, ...] for in-flight 'get-title'/
-    // 'title' round trips with inject.js (see requestEpisodeTitle). Must
-    // support more than one concurrent waiter per movieId: this was
-    // previously a single `{movieId, resolve}` slot, which broke when two
-    // lookups for the same episode overlapped — `startEpisodeTranslation()`
-    // fires one automatically for the cache-management title, and clicking
-    // "整理本集單字" while that's still in flight fires a second one before
-    // the first resolves. The second call overwrote the slot, so the first
-    // caller's request got silently orphaned (found via real usage: the
-    // cache entry's title ended up wrong — falling through to
-    // `document.title` after its own 1.5s timeout — specifically when the
-    // vocab button was clicked mid-translation).
+    // --- native
+    // The first ping answered (or FIRST_PING_WAIT_MS passed without one).
+    startupPingDone: false,
+    // startPipeline() was called while waitingForAppPrefs() held, so the
+    // pipeline still has to start once the wait is over.
+    pipelineHeld: false,
+    nativeOk: null,
+    engine: null,
+    engineSig: null,
+    // movieId -> [resolver, ...] for in-flight 'get-title' round trips with
+    // inject.js. Must allow several waiters per movieId: a job start fires
+    // one lookup automatically for the cache title, and clicking
+    // 「整理本集單字」 while that is still in flight fires a second. With a
+    // single slot the second overwrote the first, which then timed out and
+    // stored the wrong title.
     pendingTitleRequests: new Map()
   };
 
-  // ---------------------------------------------------------------------------
-  // Inject the page-world script as early as possible.
-  // ---------------------------------------------------------------------------
-  function injectPageScript() {
-    const s = document.createElement('script');
-    s.src = api.runtime.getURL('inject.js');
-    s.onload = () => s.remove();
-    (document.head || document.documentElement).appendChild(s);
+  // The one-time toast (section 8). `seen` is null until storage.local has
+  // been read, then whether this install has shown it already.
+  const toast = { host: null, root: null, timer: null, seen: null };
+
+  function primaryTrack() {
+    return state.tracks.find((t) => t.id === state.activeTrackId) || null;
   }
-  injectPageScript();
 
-  // ---------------------------------------------------------------------------
-  // Settings
-  // ---------------------------------------------------------------------------
-  api.storage.local.get('settings').then((res) => {
-    if (res && res.settings) settings = Object.assign({}, DEFAULT_SETTINGS, res.settings);
-    applySettingsToOverlay();
-  }).catch(() => {});
+  function primaryLanguage() {
+    const t = primaryTrack();
+    return (t && t.language) || '';
+  }
 
-  api.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.settings) return;
-    const before = settings.targetLang;
-    const wasEnabled = settings.enabled;
-    settings = Object.assign({}, DEFAULT_SETTINGS, changes.settings.newValue || {});
-    applySettingsToOverlay();
-    if (settings.targetLang !== before) {
-      // Target language changed: the reference track (T2) depends on
-      // targetLang too, so re-resolve it before retranslating.
-      state.fallbackCache.clear();
-      if (state.cues.length) beginTranslationPipeline();
-    } else if (settings.enabled && !wasEnabled && state.cues.length && state.status !== 'done') {
-      // M1: background.js paused the episode loop (and unloaded the model)
-      // while we were off — resume it now. Already-translated lines replay
-      // instantly from background.js's cache; only the remaining batches
-      // re-run and lazily reload the model.
-      beginTranslationPipeline();
-    }
-  });
-
-  // ---------------------------------------------------------------------------
-  // Messages from the page-world script.
-  // ---------------------------------------------------------------------------
-  window.addEventListener('message', (ev) => {
-    if (ev.source !== window) return;
-    const msg = ev.data;
-    if (!msg || msg.__multisub !== true) return;
-
-    if (msg.type === 'tracks') {
-      dbg('recv tracks for movieId', msg.movieId, '(url=', state.urlMovieId, ') count=',
-          msg.tracks && msg.tracks.length, msg.tracks);
-      if (!state.urlMovieId || msg.movieId !== state.urlMovieId) return; // prefetch of another episode
-      state.tracks = msg.tracks;
-      if (state.trackPollTimer) { clearInterval(state.trackPollTimer); state.trackPollTimer = null; }
-      let track = null;
-      if (state.sourceMode === 'auto' && state.netflixActiveBcp47) {
-        track = findTrackByBcp47(msg.tracks, state.netflixActiveBcp47);
-      }
-      if (!track) track = chooseTrack(msg.tracks);
-      dbg('chosen track:', track);
-      if (track) {
-        switchToTrack(track.id);
-      } else {
-        enableFallback('no-suitable-track');
-      }
-    } else if (msg.type === 'cues') {
-      if (msg.movieId !== state.urlMovieId) return;
-      if (msg.purpose === 'reference') {
-        if (msg.trackId !== state.referenceTrackId) return; // stale, superseded by a newer track switch
-        if (state.referencePollTimer) { clearTimeout(state.referencePollTimer); state.referencePollTimer = null; }
-        state.referenceCues = msg.cues || [];
-        dbg('reference: cues received, count=', state.referenceCues.length);
-        startEpisodeTranslation();
-        return;
-      }
-      dbg('recv cues for movieId', msg.movieId, 'count=', msg.cues && msg.cues.length,
-          'sample=', msg.cues && msg.cues.slice(0, 2));
-      state.cues = msg.cues || [];
-      if (state.cues.length) {
-        state.fallback = false;
-        beginTranslationPipeline();
-      } else {
-        enableFallback('empty-track');
-      }
-    } else if (msg.type === 'track-error') {
-      if (msg.movieId !== state.urlMovieId) return;
-      if (msg.purpose === 'reference') {
-        if (msg.trackId !== state.referenceTrackId) return;
-        if (state.referencePollTimer) { clearTimeout(state.referencePollTimer); state.referencePollTimer = null; }
-        dbg('reference: fetch failed, proceeding without reference:', msg.error);
-        state.referenceCues = [];
-        startEpisodeTranslation();
-        return;
-      }
-      enableFallback(msg.error);
-    } else if (msg.type === 'active-track') {
-      if (msg.movieId !== state.urlMovieId) return;
-      dbg('recv active-track', msg.bcp47, msg.displayName, 'sourceMode=', state.sourceMode);
-      state.netflixActiveBcp47 = msg.bcp47;
-      if (state.sourceMode !== 'auto') return; // user overrode via popup; don't fight them
-      if (!msg.bcp47) {
-        // Netflix subtitles turned off in the player UI: keep showing the last
-        // followed track rather than clearing it (decision recorded in PLAN.md T1).
-        dbg('active-track: Netflix subtitles off, keeping last track');
-        return;
-      }
-      if (!state.tracks.length) return; // manifest not captured yet; 'tracks' handler will match once it arrives
-      const match = findTrackByBcp47(state.tracks, msg.bcp47);
-      if (match && match.id !== state.activeTrackId) {
-        dbg('active-track: switching to', match.id, match.language);
-        switchToTrack(match.id);
-      }
-    } else if (msg.type === 'title') {
-      const waiters = state.pendingTitleRequests.get(msg.movieId);
-      if (waiters) {
-        state.pendingTitleRequests.delete(msg.movieId);
-        const info = {
-          seriesTitle: msg.seriesTitle || null,
-          episodeTitle: msg.episodeTitle || null,
-          seasonNumber: typeof msg.seasonNumber === 'number' ? msg.seasonNumber : null,
-          episodeNumber: typeof msg.episodeNumber === 'number' ? msg.episodeNumber : null
-        };
-        // Every concurrent caller waiting on this same movieId gets the same
-        // answer — see `pendingTitleRequests`' doc comment for why this must
-        // support more than one waiter.
-        for (const waiter of waiters) waiter(info);
-      }
-    }
-  });
+  function getVideo() {
+    return document.querySelector('video');
+  }
 
   function pageCommand(msg) {
     window.postMessage(Object.assign({ __multisub_cmd: true }, msg), '*');
   }
 
-  // Among a set of same-ish candidates, prefer non-forced, then full
-  // subtitle tracks over closed-captions. Forced (narrative-only) tracks
-  // carry just a handful of cues (foreign-dialogue burn-ins), so picking one
-  // by language match alone would leave the overlay empty almost the whole
-  // episode.
+  // Fallback injection of the page-world script. inject.js is also declared
+  // as a `world: "MAIN"` content script, which runs earlier; whichever runs
+  // second sees the page-world flag and exits.
+  function injectPageScript() {
+    try {
+      const s = document.createElement('script');
+      s.src = api.runtime.getURL('inject.js');
+      s.onload = () => s.remove();
+      (document.head || document.documentElement).appendChild(s);
+    } catch (e) { dbg('script injection failed:', e && e.message); }
+  }
+  injectPageScript();
+
+  // ===========================================================================
+  // 2. Settings and native sync
+  // ===========================================================================
+
+  // Applies settings right away, so the caller can rely on them being in
+  // effect when this returns (onNativePing does), then writes them. The
+  // storage.onChanged listener below applies the written copy once more;
+  // that's a no-op, since nothing compared there has changed.
+  function saveSettings(next) {
+    applySettingsChange(next);
+    return api.storage.local.set({ settings: MS.storedSettings(next) }).catch(() => {});
+  }
+
+  function applySettingsChange(next) {
+    if (torn) return;
+    const prev = settings;
+    settings = next;
+    applySettingsToOverlay();
+    // A mode or language picked in the popup while the toast is up.
+    if (toast.host) {
+      if (next.enabled) renderToastText();
+      else removeToast();
+    }
+    const langChanged = prev.targetLang !== next.targetLang;
+    const modeChanged = prev.mode !== next.mode;
+    if (langChanged || modeChanged) {
+      // A notice about the old mode or language (no official track in it,
+      // some lines of the old job missing) no longer applies.
+      state.notice = null;
+      state.lastRenderedKey = null;
+    }
+    if (langChanged) {
+      // The second-language track depends on the target language, and so
+      // does the primary (it avoids the target language), so re-select both.
+      clearFallbackResults();
+      state.noSecondHintShown = false;
+      if (state.tracks.length && !state.fallback) selectTracks({ restart: true });
+      else startPipeline();
+    } else {
+      const levelChanged = prev.annotateLevel !== next.annotateLevel && next.mode === 'annotate';
+      if (levelChanged) clearFallbackResults();
+      if (prev.enabled !== next.enabled || modeChanged || levelChanged) startPipeline();
+    }
+    // Something picked in the popup (stamped) ends the wait for the app's
+    // preferences.
+    resumeHeldPipeline();
+  }
+
+  function onStorageChanged(changes, area) {
+    if (torn || area !== 'local' || !changes.settings) return;
+    applySettingsChange(MS.mergeSettings(changes.settings.newValue));
+  }
+  api.storage.onChanged.addListener(onStorageChanged);
+
+  function stylesEqual(a, b) {
+    return Object.keys(MS.DEFAULT_STYLES).every((k) => (a || {})[k] === (b || {})[k]);
+  }
+
+  function engineSignature(engine) {
+    if (!engine) return 'none';
+    return [engine.active, engine.provider, engine.model, engine.hasKey, engine.localModelDownloaded].join('|');
+  }
+
+  function pingNative() {
+    let p;
+    try { p = api.runtime.sendMessage({ type: 'ping-native' }); } catch (e) { p = Promise.reject(e); }
+    return Promise.resolve(p).then(onNativePing, () => onNativePing(null));
+  }
+
+  // Whether the pipeline waits for the app's preferences before running
+  // anything: nothing has been chosen in the extension, so the mode and
+  // language in `settings` are only defaults, and the first native ping
+  // hasn't answered yet. The app may well hold a choice (say, AI 翻譯 picked
+  // during onboarding right before opening Netflix); running the default
+  // mode meanwhile would draw the wrong subtitles, hide Netflix's own, and
+  // could put up the netflix-mode hint suggesting the very mode the app
+  // chose. Bounded by FIRST_PING_WAIT_MS.
+  function waitingForAppPrefs() {
+    return !state.startupPingDone && !settings.prefsUpdatedAt;
+  }
+
+  // Starts a pipeline that was held back by waitingForAppPrefs(), once the
+  // wait is over. A no-op otherwise, including when a settings change
+  // already restarted it.
+  function resumeHeldPipeline() {
+    if (state.pipelineHeld && !waitingForAppPrefs()) startPipeline();
+  }
+
+  function endStartupWait() {
+    state.startupPingDone = true;
+    resumeHeldPipeline();
+  }
+
+  // Applies a native `ping` reply: subtitle styles (owned by the app), the
+  // shared preferences (newest updatedAt wins) and the engine status.
+  function onNativePing(res) {
+    if (torn) return;
+    state.startupPingDone = true;
+    if (!res || !res.ok) {
+      state.nativeOk = false;
+      endStartupWait();
+      return;
+    }
+    const nativeCameBack = state.nativeOk === false;
+    state.nativeOk = true;
+    const prevSig = state.engineSig;
+    state.engine = res.engine || null;
+    state.engineSig = engineSignature(state.engine);
+
+    let next = settings;
+    if (res.styles && !stylesEqual(res.styles, settings.styles)) {
+      next = Object.assign({}, next, { styles: Object.assign({}, MS.DEFAULT_STYLES, res.styles) });
+    }
+    const rec = MS.reconcilePrefs(next, res.prefs);
+    if (rec.adopt) next = Object.assign({}, rec.adopt, { styles: next.styles });
+    // Applied synchronously: a mode the app chose restarts the pipeline in
+    // there, and endStartupWait() below only starts it when nothing did.
+    if (next !== settings) saveSettings(next);
+    if (rec.push) sendPrefs(next);
+    endStartupWait();
+
+    // A job that failed for lack of a working engine gets another go once
+    // the engine setup changed (e.g. a key was pasted in the app).
+    const engineChanged = prevSig !== null && prevSig !== state.engineSig;
+    if (state.status === 'error' && ENGINE_FIXABLE_CODES.has(state.errorCode) &&
+        (engineChanged || (nativeCameBack && state.errorCode === 'native-unavailable'))) {
+      startPipeline();
+    }
+  }
+
+  function sendPrefs(s) {
+    try {
+      Promise.resolve(api.runtime.sendMessage({ type: 'set-prefs', prefs: MS.prefsOf(s) })).catch(() => {});
+    } catch (e) { /* background unreachable; the next ping pushes again */ }
+  }
+
+  // Startup: settings first, then ask native right away so styles,
+  // preferences and the engine status apply without waiting for the
+  // periodic ping. A ping that never answers (the app's extension stuck or
+  // missing) must not keep the default mode from running.
+  api.storage.local.get('settings')
+    .then((res) => applySettingsChange(MS.mergeSettings(res && res.settings)))
+    .catch(() => applySettingsChange(MS.mergeSettings(null)))
+    .then(() => pingNative());
+  setTimeout(endStartupWait, FIRST_PING_WAIT_MS);
+
+  // The native side's idle-unload check for the local model only runs when a
+  // native message wakes that process (it has no reliable timer of its own),
+  // so keep pinging while a watch page is open, even with the popup closed.
+  // Doubles as a slow style/preference sync when the popup isn't open.
+  setInterval(() => {
+    if (state.urlMovieId) pingNative();
+  }, NATIVE_PING_MS);
+
+  // ===========================================================================
+  // 3. Page-world messages
+  // ===========================================================================
+  // inject.js may be older than this file: it runs once per page (see its
+  // window.__multisubInjected guard), so after Safari reloads the extension
+  // the new content.js talks to the inject.js the page loaded with. Read
+  // its messages as the versions already shipped send them, treat any field
+  // added since as optional (cues' `cleaned`, see cuesFrom()), and send only
+  // commands every shipped inject.js knows (fetch-track, get-tracks,
+  // get-title); the rule for changing the protocol is at the top of
+  // inject.js.
+  //
+  // The same channel carries the announcements of other content.js
+  // instances (INSTANCE_MSG, section 12), which inject.js ignores.
+  function onWindowMessage(ev) {
+    if (torn || ev.source !== window) return;
+    const msg = ev.data;
+    if (!msg) return;
+    if (msg[INSTANCE_MSG] === true) { onInstanceMessage(msg); return; }
+    if (msg.__multisub !== true) return;
+    if (msg.type === 'tracks') onTracks(msg);
+    else if (msg.type === 'cues') onCues(msg);
+    else if (msg.type === 'track-error') onTrackError(msg);
+    else if (msg.type === 'active-track') onActiveTrack(msg);
+    else if (msg.type === 'title') onTitle(msg);
+  }
+  window.addEventListener('message', onWindowMessage);
+
+  function onTracks(msg) {
+    if (!state.urlMovieId || msg.movieId !== state.urlMovieId) return; // prefetch of another episode
+    state.tracks = Array.isArray(msg.tracks) ? msg.tracks : [];
+    dbg('tracks for', msg.movieId, state.tracks);
+    if (state.trackPollTimer) { clearInterval(state.trackPollTimer); state.trackPollTimer = null; }
+    if (!state.tracks.length) return;
+    if (!state.tracksAt) state.tracksAt = Date.now();
+    // The episode fell back to DOM text because the track download failed.
+    // inject.js re-posts the list when Netflix fetches a fresh manifest
+    // (new URLs) after such a failure: give the full track another go.
+    if (state.fallback && state.fallbackReason === 'fetch-failed' &&
+        state.fallbackRecoveries < FALLBACK_RECOVERY_MAX) {
+      state.fallbackRecoveries++;
+      state.activeTrackId = null; // makes selectTracks fetch it again
+      state.primaryRetries = 0;
+    }
+    scheduleSelectTracks();
+  }
+
+  function onActiveTrack(msg) {
+    if (msg.movieId !== state.urlMovieId) return;
+    dbg('active-track', msg.bcp47, msg.displayName, 'audio', msg.audioBcp47);
+    state.activeTrackReported = true;
+    state.netflixActiveBcp47 = msg.bcp47 || null;
+    state.netflixActiveForced = !!msg.forced;
+    state.netflixAudioBcp47 = msg.audioBcp47 || null;
+    state.lastRenderedKey = null; // the layout may change (see netflixDrawsPrimary)
+    if (!state.tracks.length) return; // onTracks() selects once the manifest arrives
+    if (state.selectTimer) { selectTracks(); return; } // it was waiting for exactly this
+    if (state.sourceMode !== 'auto') return; // the viewer picked a track in the popup
+    // Subtitles switched off in Netflix's player mid-episode: keep the track
+    // we already show instead of restarting the job on another one.
+    if (!msg.bcp47 && state.activeTrackId) return;
+    selectTracks();
+  }
+
+  // Netflix's direction marks, as characters or as entities left as text
+  // ("&lrm;", "&amp;lrm;").
+  const DIRECTION_MARK_ENTITIES = /&(?:amp;)*(?:lrm|rlm|#x200[ef]|#820[67]);/gi;
+  const BIDI_CONTROLS = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+
+  // The cues of a 'cues' message. inject.js cleans each cue's text and says
+  // so (`cleaned`); one from before that flag (still running in a page that
+  // was open when the extension was updated) left Netflix's direction marks
+  // in its TTML cues, so those are removed here, along with what else needs
+  // no entity decoding.
+  function cuesFrom(msg) {
+    const cues = Array.isArray(msg.cues) ? msg.cues : [];
+    if (msg.cleaned) return cues;
+    const out = [];
+    for (const c of cues) {
+      const text = String((c && c.text) || '').replace(DIRECTION_MARK_ENTITIES, '').replace(BIDI_CONTROLS, '')
+        .replace(/\u00A0/g, ' ').replace(/[ \t]*\n[ \t]*/g, '\n').trim();
+      if (text) out.push(Object.assign({}, c, { text: text }));
+    }
+    return out;
+  }
+
+  function onCues(msg) {
+    if (msg.movieId !== state.urlMovieId) return;
+    if (msg.purpose === 'reference') {
+      if (msg.trackId !== state.secondTrackId) return; // superseded by a newer choice
+      clearSecondTimer();
+      state.secondCues = cuesFrom(msg);
+      state.secondState = state.secondCues.length ? 'ready' : 'failed';
+      dbg('second track cues:', state.secondCues.length);
+      onSecondSettled();
+      return;
+    }
+    if (msg.trackId !== state.activeTrackId) return; // superseded by a newer track switch
+    state.cues = cuesFrom(msg);
+    dbg('primary cues:', state.cues.length);
+    if (!state.cues.length) { enableFallback('empty-track'); return; }
+    state.fallback = false;
+    state.fallbackReason = null;
+    state.primaryRetries = 0;
+    clearPrimaryRetry();
+    startPipeline();
+  }
+
+  function onTrackError(msg) {
+    if (msg.movieId !== state.urlMovieId) return;
+    if (msg.purpose === 'reference') {
+      if (msg.trackId !== state.secondTrackId) return;
+      clearSecondTimer();
+      dbg('second track fetch failed:', msg.error);
+      state.secondCues = [];
+      state.secondState = 'failed';
+      onSecondSettled();
+      return;
+    }
+    if (msg.trackId !== state.activeTrackId || state.cues.length) return;
+    if (state.primaryRetries < PRIMARY_FETCH_RETRY_MS.length) {
+      const trackId = msg.trackId;
+      const delay = PRIMARY_FETCH_RETRY_MS[state.primaryRetries++];
+      dbg('primary track fetch failed:', msg.error, '- retrying in', delay, 'ms');
+      clearPrimaryRetry();
+      state.primaryRetryTimer = setTimeout(() => {
+        state.primaryRetryTimer = null;
+        if (state.activeTrackId !== trackId || state.cues.length || state.fallback) return;
+        pageCommand({ type: 'fetch-track', movieId: state.urlMovieId, trackId: trackId, purpose: 'source' });
+      }, delay);
+      return;
+    }
+    enableFallback('fetch-failed', msg.error);
+  }
+
+  function clearPrimaryRetry() {
+    if (state.primaryRetryTimer) { clearTimeout(state.primaryRetryTimer); state.primaryRetryTimer = null; }
+  }
+
+  function onTitle(msg) {
+    const waiters = state.pendingTitleRequests.get(msg.movieId);
+    if (!waiters) return;
+    state.pendingTitleRequests.delete(msg.movieId);
+    const info = {
+      seriesTitle: msg.seriesTitle || null,
+      episodeTitle: msg.episodeTitle || null,
+      seasonNumber: typeof msg.seasonNumber === 'number' ? msg.seasonNumber : null,
+      episodeNumber: typeof msg.episodeNumber === 'number' ? msg.episodeNumber : null
+    };
+    for (const waiter of waiters) waiter(info);
+  }
+
+  // ===========================================================================
+  // 4. Track selection
+  // ===========================================================================
+
+  // Among same-language candidates, prefer non-forced, then full subtitles
+  // over closed captions. Forced (narrative-only) tracks carry just a handful
+  // of cues for foreign-language bits, so picking one by language alone would
+  // leave the overlay empty almost the whole episode.
   function preferredTrack(candidates) {
     if (!candidates.length) return null;
     const nonForced = candidates.filter((t) => !t.forced);
     const pool = nonForced.length ? nonForced : candidates;
-    const subs = pool.filter((t) => /subtitle/i.test(t.trackType));
-    const cc = pool.filter((t) => /closed/i.test(t.trackType));
-    return subs[0] || cc[0] || pool[0];
-  }
-
-  function chooseTrack(tracks) {
-    if (state.activeTrackId) {
-      const kept = tracks.find((t) => t.id === state.activeTrackId);
-      if (kept) return kept;
-    }
-    return preferredTrack(tracks) || tracks[0] || null;
-  }
-
-  // Normalize a BCP-47 language code for matching Netflix's active-track
-  // report against the captured track list's `language` field. Netflix uses
-  // zh-Hant/zh-Hans (script subtags) for Chinese; everything else compares
-  // on the primary language subtag.
-  function normalizeBcp47(code) {
-    if (!code) return '';
-    const c = String(code).toLowerCase();
-    if (c.indexOf('zh') === 0) {
-      if (/hant|-tw|-hk|-mo/.test(c)) return 'zh-hant';
-      if (/hans|-cn|-sg/.test(c)) return 'zh-hans';
-      return 'zh';
-    }
-    return c.split('-')[0];
+    return pool.find((t) => /subtitle/i.test(t.trackType)) ||
+      pool.find((t) => /closed/i.test(t.trackType)) || pool[0];
   }
 
   function findTrackByBcp47(tracks, bcp47) {
     if (!bcp47) return null;
-    const norm = normalizeBcp47(bcp47);
-    const matches = tracks.filter((t) => normalizeBcp47(t.language) === norm);
-    return preferredTrack(matches);
+    return preferredTrack(tracks.filter((t) => MS.sameLanguage(t.language, bcp47)));
   }
 
-  // T2: find the official target-language track to use as a translation
-  // reference (for name/terminology consistency, wired up in T3). Forced and
-  // CC tracks are excluded per PLAN.md T4 — they're not representative full
-  // dialogue. Never returns the source track itself.
-  function findReferenceTrack(tracks, targetLang, sourceTrackId) {
-    const norm = normalizeBcp47(targetLang);
-    if (!norm) return null;
-    const matches = tracks.filter((t) =>
-      t.id !== sourceTrackId && !t.forced && !/closed/i.test(t.trackType) &&
-      normalizeBcp47(t.language) === norm);
-    return matches[0] || null;
-  }
-
-  // T2: align source cues to reference-track cues by time overlap (IoU on
-  // the [start,end] interval). One-to-many / many-to-one overlaps are
-  // merged in chronological order; source cues with no overlapping
-  // reference cue get `null`. Pure function — sourceCues/refCues are plain
-  // [{start,end,text}] arrays sorted by start (as produced by the WebVTT/TTML
-  // parsers), so this is easy to hand-test by pasting sample arrays into a
-  // console.
-  function alignReferenceCues(sourceCues, refCues) {
-    const result = new Array(sourceCues.length).fill(null);
-    if (!refCues || !refCues.length) return result;
-    let refIdx = 0;
-    for (let i = 0; i < sourceCues.length; i++) {
-      const src = sourceCues[i];
-      // Advance past reference cues that end before this source cue starts,
-      // but keep any that might still overlap a later source cue too.
-      while (refIdx < refCues.length - 1 && refCues[refIdx].end < src.start) refIdx++;
-      const matched = [];
-      for (let j = refIdx; j < refCues.length; j++) {
-        const ref = refCues[j];
-        if (ref.start > src.end) break;
-        const overlap = Math.min(src.end, ref.end) - Math.max(src.start, ref.start);
-        if (overlap > 0) matched.push(ref.text);
-      }
-      if (matched.length) result[i] = matched.join(' ');
+  // Primary = the language being watched. Netflix's selected subtitle,
+  // unless it is off or already in the target language (then it would just
+  // repeat the second line); then the audio language; then English; then
+  // the first full non-forced track.
+  function choosePrimaryTrack(tracks) {
+    if (state.sourceMode === 'manual' && state.manualTrackId) {
+      const picked = tracks.find((t) => t.id === state.manualTrackId);
+      if (picked) return picked;
     }
-    return result;
+    const target = settings.targetLang;
+    const usable = (code) => !!code && !MS.sameLanguage(code, target);
+    const candidates = [state.netflixActiveBcp47, state.netflixAudioBcp47, 'en'];
+    for (const code of candidates) {
+      if (!usable(code)) continue;
+      const hit = findTrackByBcp47(tracks, code);
+      if (hit) return hit;
+    }
+    return preferredTrack(tracks.filter((t) => !MS.sameLanguage(t.language, target))) ||
+      preferredTrack(tracks);
   }
 
-  // Pick up to n roughly evenly-spaced indices from [0, length) for DEBUG
-  // sampling (T2 acceptance criterion: eyeball ~10 pairs for drift).
-  function pickSampleIndices(length, n) {
-    if (length <= n) return Array.from({ length: length }, (_, i) => i);
-    const out = [];
-    for (let i = 0; i < n; i++) out.push(Math.floor(i * length / n));
-    return out;
+  // Second line = Netflix's own track in the target language: non-forced,
+  // full subtitles preferred over closed captions. Never the primary itself.
+  function chooseSecondTrack(tracks, primaryId) {
+    const matches = tracks.filter((t) => t.id !== primaryId && !t.forced &&
+      MS.sameLanguage(t.language, settings.targetLang));
+    return matches.find((t) => /subtitle/i.test(t.trackType)) ||
+      matches.find((t) => !/closed/i.test(t.trackType)) || matches[0] || null;
+  }
+
+  function scheduleSelectTracks() {
+    if (state.selectTimer) return;
+    const waited = Date.now() - state.tracksAt;
+    if (state.activeTrackReported || state.sourceMode === 'manual' || waited >= ACTIVE_TRACK_WAIT_MS) {
+      selectTracks();
+      return;
+    }
+    state.selectTimer = setTimeout(() => {
+      state.selectTimer = null;
+      selectTracks();
+    }, ACTIVE_TRACK_WAIT_MS - waited);
+  }
+
+  // Picks both tracks and fetches whichever changed. With nothing changed it
+  // leaves a running job alone, unless `restart` (the target language changed).
+  function selectTracks(opts) {
+    if (state.selectTimer) { clearTimeout(state.selectTimer); state.selectTimer = null; }
+    if (!state.tracks.length) return;
+    const primary = choosePrimaryTrack(state.tracks);
+    if (!primary) { enableFallback('no-suitable-track'); return; }
+    const primaryChanged = primary.id !== state.activeTrackId;
+    dbg('selectTracks: primary', primary.id, primaryChanged ? '(new)' : '(kept)');
+    // A new primary resets the cues and the job; the pipeline restarts once
+    // its cues arrive.
+    if (primaryChanged) switchToTrack(primary.id);
+    const secondChanged = resolveSecondTrack();
+    if (!primaryChanged && (secondChanged || (opts && opts.restart))) startPipeline();
   }
 
   function switchToTrack(trackId) {
     state.activeTrackId = trackId;
     state.cues = [];
-    state.translations = [];
     state.fallback = false;
+    state.fallbackReason = null;
+    state.primaryRetries = 0;
+    clearPrimaryRetry();
+    stopJob();
+    resetItems(null);
+    state.errorCode = null;
+    state.errorHint = '';
     state.status = 'fetching';
-    state.lastRenderedKey = null;
-    state.referenceTrackId = null;
-    state.referenceCues = null;
-    state.referenceLines = null;
-    if (state.referencePollTimer) { clearTimeout(state.referencePollTimer); state.referencePollTimer = null; }
     pageCommand({ type: 'fetch-track', movieId: state.urlMovieId, trackId: trackId, purpose: 'source' });
   }
 
-  // T4: decide how to handle the current (source track, targetLang) pair
-  // before doing any work. Three outcomes:
-  //  - 'passthrough': targetLang already matches the source subtitle's own
-  //    language — the source text IS the desired output, so skip translation
-  //    entirely (no reference fetch, no native call, no model load — this is
-  //    also what PLAN.md M3 depends on).
-  //  - 'translate' with a referenceTrack: normal T2/T3 flow.
-  //  - 'translate' with referenceTrack=null: no official target-language
-  //    track exists (or the only candidates were forced/CC, excluded by
-  //    findReferenceTrack) — falls back to translating with no reference,
-  //    identical to pre-T2 behavior.
-  function decideTranslationStrategy() {
-    const sourceTrack = state.tracks.find((t) => t.id === state.activeTrackId);
-    const sourceLang = sourceTrack ? sourceTrack.language : '';
-    if (sourceLang && normalizeBcp47(sourceLang) === normalizeBcp47(settings.targetLang)) {
-      dbg('decision: passthrough — source track language already matches targetLang', sourceLang, settings.targetLang);
-      return { mode: 'passthrough' };
-    }
-    const referenceTrack = findReferenceTrack(state.tracks, settings.targetLang, state.activeTrackId);
-    dbg('decision: translate', referenceTrack ? 'with reference track ' + referenceTrack.id : '(no official target-language track found)');
-    return { mode: 'translate', referenceTrack: referenceTrack };
+  function clearSecondTimer() {
+    if (state.secondTimer) { clearTimeout(state.secondTimer); state.secondTimer = null; }
   }
 
-  // T2/T4: once source cues are in hand, decide the strategy and (for the
-  // normal translate path) resolve/fetch the official reference track for
-  // the current targetLang before kicking off translation, so the first
-  // `episode` message already carries referenceLines. A stuck/failed
-  // reference fetch must not block translation forever (5s timeout).
-  function beginTranslationPipeline() {
-    state.referenceTrackId = null;
-    state.referenceCues = null;
-    state.referenceLines = null;
-    if (state.referencePollTimer) { clearTimeout(state.referencePollTimer); state.referencePollTimer = null; }
+  // Returns true when the second-language track changed (and is being fetched).
+  function resolveSecondTrack() {
+    const second = chooseSecondTrack(state.tracks, state.activeTrackId);
+    const id = second ? second.id : null;
+    if (id === state.secondTrackId && state.secondState !== 'unknown') return false;
+    clearSecondTimer();
+    state.secondTrackId = id;
+    state.secondCues = [];
+    state.secondTimedOut = false;
+    if (!id) {
+      state.secondState = 'none';
+      return true;
+    }
+    state.secondState = 'loading';
+    dbg('second track: fetching', id);
+    pageCommand({ type: 'fetch-track', movieId: state.urlMovieId, trackId: id, purpose: 'reference' });
+    state.secondTimer = setTimeout(() => {
+      state.secondTimer = null;
+      if (state.secondState !== 'loading') return;
+      dbg('second track: timed out, going on without it');
+      state.secondTimedOut = true;
+      onSecondSettled();
+    }, SECOND_TRACK_TIMEOUT_MS);
+    return true;
+  }
 
-    const decision = decideTranslationStrategy();
-    if (decision.mode === 'passthrough') {
-      state.referenceCues = [];
-      state.translations = state.cues.map((c) => c.text);
-      state.translatedCount = state.cues.length;
+  function onSecondSettled() {
+    state.lastRenderedKey = null;
+    if (waitingForAppPrefs()) return; // the held pipeline reads secondState when it starts
+    if (settings.mode === 'netflix' && !state.fallback && state.cues.length) {
+      state.status = state.secondState === 'loading' ? 'fetching' : 'ready';
+      maybeShowNoSecondHint();
+      return;
+    }
+    if (state.waitingForReference) startPipeline();
+  }
+
+  // ===========================================================================
+  // 5. Pipelines and the job port
+  // ===========================================================================
+
+  // What a job's results depend on. Two jobs with the same signature get
+  // the same lines back (background.js caches them under the same key).
+  function jobSignature(kind) {
+    return [kind, state.urlMovieId, state.activeTrackId, state.cues.length, settings.targetLang,
+      kind === 'annotate' ? settings.annotateLevel : ''].join('\u0000');
+  }
+
+  function keepItems() {
+    if (!state.itemsKind || !state.itemsSig || !state.readyCount) return;
+    state.kept.delete(state.itemsSig); // re-inserted last: the most recent
+    state.kept.set(state.itemsSig, { items: state.items, readyCount: state.readyCount });
+    while (state.kept.size > KEPT_RESULTS_MAX) state.kept.delete(state.kept.keys().next().value);
+  }
+
+  // Puts back what this mode had when the viewer last left it. Returns true
+  // when that's every line, so there is nothing left to ask for.
+  function restoreKept(kind) {
+    const sig = jobSignature(kind);
+    state.itemsSig = sig;
+    const kept = state.kept.get(sig);
+    if (!kept) return false;
+    state.kept.delete(sig); // `items` is that array now, and keeps changing
+    if (kept.items.length !== state.items.length) return false;
+    state.items = kept.items;
+    state.readyCount = kept.readyCount;
+    return state.readyCount === state.items.length;
+  }
+
+  // Drops the results on screen, setting them aside for a later switch back
+  // to the same mode (keepItems).
+  function resetItems(kind) {
+    keepItems();
+    state.itemsSig = null;
+    state.itemsKind = kind;
+    state.items = kind ? new Array(state.cues.length).fill(null) : [];
+    state.readyCount = 0;
+    state.glossPlan = null;
+    state.glossPlanDirty = true;
+    state.segMemo = null;
+    state.lastRenderedKey = null;
+  }
+
+  function clearRetryTimer() {
+    if (state.retryTimer) { clearTimeout(state.retryTimer); state.retryTimer = null; }
+  }
+
+  // Drops the current job. Closing its port is what tells background.js to
+  // stop (it cancels a job whose port disconnects), and because every job
+  // gets a fresh port, late messages from the old one can't reach the new
+  // job's state.
+  function stopJob() {
+    state.job = null;
+    state.waitingForReference = false;
+    if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
+    state.reconnectAttempts = 0;
+    clearRetryTimer();
+    closePort();
+  }
+
+  function closePort() {
+    const port = state.port;
+    state.port = null;
+    state.fallbackInflight.clear();
+    if (port) { try { port.disconnect(); } catch (e) { /* already gone */ } }
+  }
+
+  function openPort() {
+    // A torn-down instance (section 12) talks to background.js no more: a
+    // late callback (say, an engine-changed ping answering after a newer
+    // instance took over) must not start a second job for this tab.
+    if (torn) return null;
+    if (state.port) return state.port;
+    let port;
+    try { port = api.runtime.connect({ name: 'multisub' }); } catch (e) { return null; }
+    port.onMessage.addListener((msg) => { if (state.port === port && msg) onPortMessage(msg); });
+    port.onDisconnect.addListener(() => {
+      if (state.port !== port) return; // we closed it ourselves
+      state.port = null;
+      state.fallbackInflight.clear();
+      // Safari unloaded the background page (or it crashed): reconnect and
+      // re-send; chunks it already finished replay from the cache.
+      if (state.job && !state.job.finished) scheduleReconnect();
+    });
+    state.port = port;
+    return port;
+  }
+
+  function postToPort(msg) {
+    const port = openPort();
+    if (!port) return false;
+    try { port.postMessage(msg); return true; } catch (e) { return false; }
+  }
+
+  // Restarts whatever the current mode needs from scratch. Results already
+  // produced come back instantly from background.js's cache.
+  function startPipeline() {
+    if (torn) return;
+    stopJob();
+    state.errorCode = null;
+    state.errorHint = '';
+    state.partialMissing = 0;
+    resetItems(null);
+    state.pipelineHeld = false;
+    const mode = settings.mode;
+    if (!state.urlMovieId) { state.status = 'idle'; return; }
+    if (!settings.enabled) { state.status = 'off'; return; }
+    if (waitingForAppPrefs()) {
+      // Nothing mode-specific yet; resumeHeldPipeline() comes back here.
+      state.pipelineHeld = true;
+      state.status = state.activeTrackId || state.fallback ? 'fetching' : 'waiting-tracks';
+      return;
+    }
+    if (state.fallback) {
+      state.status = 'fallback';
+      if (mode === 'netflix' && !state.noDataHintShown) {
+        state.noDataHintShown = true;
+        showNotice(TEXT.noData, NOTICE_MS + 2000);
+      }
+      return;
+    }
+    if (!state.cues.length) {
+      state.status = state.activeTrackId ? 'fetching' : 'waiting-tracks';
+      return;
+    }
+    if (mode === 'netflix') {
+      // Both lines come straight from Netflix, each on its own timeline: no
+      // background job at all.
+      state.status = state.secondState === 'loading' ? 'fetching' : 'ready';
+      maybeShowNoSecondHint();
+      return;
+    }
+    const sourceLang = primaryLanguage();
+    if (sourceLang && MS.sameLanguage(sourceLang, settings.targetLang)) {
+      // The original subtitle is already in the target language: nothing to
+      // translate or gloss, so no native call and no model load.
+      state.status = 'passthrough';
+      return;
+    }
+    if (state.secondState === 'loading' && !state.secondTimedOut) {
+      // The official line is the reference for both AI modes; wait for it
+      // (bounded by SECOND_TRACK_TIMEOUT_MS) so the first request has it.
+      state.status = 'fetching';
+      state.waitingForReference = true;
+      return;
+    }
+    startJob(mode);
+  }
+
+  function startJob(kind) {
+    resetItems(kind);
+    if (restoreKept(kind)) {
+      // Switched back to a mode that had finished: show it, ask nothing.
       state.status = 'done';
-      state.errorHint = '';
+      return;
+    }
+    const referenceLines = state.secondState === 'ready'
+      ? MS.alignCues(state.cues, state.secondCues)
+      : new Array(state.cues.length).fill(null);
+    const msg = {
+      type: 'job',
+      kind: kind,
+      movieId: state.urlMovieId,
+      sourceLang: primaryLanguage(),
+      targetLang: settings.targetLang,
+      lines: state.cues.map((c) => c.text),
+      referenceLines: referenceLines,
+      starts: state.cues.map((c) => c.start),
+      startIndex: currentCueIndex()
+    };
+    if (kind === 'annotate') msg.level = settings.annotateLevel;
+    // Lines kept from earlier (restoreKept) stay on screen; the job's replay
+    // from background.js's cache fills in the rest.
+    state.job = { kind: kind, msg: msg, finished: false };
+    state.status = kind === 'translate' ? 'translating' : 'annotating';
+    sendJob();
+    // Separate and fire-and-forget, so a slow title lookup (up to 1.5 s)
+    // never delays the first subtitles.
+    fetchAndStoreEpisodeTitle(msg.movieId, msg.sourceLang, msg.targetLang);
+  }
+
+  function sendJob() {
+    const job = state.job;
+    if (!job || job.finished) return;
+    // Resent jobs start where the viewer is now, not where they were.
+    job.msg.startIndex = currentCueIndex();
+    if (!postToPort(job.msg)) scheduleReconnect();
+  }
+
+  function scheduleReconnect() {
+    if (state.reconnectTimer || !state.job) return;
+    const attempt = state.reconnectAttempts++;
+    if (attempt >= 5) {
+      // The extension was probably reloaded or updated under this page.
+      failJob('native-unavailable');
+      return;
+    }
+    state.reconnectTimer = setTimeout(() => {
+      state.reconnectTimer = null;
+      sendJob();
+    }, 1000 * Math.pow(2, attempt));
+  }
+
+  function currentCueIndex() {
+    const video = getVideo();
+    return video ? MS.cueIndexAtOrAfter(state.cues, video.currentTime) : 0;
+  }
+
+  function failJob(code) {
+    if (state.job) state.job.finished = true;
+    state.status = 'error';
+    state.errorCode = code || 'provider-error';
+    state.errorHint = 'MultiSub：' + MS.errorText(state.errorCode);
+    state.lastRenderedKey = null;
+    clearRetryTimer();
+    if (AUTO_RETRY_CODES.has(state.errorCode)) {
+      const failedCode = state.errorCode;
+      scheduleRetry(() => state.status === 'error' && state.errorCode === failedCode);
+    }
+  }
+
+  // Restarts the pipeline after AUTO_RETRY_MS while `stillWanted()` holds,
+  // at most AUTO_RETRY_MAX times per episode (reset by a complete 'done').
+  // Finished chunks replay from background.js's cache, so a retry only
+  // redoes what's missing. Returns whether a retry was scheduled.
+  function scheduleRetry(stillWanted) {
+    clearRetryTimer();
+    if (state.autoRetries >= AUTO_RETRY_MAX) return false;
+    const job = state.job;
+    state.retryTimer = setTimeout(() => {
+      state.retryTimer = null;
+      if (state.job !== job || !stillWanted()) return;
+      state.autoRetries++;
+      startPipeline();
+    }, AUTO_RETRY_MS);
+    return true;
+  }
+
+  function onPortMessage(msg) {
+    if (msg.type === 'heartbeat') { state.reconnectAttempts = 0; return; }
+    if (msg.type === 'line-result') { onLineResult(msg); return; }
+    const job = state.job;
+    if (!job || msg.kind !== job.kind) return;
+    state.reconnectAttempts = 0;
+    if (msg.type === 'progress') {
+      applyProgress(msg.start, msg.items);
+    } else if (msg.type === 'done') {
+      job.finished = true;
+      state.status = 'done';
+      if (msg.partial) {
+        // Some chunks failed but the rest is on screen: a short notice, not
+        // the permanent error hint, and a quiet retry for the missing lines.
+        state.partialMissing = Number(msg.missing) || 0;
+        const retrying = scheduleRetry(() => state.status === 'done');
+        showNotice(TEXT.partial(job.kind, retrying), NOTICE_MS);
+      } else {
+        state.partialMissing = 0;
+        state.autoRetries = 0;
+      }
+    } else if (msg.type === 'superseded') {
+      // Another tab started a different job for the same episode and
+      // language, which replaced this one. Stop waiting for it; later, ask
+      // again and replay whatever that job has cached by then.
+      job.finished = true;
+      scheduleRetry(() => true);
+    } else if (msg.type === 'error') {
+      dbg('job error', msg.code, msg.detail);
+      failJob(msg.code);
+    }
+  }
+
+  function cleanAnnotations(list) {
+    if (!Array.isArray(list)) return [];
+    return list.filter((a) => a && typeof a.term === 'string' && typeof a.gloss === 'string' &&
+      a.term.trim() && a.gloss.trim());
+  }
+
+  // Only annotations whose term occurs in the line: one that can't be
+  // placed must not use up its term's GLOSS_REPEAT_LIMIT budget either.
+  function placeableAnnotations(list, text) {
+    return cleanAnnotations(list).filter((a) => !!MS.findTerm(text, a.term));
+  }
+
+  function applyProgress(start, items) {
+    if (!Array.isArray(items)) return;
+    const annotate = state.itemsKind === 'annotate';
+    for (let i = 0; i < items.length; i++) {
+      const idx = start + i;
+      if (idx < 0 || idx >= state.items.length || items[i] == null) continue;
+      if (state.items[idx] == null) state.readyCount++;
+      state.items[idx] = annotate
+        ? placeableAnnotations(items[i], (state.cues[idx] && state.cues[idx].text) || '')
+        : String(items[i]);
+    }
+    if (annotate) state.glossPlanDirty = true;
+    state.lastRenderedKey = null;
+  }
+
+  // Which annotations each cue may show: a term (lowercased) is glossed only
+  // on its first GLOSS_REPEAT_LIMIT annotated cues in cue order. Rebuilt
+  // lazily after progress, since chunks arrive out of order.
+  function glossPlan() {
+    if (state.glossPlan && !state.glossPlanDirty) return state.glossPlan;
+    const plan = new Array(state.items.length).fill(null);
+    const counts = new Map();
+    for (let i = 0; i < state.items.length; i++) {
+      const list = state.items[i];
+      if (!Array.isArray(list) || !list.length) continue;
+      const allowed = [];
+      const seenHere = new Set();
+      for (const a of list) {
+        const key = a.term.trim().toLowerCase();
+        if (seenHere.has(key)) continue;
+        seenHere.add(key);
+        const count = (counts.get(key) || 0) + 1;
+        counts.set(key, count);
+        if (count <= GLOSS_REPEAT_LIMIT) allowed.push(a);
+      }
+      plan[i] = allowed;
+    }
+    state.glossPlan = plan;
+    state.glossPlanDirty = false;
+    state.segMemo = null;
+    return plan;
+  }
+
+  function annotatedSegments(text, allowed) {
+    const memo = state.segMemo;
+    if (memo && memo.text === text && memo.allowed === allowed) return memo.segments;
+    const segments = allowed && allowed.length ? MS.matchAnnotations(text, allowed) : null;
+    state.segMemo = { text: text, allowed: allowed, segments: segments };
+    return segments;
+  }
+
+  function maybeShowNoSecondHint() {
+    if (settings.mode !== 'netflix' || state.secondState !== 'none' || state.noSecondHintShown) return;
+    if (waitingForAppPrefs()) return; // the mode may not be netflix after all
+    state.noSecondHintShown = true;
+    showNotice(TEXT.noSecond(settings.targetLang), NOTICE_MS);
+  }
+
+  function showNotice(text, ms) {
+    state.notice = { text: text, until: Date.now() + (ms || NOTICE_MS) };
+    state.lastRenderedKey = null;
+  }
+
+  function currentHint() {
+    if (state.errorHint) return state.errorHint;
+    if (state.notice && Date.now() < state.notice.until) return state.notice.text;
+    return '';
+  }
+
+  // Keep Safari from unloading the background page mid-job.
+  setInterval(() => {
+    const job = state.job;
+    if (job && !job.finished && state.port) {
+      try { state.port.postMessage({ type: 'keepalive' }); } catch (e) { /* onDisconnect handles it */ }
+    }
+  }, KEEPALIVE_MS);
+
+  // ===========================================================================
+  // 6. DOM fallback
+  // ===========================================================================
+  function enableFallback(reason, detail) {
+    dbg('falling back to DOM subtitles:', reason, detail || '');
+    if (state.trackPollTimer) { clearInterval(state.trackPollTimer); state.trackPollTimer = null; }
+    clearPrimaryRetry();
+    state.fallback = true;
+    state.fallbackReason = reason;
+    startPipeline();
+  }
+
+  function clearFallbackResults() {
+    state.fallbackCache.clear();
+    state.fallbackInflight.clear();
+    state.fallbackGlossCounts.clear();
+    state.fallbackGlossPlan.clear();
+    state.fallbackPausedUntil = 0;
+  }
+
+  // Netflix renders each subtitle line in its own container with <br>s in
+  // between; textContent would glue the lines together, and innerText loses
+  // them while the element is hidden in merged mode, so walk the nodes.
+  function readDomSubtitle() {
+    const container = document.querySelector('.player-timedtext');
+    if (!container) return '';
+    let out = '';
+    (function walk(node) {
+      for (const child of node.childNodes) {
+        if (child.nodeType === 3) out += child.nodeValue;
+        else if (child.nodeName === 'BR') out += '\n';
+        else if (child.nodeType === 1) {
+          const before = out.length;
+          walk(child);
+          if (out.length > before && child.classList.contains('player-timedtext-text-container')) out += '\n';
+        }
+      }
+    })(container);
+    return out.replace(/[ \t]*\n[ \t]*/g, '\n').replace(/\n{2,}/g, '\n').trim();
+  }
+
+  function requestLine(kind, text) {
+    const key = kind + '\u0000' + text;
+    if (state.fallbackCache.has(key) || state.fallbackInflight.has(key)) return;
+    if (Date.now() < state.fallbackPausedUntil) return;
+    // The local model works one line at a time (and a burst of requests on
+    // a cold start would each load it). The tick asks again for whatever
+    // line is on screen once the one in flight returns.
+    const cloud = !!(state.engine && state.engine.active === 'cloud');
+    if (!cloud && state.fallbackInflight.size) return;
+    state.fallbackInflight.add(key);
+    const msg = { type: 'line', kind: kind, text: text, targetLang: settings.targetLang };
+    if (kind === 'annotate') {
+      msg.level = settings.annotateLevel;
+      // Optional extra: the language Netflix's player reported, if any.
+      msg.sourceLang = state.netflixActiveBcp47 || '';
+    }
+    if (!postToPort(msg)) state.fallbackInflight.delete(key);
+  }
+
+  function onLineResult(msg) {
+    const kind = msg.kind === 'annotate' ? 'annotate' : 'translate';
+    const key = kind + '\u0000' + msg.text;
+    state.fallbackInflight.delete(key);
+    // background.js skipped a line that was no longer the newest one waiting.
+    if (msg.dropped) return;
+    if (msg.code) {
+      // Don't hammer a failing engine every 100 ms tick.
+      state.fallbackPausedUntil = Date.now() + FALLBACK_ERROR_PAUSE_MS;
+      state.errorCode = msg.code;
+      state.errorHint = 'MultiSub：' + MS.errorText(msg.code);
       state.lastRenderedKey = null;
       return;
     }
-
-    const refTrack = decision.referenceTrack;
-    if (!refTrack) {
-      state.referenceCues = [];
-      startEpisodeTranslation();
-      return;
+    if (state.errorHint && state.status === 'fallback') { state.errorHint = ''; state.errorCode = null; }
+    state.fallbackCache.set(key, kind === 'annotate'
+      ? placeableAnnotations(msg.result, String(msg.text))
+      : String(msg.result == null ? '' : msg.result));
+    while (state.fallbackCache.size > FALLBACK_CACHE_MAX) {
+      state.fallbackCache.delete(state.fallbackCache.keys().next().value);
     }
-    state.referenceTrackId = refTrack.id;
-    dbg('reference: fetching', refTrack.id, refTrack.language);
-    pageCommand({ type: 'fetch-track', movieId: state.urlMovieId, trackId: refTrack.id, purpose: 'reference' });
-    state.referencePollTimer = setTimeout(() => {
-      if (state.referenceCues == null) {
-        dbg('reference: fetch timed out, proceeding without reference');
-        state.referenceCues = [];
-        startEpisodeTranslation();
-      }
-    }, 5000);
+    state.lastRenderedKey = null;
   }
 
-  // ---------------------------------------------------------------------------
-  // V4: "整理本集單字" trigger (PLAN.md Phase V, docs/vocab-design.md §4/§8)
-  // ---------------------------------------------------------------------------
+  // Same repeat limit as glossPlan(), counted in the order lines show up.
+  function fallbackAllowed(text, list) {
+    if (state.fallbackGlossPlan.has(text)) return state.fallbackGlossPlan.get(text);
+    const allowed = [];
+    const seenHere = new Set();
+    for (const a of list) {
+      const key = a.term.trim().toLowerCase();
+      if (seenHere.has(key)) continue;
+      seenHere.add(key);
+      const count = (state.fallbackGlossCounts.get(key) || 0) + 1;
+      state.fallbackGlossCounts.set(key, count);
+      if (count <= GLOSS_REPEAT_LIMIT) allowed.push(a);
+    }
+    state.fallbackGlossPlan.set(text, allowed);
+    return allowed;
+  }
 
-  // Asks inject.js for the show/episode/season metadata via Netflix's
-  // private player API (`getVideoTitle` in inject.js — verified against the
-  // real-world Subadub extension's approach, see its own comment for why).
-  // Resolves to `{seriesTitle, episodeTitle, seasonNumber, episodeNumber}`
-  // or null on timeout/any failure — this is a best-effort lookup, not
-  // something worth blocking or failing "整理本集單字" (or, since
-  // 2026-07-06, ordinary translation caching) over.
+  // ===========================================================================
+  // 7. Overlay rendering
+  // ===========================================================================
+  let overlay = null;
+  let overlayOriginal = null;
+  let overlayText = null;
+  let overlayHint = null;
+
+  function buildOverlay() {
+    overlay = document.createElement('div');
+    overlay.id = 'multisub-overlay';
+    overlay.setAttribute(INSTANCE_ATTR, INSTANCE_ID);
+    // The upper line goes first in DOM order so #multisub-text stays the
+    // bottom-most child: its position is what bottomOffset and dragging
+    // calibrate against, in every layout.
+    overlayOriginal = document.createElement('div');
+    overlayOriginal.id = 'multisub-original';
+    overlayText = document.createElement('div');
+    overlayText.id = 'multisub-text';
+    overlayHint = document.createElement('div');
+    overlayHint.id = 'multisub-hint';
+    overlay.appendChild(overlayOriginal);
+    overlay.appendChild(overlayText);
+    overlay.appendChild(overlayHint);
+    overlayText.addEventListener('pointerdown', onDragPointerDown);
+    overlayText.addEventListener('pointermove', onDragPointerMove);
+    overlayText.addEventListener('pointerup', onDragPointerUp);
+    overlayText.addEventListener('pointercancel', onDragPointerUp);
+    applySettingsToOverlay();
+    updateDragAffordance();
+  }
+
+  function hexToRgba(hex, opacity) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+    if (!m) return 'rgba(0, 0, 0, ' + opacity + ')';
+    const n = parseInt(m[1], 16);
+    return 'rgba(' + ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ', ' + opacity + ')';
+  }
+
+  // An outline as a 4-direction text-shadow (there's no reliable
+  // cross-engine text-stroke), or 'none' when switched off. No blur: blurred
+  // shadows smear small glyphs such as the glosses.
+  function outlineShadow(enabled, color) {
+    if (!enabled) return 'none';
+    return ['-1px -1px 0 ', '1px -1px 0 ', '-1px 1px 0 ', '1px 1px 0 '].map((o) => o + color).join(', ');
+  }
+
+  function applySettingsToOverlay() {
+    updateNativeHidden();
+    if (!overlay) return;
+    overlay.style.setProperty('--multisub-bottom', settings.bottomOffset + '%');
+    overlay.style.setProperty('--multisub-font-scale', String(settings.fontScale));
+    const st = Object.assign({}, MS.DEFAULT_STYLES, settings.styles || {});
+    overlay.style.setProperty('--multisub-color', st.textColor);
+    overlay.style.setProperty('--multisub-bg', hexToRgba(st.backgroundColor, st.backgroundOpacity));
+    overlay.style.setProperty('--multisub-font', st.fontFamily);
+    overlay.style.setProperty('--multisub-line-height', String(st.lineHeight));
+    overlay.style.setProperty('--multisub-outline', outlineShadow(st.outlineEnabled, st.outlineColor));
+    overlay.style.setProperty('--multisub-font-weight', st.boldEnabled ? 'bold' : 'normal');
+    overlay.style.display = settings.enabled ? '' : 'none';
+    state.lastRenderedKey = null;
+  }
+
+  // Whether the line Netflix itself draws is our primary track, so the
+  // non-merged layout can leave the first line to Netflix. It isn't when
+  // Netflix's subtitles are off (or only show forced narratives), or when
+  // they're in the target language (choosePrimaryTrack then picks another
+  // track) or the viewer picked a different source track in the popup.
+  function netflixDrawsPrimary() {
+    if (state.fallback) return true; // the DOM fallback reads exactly what Netflix draws
+    // No report from Netflix's player (its private API changed): assume it
+    // shows what we picked, as before these reports existed.
+    if (!state.activeTrackReported) return true;
+    const primary = primaryTrack();
+    return !!(primary && state.netflixActiveBcp47 && !state.netflixActiveForced &&
+      MS.sameLanguage(primary.language, state.netflixActiveBcp47));
+  }
+
+  // Merged layout: Netflix's own subtitle element is hidden and we draw both
+  // lines. Annotate always replaces the original line, so it's always merged.
+  // With 雙語合併顯示 off, Netflix draws the first line, which only works
+  // while it draws the primary track; otherwise we draw both lines ourselves
+  // rather than show the target language twice or the original not at all.
+  function mergedLayout() {
+    return settings.mode === 'annotate' || !!settings.mergedMode || !netflixDrawsPrimary();
+  }
+
+  // Netflix's subtitles are hidden only while we have something to draw in
+  // their place: cues of our own, or (outside netflix mode) the DOM-fallback
+  // text we mirror. Hiding them earlier would leave the viewer with no
+  // subtitles at all while tracks load, or for good if capture fails. Same
+  // while waiting for the app's preferences, when we draw nothing.
+  function shouldHideNative() {
+    if (!settings.enabled || !state.urlMovieId || waitingForAppPrefs()) return false;
+    const canDraw = state.fallback ? settings.mode !== 'netflix' : state.cues.length > 0;
+    return canDraw && mergedLayout();
+  }
+
+  // Compared with the page rather than with what this instance set last: an
+  // older instance (section 12) may have left the class either way.
+  function updateNativeHidden() {
+    const hide = shouldHideNative();
+    const classes = document.documentElement.classList;
+    if (classes.contains('multisub-native-hidden') !== hide) classes.toggle('multisub-native-hidden', hide);
+  }
+
+  function overlayContainer(video) {
+    return video.closest('.watch-video') || video.parentElement;
+  }
+
+  function ensureOverlayAttached(video) {
+    if (!overlay) buildOverlay();
+    const container = overlayContainer(video);
+    if (!container) return null;
+    if (overlay.parentElement !== container) {
+      if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
+      removeForeignElements();
+      container.appendChild(overlay);
+    }
+    return container;
+  }
+
+  // Each \n-separated line becomes its own .ms-line child instead of one text
+  // node relying on white-space: pre-wrap, which lets overlay.css keep the
+  // background box snug to the glyphs at any line height.
+  function newLine(container) {
+    const div = document.createElement('div');
+    div.className = 'ms-line';
+    container.appendChild(div);
+    return div;
+  }
+
+  function setLines(container, text) {
+    container.textContent = '';
+    if (!text) return;
+    for (const line of text.split('\n')) newLine(container).textContent = line;
+  }
+
+  // Original line with <span class="ms-term">term</span><span class="ms-gloss">gloss</span>.
+  function setAnnotatedLines(container, segments) {
+    container.textContent = '';
+    let line = newLine(container);
+    for (const seg of segments) {
+      if (seg.gloss == null) {
+        seg.text.split('\n').forEach((part, i) => {
+          if (i > 0) line = newLine(container);
+          if (part) line.appendChild(document.createTextNode(part));
+        });
+        continue;
+      }
+      const term = document.createElement('span');
+      term.className = 'ms-term';
+      // A phrase broken across two cue lines stays together with its gloss.
+      term.textContent = seg.text.replace(/\s*\n\s*/g, ' ');
+      const gloss = document.createElement('span');
+      gloss.className = 'ms-gloss';
+      gloss.textContent = seg.gloss;
+      line.appendChild(term);
+      line.appendChild(gloss);
+    }
+  }
+
+  // frame: { top, bottom, segments?, second? } — `top` is the upper line
+  // (the original in merged layouts), `bottom` the lower one; `segments`
+  // renders `bottom` with glosses; `second`: `bottom` is the second language,
+  // drawn under the original (ours, or Netflix's own in the non-merged
+  // layout), rather than the original itself.
+  function render(frame) {
+    if (!overlay) return;
+    const hint = currentHint();
+    // overlay.css draws the second-language line smaller, but not a lower
+    // line that holds the original (annotate mode's line with glosses, or an
+    // original already in the target language). Decided by what the line
+    // is, not by whether the upper line has a cue right now: in netflix mode
+    // the two tracks have their own timings, and the Chinese line would
+    // change size halfway through whenever its cue outlasts the English one.
+    const twoLines = !!frame.bottom && !!frame.second;
+    const segKey = frame.segments ? JSON.stringify(frame.segments) : '';
+    const key = frame.top + '\u0001' + frame.bottom + '\u0001' + segKey + '\u0001' + hint + '\u0001' + twoLines;
+    if (state.lastRenderedKey === key) return;
+    state.lastRenderedKey = key;
+    overlay.classList.toggle('multisub-two-lines', twoLines);
+    setLines(overlayOriginal, frame.top);
+    if (frame.segments) setAnnotatedLines(overlayText, frame.segments);
+    else setLines(overlayText, frame.bottom);
+    // The stylesheet sets display:none on both lines; clearing the inline
+    // style ('') would fall back to that, so set 'flex' explicitly.
+    overlayOriginal.style.display = frame.top ? 'flex' : 'none';
+    overlayText.style.display = frame.bottom ? 'flex' : 'none';
+    overlayHint.textContent = hint;
+    overlayHint.style.display = hint ? 'block' : 'none';
+  }
+
+  const EMPTY_FRAME = { top: '', bottom: '' };
+
+  function cueFrame(t) {
+    const mode = settings.mode;
+    const merged = mergedLayout();
+    const idx = MS.findCueIndex(state.cues, t);
+    const original = idx >= 0 ? state.cues[idx].text || '' : '';
+    if (mode === 'netflix') {
+      // Separate timelines: Netflix often splits lines differently per
+      // language, and aligning would drop or merge some of them.
+      const j = state.secondState === 'ready' ? MS.findCueIndex(state.secondCues, t) : -1;
+      return { top: merged ? original : '', bottom: j >= 0 ? state.secondCues[j].text || '' : '', second: true };
+    }
+    if (state.status === 'passthrough') return { top: '', bottom: merged ? original : '' };
+    if (mode === 'translate') {
+      const tr = idx >= 0 && typeof state.items[idx] === 'string' ? state.items[idx] : '';
+      return { top: merged ? original : '', bottom: tr, second: true };
+    }
+    // annotate: a cue whose annotations aren't ready shows the plain line.
+    if (idx < 0) return EMPTY_FRAME;
+    const allowed = Array.isArray(state.items[idx]) ? glossPlan()[idx] : null;
+    return { top: '', bottom: original, segments: annotatedSegments(original, allowed) };
+  }
+
+  function fallbackFrame() {
+    const mode = settings.mode;
+    if (mode === 'netflix') return EMPTY_FRAME; // Netflix's own subtitles stay visible
+    const original = readDomSubtitle();
+    if (!original) return EMPTY_FRAME;
+    const merged = mergedLayout();
+    const key = mode + '\u0000' + original;
+    if (!state.fallbackCache.has(key)) requestLine(mode, original);
+    const result = state.fallbackCache.get(key);
+    if (mode === 'translate') {
+      return { top: merged ? original : '', bottom: typeof result === 'string' ? result : '', second: true };
+    }
+    const allowed = Array.isArray(result) ? fallbackAllowed(original, result) : null;
+    return { top: '', bottom: original, segments: annotatedSegments(original, allowed) };
+  }
+
+  // --- Drag-to-position. Only reachable while drag mode is on, since
+  // #multisub-text is pointer-events:none otherwise (overlay.css's
+  // .multisub-drag-enabled); the dragModeEnabled checks are defensive.
+  let dragState = null;
+
+  function updateDragAffordance() {
+    if (overlay) overlay.classList.toggle('multisub-drag-enabled', state.dragModeEnabled);
+  }
+
+  function onDragPointerDown(ev) {
+    if (!state.dragModeEnabled) return;
+    const container = overlay.parentElement;
+    if (!container) return;
+    const containerHeight = container.getBoundingClientRect().height;
+    if (!containerHeight) return; // avoid a NaN% offset before layout
+    ev.preventDefault();
+    overlayText.setPointerCapture(ev.pointerId);
+    dragState = {
+      pointerId: ev.pointerId,
+      startY: ev.clientY,
+      containerHeight: containerHeight,
+      startOffset: settings.bottomOffset,
+      currentValue: settings.bottomOffset
+    };
+  }
+
+  function onDragPointerMove(ev) {
+    if (!dragState || ev.pointerId !== dragState.pointerId) return;
+    // Moving the pointer down brings the subtitle closer to the bottom edge,
+    // i.e. a smaller bottomOffset, hence the minus sign.
+    const deltaPercent = ((ev.clientY - dragState.startY) / dragState.containerHeight) * 100;
+    const next = Math.max(DRAG_MIN_OFFSET, Math.min(DRAG_MAX_OFFSET, Math.round(dragState.startOffset - deltaPercent)));
+    dragState.currentValue = next;
+    overlay.style.setProperty('--multisub-bottom', next + '%');
+  }
+
+  function onDragPointerUp(ev) {
+    if (!dragState || ev.pointerId !== dragState.pointerId) return;
+    const finalValue = dragState.currentValue;
+    dragState = null;
+    // Write storage once, on release, not on every pointermove.
+    if (finalValue !== settings.bottomOffset) {
+      settings = Object.assign({}, settings, { bottomOffset: finalValue });
+      api.storage.local.set({ settings: MS.storedSettings(settings) }).catch(() => {});
+    }
+  }
+
+  // ===========================================================================
+  // 8. One-time toast
+  // ===========================================================================
+  // Shown once per install, on the first watch page that plays: MultiSub is
+  // on, which mode and second language it uses, and where to change them.
+  // Nothing has to be chosen before subtitles show up (the mode defaults to
+  // MS.DEFAULT_MODE), so this only informs and never blocks: it sits in the
+  // player's top-right corner, leaves by itself after WELCOME_TOAST_MS, and
+  // everything but its close button is click-through to the player. It
+  // lives in the same container as #multisub-overlay, so it stays visible in
+  // fullscreen, and in a shadow root so Netflix's styles can't reach it.
+
+  const WELCOME_TOAST_MS = 8000;
+  // Matches the .leaving transition below.
+  const WELCOME_TOAST_FADE_MS = 300;
+  // storage.local key, outside `settings` (and outside the 'ms:' cache pool
+  // background.js prunes).
+  const WELCOME_SHOWN_KEY = 'welcomeShown';
+
+  const TOAST_CSS = [
+    ':host { all: initial; }',
+    '.toast { position: relative; box-sizing: border-box; width: max-content; max-width: min(340px, calc(100vw - 32px));',
+    '  padding: 12px 38px 12px 14px; border-radius: 12px; color: #f5f5f7; pointer-events: none;',
+    '  background: rgba(22, 22, 26, 0.86);',
+    '  -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%);',
+    '  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);',
+    '  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "PingFang TC", system-ui, sans-serif;',
+    '  -webkit-font-smoothing: antialiased;',
+    '  animation: ms-toast-in 0.2s ease-out; transition: opacity 0.3s ease, transform 0.3s ease; }',
+    '.toast.leaving { opacity: 0; transform: translateY(-6px); }',
+    '.title { margin: 0 0 4px; font-size: 14px; font-weight: 600; }',
+    '.body { margin: 0; color: rgba(245, 245, 247, 0.82); }',
+    '.close { pointer-events: auto; position: absolute; top: 6px; right: 6px; width: 26px; height: 26px;',
+    '  margin: 0; padding: 0; border: 0; border-radius: 7px; background: none; cursor: pointer;',
+    '  font: 18px/26px -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: rgba(245, 245, 247, 0.7); }',
+    '.close:hover { color: #fff; background: rgba(255, 255, 255, 0.1); }',
+    '.close:focus-visible { outline: 2px solid #ff6b72; outline-offset: 1px; }',
+    '@keyframes ms-toast-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }',
+    '@media (prefers-reduced-motion: reduce) {',
+    '  .toast { animation: none; transition: none; }',
+    '  .toast.leaving { transform: none; }',
+    '}'
+  ].join('\n');
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  // Unreadable storage counts as seen: if the flag can't be read it likely
+  // can't be written either, and the toast must not come back on every page.
+  api.storage.local.get(WELCOME_SHOWN_KEY)
+    .then((res) => { toast.seen = !!(res && res[WELCOME_SHOWN_KEY]); })
+    .catch(() => { toast.seen = true; });
+
+  function buildToast() {
+    const host = document.createElement('div');
+    host.id = 'multisub-toast';
+    host.setAttribute(INSTANCE_ATTR, INSTANCE_ID);
+    host.style.cssText = 'position:absolute;top:max(64px,8%);right:3%;z-index:2147483001;pointer-events:none;';
+    const root = host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = TOAST_CSS;
+    root.appendChild(style);
+    const card = el('div', 'toast');
+    card.setAttribute('role', 'status');
+    card.setAttribute('aria-live', 'polite');
+    card.appendChild(el('p', 'title', TEXT.toastTitle));
+    card.appendChild(el('p', 'body'));
+    card.appendChild(el('p', 'body hint', TEXT.toastHint));
+    const close = el('button', 'close', '×');
+    close.type = 'button';
+    close.setAttribute('aria-label', TEXT.toastClose);
+    close.addEventListener('click', hideToast);
+    card.appendChild(close);
+    root.appendChild(card);
+    // The close button is the only thing that takes pointer events; keep
+    // its clicks and keys from reaching Netflix's player (play/pause on
+    // click, space, arrow-key seeking).
+    for (const type of ['click', 'dblclick', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'keydown', 'keyup', 'keypress']) {
+      host.addEventListener(type, (e) => e.stopPropagation());
+    }
+    toast.host = host;
+    toast.root = root;
+    renderToastText();
+  }
+
+  function renderToastText() {
+    const body = toast.root && toast.root.querySelector('.body');
+    if (body) body.textContent = TEXT.toastBody(settings.mode, settings.targetLang);
+  }
+
+  // Waits for the startup ping (so a mode or language chosen in the app has
+  // been adopted) and for the video to play, so the toast isn't spent on a
+  // loading spinner.
+  function maybeShowToast(container, video) {
+    if (toast.seen !== false || !settings.enabled || !state.startupPingDone) return;
+    if (!container || video.paused) return;
+    toast.seen = true;
+    api.storage.local.set({ [WELCOME_SHOWN_KEY]: true }).catch(() => {});
+    buildToast();
+    container.appendChild(toast.host);
+    toast.timer = setTimeout(hideToast, WELCOME_TOAST_MS);
+  }
+
+  // Fades out (instantly under prefers-reduced-motion, see TOAST_CSS), then
+  // removes it.
+  function hideToast() {
+    if (!toast.host) return;
+    clearTimeout(toast.timer);
+    const card = toast.root.querySelector('.toast');
+    if (card) card.classList.add('leaving');
+    toast.timer = setTimeout(removeToast, WELCOME_TOAST_FADE_MS);
+  }
+
+  function removeToast() {
+    clearTimeout(toast.timer);
+    toast.timer = null;
+    if (toast.host) toast.host.remove();
+    toast.host = null;
+    toast.root = null;
+  }
+
+  // Every tick: show it once the conditions hold, and follow the player if
+  // Netflix replaces the container (e.g. entering fullscreen).
+  function updateToast(container, video) {
+    if (!toast.host) { maybeShowToast(container, video); return; }
+    if (container && toast.host.parentElement !== container) container.appendChild(toast.host);
+  }
+
+  // ===========================================================================
+  // 9. Sync loop
+  // ===========================================================================
+
+  // The viewer seeked while a job is running: ask background.js to work on
+  // the chunks from here first.
+  function detectSeek(t) {
+    const last = state.lastVideoTime;
+    state.lastVideoTime = t;
+    if (last == null || Math.abs(t - last) <= SEEK_JUMP_SEC) return;
+    const job = state.job;
+    if (!job || job.finished || !state.port) return;
+    dbg('seek detected', last, '->', t);
+    try {
+      state.port.postMessage({
+        type: 'prioritize', kind: job.kind, movieId: job.msg.movieId,
+        index: MS.cueIndexAtOrAfter(state.cues, t)
+      });
+    } catch (e) { /* onDisconnect re-sends the job from the current position */ }
+  }
+
+  function tick() {
+    if (extensionGone()) { teardown('context'); return; }
+    keepInstanceStyle();
+    checkUrl();
+    if (!state.urlMovieId) return; // not on a watch page
+    const video = getVideo();
+    if (!video) return;
+    const container = ensureOverlayAttached(video);
+    updateNativeHidden();
+    updateToast(container, video);
+    // Nothing of ours until the mode is known (see waitingForAppPrefs);
+    // Netflix's own subtitles stay up meanwhile.
+    if (!settings.enabled || waitingForAppPrefs()) {
+      render(EMPTY_FRAME);
+      return;
+    }
+    const t = video.currentTime;
+    detectSeek(t);
+    render(state.fallback ? fallbackFrame() : cueFrame(t));
+  }
+
+  setInterval(tick, 100);
+
+  // ===========================================================================
+  // 10. Navigation (Netflix is a single-page app)
+  // ===========================================================================
+  function currentUrlMovieId() {
+    const m = location.pathname.match(/^\/watch\/(\d+)/);
+    return m ? m[1] : null;
+  }
+
+  function checkUrl() {
+    const id = currentUrlMovieId();
+    if (id !== state.urlMovieId) resetForMovie(id);
+  }
+
+  function resetForMovie(movieId) {
+    dbg('resetForMovie ->', movieId);
+    stopJob();
+    state.urlMovieId = movieId;
+    state.tracks = [];
+    state.tracksAt = 0;
+    state.activeTrackId = null;
+    // A track picked in the popup was for that episode: track ids carry an
+    // index, so the same id can mean another track (or none) in the next
+    // one. Follow Netflix's player again.
+    state.sourceMode = 'auto';
+    state.manualTrackId = null;
+    state.activeTrackReported = false;
+    state.netflixActiveBcp47 = null;
+    state.netflixActiveForced = false;
+    state.netflixAudioBcp47 = null;
+    if (state.selectTimer) { clearTimeout(state.selectTimer); state.selectTimer = null; }
+    state.cues = [];
+    state.primaryRetries = 0;
+    clearPrimaryRetry();
+    state.fallbackReason = null;
+    state.fallbackRecoveries = 0;
+    state.partialMissing = 0;
+    clearSecondTimer();
+    state.secondTrackId = null;
+    state.secondState = 'unknown';
+    state.secondCues = [];
+    state.secondTimedOut = false;
+    resetItems(null);
+    state.kept.clear(); // another episode
+    state.errorCode = null;
+    state.errorHint = '';
+    state.autoRetries = 0;
+    state.fallback = false;
+    clearFallbackResults();
+    state.notice = null;
+    state.noSecondHintShown = false;
+    state.noDataHintShown = false;
+    state.lastVideoTime = null;
+    state.status = movieId ? 'waiting-tracks' : 'idle';
+    if (state.trackPollTimer) { clearInterval(state.trackPollTimer); state.trackPollTimer = null; }
+    updateNativeHidden();
+    if (!movieId) {
+      removeToast();
+      return;
+    }
+    // The manifest may already have been captured, or not have arrived yet:
+    // ask the page script for tracks until they show up.
+    let attempts = 0;
+    state.trackPollTimer = setInterval(() => {
+      attempts++;
+      if (state.tracks.length || attempts > 15) {
+        clearInterval(state.trackPollTimer);
+        state.trackPollTimer = null;
+        if (!state.tracks.length && !state.cues.length) enableFallback('tracks-timeout');
+        return;
+      }
+      pageCommand({ type: 'get-tracks', movieId: movieId });
+    }, 2000);
+    pageCommand({ type: 'get-tracks', movieId: movieId });
+  }
+
+  // ===========================================================================
+  // 11. Popup messaging and the vocabulary hand-off
+  // ===========================================================================
+
+  // Asks inject.js for show/episode/season metadata via Netflix's private
+  // player API (see getVideoTitle there). Resolves to {seriesTitle,
+  // episodeTitle, seasonNumber, episodeNumber}, or null on timeout or any
+  // failure: a best-effort lookup, never worth blocking anything over.
   function requestEpisodeTitle(movieId) {
     return new Promise((resolve) => {
       let settled = false;
-      // `waiter` (not `resolve` itself) is what gets stored in
-      // `pendingTitleRequests` and must be the exact same reference removed
-      // on timeout — otherwise the timed-out entry never leaves the map (a
-      // leak) and, worse, a later request for the same movieId would attach
-      // to that dead entry instead of firing a fresh 'get-title'.
+      // `waiter`, not `resolve`, is what goes into pendingTitleRequests and
+      // must be the very reference removed on timeout; otherwise the dead
+      // entry stays in the map and a later request attaches to it instead of
+      // sending a fresh 'get-title'.
       const waiter = (info) => {
         if (settled) return;
         settled = true;
@@ -454,10 +1710,7 @@
         removePendingTitleWaiter(movieId, waiter);
         waiter(null);
       }, 1500);
-      // If a lookup for this movieId is already in flight (e.g.
-      // startEpisodeTranslation()'s automatic cache-title fetch racing with
-      // a user click on "整理本集單字"), just add another waiter instead of
-      // firing a second 'get-title' — see `pendingTitleRequests`' doc comment.
+      // A lookup for this movieId already in flight: wait on that one.
       const existing = state.pendingTitleRequests.get(movieId);
       if (existing) {
         existing.push(waiter);
@@ -476,15 +1729,10 @@
     if (!waiters.length) state.pendingTitleRequests.delete(movieId);
   }
 
-  // Last-resort fallback if inject.js's private-API lookup above comes back
-  // null (API unavailable / Netflix changed something). document.title is
-  // NOT reliable during Netflix playback (this was the original — wrong —
-  // primary approach; real usage showed it just falls through to the
-  // movieId branch below almost every time), so this is now a fallback of a
-  // fallback: strips a trailing "- Netflix"/"| Netflix" suffix if present,
-  // and gives up to the raw movieId if what's left is empty or still the
-  // generic "Netflix" tab title. Returns the same shape `requestEpisodeTitle`
-  // resolves to so callers don't need to branch on which path was used.
+  // Last resort when the private-API lookup returns null. document.title is
+  // not reliable during playback (it is usually just "Netflix"), so strip a
+  // trailing "- Netflix"/"| Netflix" and give up to the raw movieId if
+  // nothing useful is left. Same shape as requestEpisodeTitle's result.
   function extractEpisodeTitleFallback() {
     let title = (document.title || '').trim();
     title = title.replace(/\s*[-|]\s*Netflix\s*$/i, '').trim();
@@ -492,25 +1740,36 @@
     return { seriesTitle: title, episodeTitle: null, seasonNumber: null, episodeNumber: null };
   }
 
-  // Packages the transcript this tab already holds and hands it to appex via
-  // native `save-transcript`, then asks appex to wake/foreground the App on
-  // the vocab tab (native `open-app`). Both native calls go through
-  // background.js — content.js has no native-messaging channel of its own
-  // (see CLAUDE.md's protocol table).
+  // Attaches series/episode titles to this episode's cache entry for the
+  // app's cache-management tab (real titles, grouped by series).
+  async function fetchAndStoreEpisodeTitle(movieId, sourceLang, targetLang) {
+    const titleInfo = (await requestEpisodeTitle(movieId)) || extractEpisodeTitleFallback();
+    if (!state.port || state.urlMovieId !== movieId) return;
+    try {
+      state.port.postMessage({
+        type: 'episode-title',
+        movieId: movieId,
+        sourceLang: sourceLang,
+        targetLang: targetLang,
+        seriesTitle: titleInfo.seriesTitle || movieId,
+        episodeTitle: titleInfo.episodeTitle,
+        seasonNumber: titleInfo.seasonNumber
+      });
+    } catch (e) { /* port gone; the cache entry just won't have a title yet */ }
+  }
+
+  // Packages this episode's transcript for the app's vocabulary feature
+  // (native `save-transcript`, then `open-app` on the vocabulary tab). Both
+  // native calls go through background.js; content scripts have no native
+  // messaging of their own.
   async function organizeVocab() {
-    if (!state.urlMovieId || !state.cues.length) {
-      return { ok: false, error: 'no-episode' };
-    }
-    const sourceTrack = state.tracks.find((t) => t.id === state.activeTrackId);
-    const sourceLang = (sourceTrack && sourceTrack.language) || '';
-    // vocab-design.md §4: bcp47-based gate, not text-content language
-    // detection. popup.js already disables the button for non-English
-    // tracks using the same tracks/activeTrackId data from get-status; this
-    // is the content.js-side mirror of that check, in case the button state
-    // is stale (e.g. the popup was left open across a track switch).
-    if (normalizeBcp47(sourceLang) !== 'en') {
-      return { ok: false, error: 'non-english' };
-    }
+    if (!state.urlMovieId || !state.cues.length) return { ok: false, error: 'no-episode' };
+    const sourceLang = primaryLanguage();
+    // Gated on the track's language tag, not on detecting the text's
+    // language. The popup disables the button for non-English tracks from the
+    // same get-status data; this repeats the check in case the popup was left
+    // open across a track switch.
+    if (MS.normalizeBcp47(sourceLang) !== 'en') return { ok: false, error: 'non-english' };
     const movieId = state.urlMovieId;
     const titleInfo = (await requestEpisodeTitle(movieId)) || extractEpisodeTitleFallback();
     const payload = {
@@ -529,466 +1788,271 @@
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Background port (translation pipeline)
-  // ---------------------------------------------------------------------------
-  function getPort() {
-    if (state.port) return state.port;
-    const port = api.runtime.connect({ name: 'multisub' });
-    port.onMessage.addListener(onPortMessage);
-    port.onDisconnect.addListener(() => {
-      state.port = null;
-      // Reconnect and resume if we were mid-translation (partial results are
-      // cached by the background script, so resuming is cheap).
-      if (state.status === 'translating') {
-        setTimeout(() => { if (state.status === 'translating') startEpisodeTranslation(); }, 1500);
-      }
-    });
-    state.port = port;
-    return port;
+  function secondaryTrackFound() {
+    if (state.secondState === 'ready') return true;
+    if (state.secondState === 'none') return false;
+    return null; // unknown, loading or failed to load
   }
 
-  function startEpisodeTranslation() {
-    if (!state.cues.length || !state.urlMovieId) return;
-    if (!settings.enabled) return; // M1: don't spend model calls while translation is toggled off
-    if (state.referenceCues == null) return; // reference still resolving; beginTranslationPipeline() will call back in
-    const referenceLines = state.referenceCues.length
-      ? alignReferenceCues(state.cues, state.referenceCues)
-      : new Array(state.cues.length).fill(null);
-    state.referenceLines = referenceLines;
-    if (DEBUG && state.referenceCues.length) {
-      dbg('reference-align sample (', state.referenceCues.length, 'ref cues ):');
-      for (const idx of pickSampleIndices(state.cues.length, 10)) {
-        dbg('  [' + idx + ']', JSON.stringify(state.cues[idx].text).slice(0, 60),
-            '->', JSON.stringify(referenceLines[idx]).slice(0, 60));
-      }
-    }
-    const sourceTrack = state.tracks.find((t) => t.id === state.activeTrackId);
-    const sourceLang = (sourceTrack && sourceTrack.language) || '';
-    state.translations = new Array(state.cues.length).fill(null);
-    state.translatedCount = 0;
-    state.status = 'translating';
-    state.errorHint = '';
-    try {
-      getPort().postMessage({
-        type: 'episode',
-        movieId: state.urlMovieId,
-        targetLang: settings.targetLang,
-        sourceLang: sourceLang,
-        lines: state.cues.map((c) => c.text),
-        referenceLines: referenceLines
-      });
-    } catch (e) {
-      state.port = null;
-      setTimeout(startEpisodeTranslation, 1500);
-      return;
-    }
-    // 2026-07-06: separate, fire-and-forget title lookup so a slow/failed
-    // private-API call (up to the 1.5s timeout in requestEpisodeTitle) never
-    // delays subtitles starting to appear above. Sent as its own port
-    // message once resolved; background.js attaches it to this episode's
-    // cache entry for the App's cache-management tab (real titles + grouping
-    // by series — see CLAUDE.md's Port "multisub" protocol entry).
-    fetchAndStoreEpisodeTitle(state.urlMovieId, sourceLang);
-  }
-
-  async function fetchAndStoreEpisodeTitle(movieId, sourceLang) {
-    const titleInfo = (await requestEpisodeTitle(movieId)) || extractEpisodeTitleFallback();
-    try {
-      getPort().postMessage({
-        type: 'episode-title',
-        movieId: movieId,
-        sourceLang: sourceLang,
-        targetLang: settings.targetLang,
-        seriesTitle: titleInfo.seriesTitle || movieId,
-        episodeTitle: titleInfo.episodeTitle,
-        seasonNumber: titleInfo.seasonNumber
-      });
-    } catch (e) { /* port gone; harmless, cache entry just won't have a title yet */ }
-  }
-
-  function onPortMessage(msg) {
-    if (msg.type === 'progress') {
-      if (!Array.isArray(msg.translations)) return;
-      for (let i = 0; i < msg.translations.length; i++) {
-        const idx = msg.start + i;
-        if (idx < state.translations.length && msg.translations[i] != null) {
-          if (state.translations[idx] == null) state.translatedCount++;
-          state.translations[idx] = msg.translations[i];
-        }
-      }
-      state.lastRenderedKey = null; // re-render current cue if it just got translated
-    } else if (msg.type === 'done') {
-      state.status = 'done';
-    } else if (msg.type === 'error') {
-      if (msg.code === 'native-unavailable') {
-        state.errorHint = 'MultiSub：無法連到主程式，請開啟 MultiSub App';
-      } else if (msg.code === 'model-not-ready') {
-        state.errorHint = 'MultiSub：模型尚未下載，請開啟 MultiSub App 完成下載';
-      } else {
-        state.errorHint = 'MultiSub：翻譯失敗（' + (msg.code || 'unknown') + '）';
-      }
-      state.status = 'error';
-      state.lastRenderedKey = null;
-    } else if (msg.type === 'line-result') {
-      dbg('fallback: line-result:', JSON.stringify(msg).slice(0, 160));
-      if (msg.text != null && msg.translation != null) {
-        state.fallbackCache.set(msg.text, msg.translation);
-        state.fallbackInflight.delete(msg.text);
-        state.lastRenderedKey = null;
-      }
-      if (msg.code) {
-        state.fallbackInflight.delete(msg.text);
-        if (msg.code === 'native-unavailable') {
-          state.errorHint = 'MultiSub：無法連到主程式，請開啟 MultiSub App';
-        }
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // DOM fallback: translate whatever Netflix renders, line by line.
-  // ---------------------------------------------------------------------------
-  function enableFallback(reason) {
-    state.fallback = true;
-    state.status = 'fallback';
-    console.log('[MultiSub] falling back to DOM subtitles:', reason);
-  }
-
-  function readDomSubtitle() {
-    const container = document.querySelector('.player-timedtext');
-    if (!container) return '';
-    return (container.textContent || '').trim();
-  }
-
-  // A3 diagnosis: probe the live Netflix DOM for where the native subtitle text
-  // actually lives and whether our overlay is attached/visible.
-  let debugProbeSig = '';
-  function debugProbe(video) {
-    if (!DEBUG) return;
-    const dom = readDomSubtitle();
-    const overlayTxt = overlayText ? overlayText.textContent : '';
-    // Only log when something meaningful changes, to avoid flooding.
-    const sig = state.status + '|' + state.fallback + '|' + dom + '|' + overlayTxt + '|' + state.errorHint;
-    if (sig === debugProbeSig) return;
-    debugProbeSig = sig;
-    dbg('probe: status=', state.status, 'fallback=', state.fallback,
-        'cues=', state.cues.length, 'fallbackCache=', state.fallbackCache.size,
-        'DOM=', JSON.stringify(dom).slice(0, 70),
-        'OVERLAY=', JSON.stringify(overlayTxt).slice(0, 70),
-        'overlayDisplay=', overlay ? overlay.style.display : 'none',
-        'errorHint=', JSON.stringify(state.errorHint));
-  }
-
-  function requestLineTranslation(text) {
-    if (state.fallbackCache.has(text) || state.fallbackInflight.has(text)) return;
-    state.fallbackInflight.add(text);
-    dbg('fallback: request line translation:', JSON.stringify(text).slice(0, 60));
-    try {
-      getPort().postMessage({ type: 'line', text: text, targetLang: settings.targetLang });
-    } catch (e) {
-      dbg('fallback: postMessage failed', e && e.message);
-      state.port = null;
-      state.fallbackInflight.delete(text);
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Overlay
-  // ---------------------------------------------------------------------------
-  let overlay = null;
-  let overlayOriginal = null;
-  let overlayText = null;
-  let overlayHint = null;
-
-  function buildOverlay() {
-    overlay = document.createElement('div');
-    overlay.id = 'multisub-overlay';
-    // D3: original line goes first in DOM order so the translation
-    // (#multisub-text) stays the bottom-most child — its position is what
-    // bottomOffset/D2's drag calibrate against, on or off merged mode.
-    overlayOriginal = document.createElement('div');
-    overlayOriginal.id = 'multisub-original';
-    overlayText = document.createElement('div');
-    overlayText.id = 'multisub-text';
-    overlayHint = document.createElement('div');
-    overlayHint.id = 'multisub-hint';
-    overlay.appendChild(overlayOriginal);
-    overlay.appendChild(overlayText);
-    overlay.appendChild(overlayHint);
-    overlayText.addEventListener('pointerdown', onDragPointerDown);
-    overlayText.addEventListener('pointermove', onDragPointerMove);
-    overlayText.addEventListener('pointerup', onDragPointerUp);
-    overlayText.addEventListener('pointercancel', onDragPointerUp);
-    applySettingsToOverlay();
-    updateDragAffordance();
-  }
-
-  // ---------------------------------------------------------------------------
-  // D2: drag-to-position. Only reachable when dragModeEnabled, since
-  // #multisub-text is pointer-events:none otherwise (see overlay.css's
-  // .multisub-drag-enabled) — the `if (!state.dragModeEnabled) return;` guards
-  // below are defensive, not the actual gate.
-  // ---------------------------------------------------------------------------
-  let dragState = null;
-
-  function updateDragAffordance() {
-    if (!overlay) return;
-    overlay.classList.toggle('multisub-drag-enabled', state.dragModeEnabled);
-  }
-
-  function onDragPointerDown(ev) {
-    if (!state.dragModeEnabled) return;
-    const container = overlay.parentElement;
-    if (!container) return;
-    const containerHeight = container.getBoundingClientRect().height;
-    if (!containerHeight) return; // avoid a NaN% offset if the container isn't laid out yet
-    ev.preventDefault();
-    overlayText.setPointerCapture(ev.pointerId);
-    dragState = {
-      pointerId: ev.pointerId,
-      startY: ev.clientY,
-      containerHeight: containerHeight,
-      startOffset: settings.bottomOffset,
-      currentValue: settings.bottomOffset
-    };
-  }
-
-  function onDragPointerMove(ev) {
-    if (!dragState || ev.pointerId !== dragState.pointerId) return;
-    // Moving the pointer down should bring the subtitle closer to the
-    // bottom edge, i.e. decrease bottomOffset — hence the minus sign.
-    const deltaPercent = ((ev.clientY - dragState.startY) / dragState.containerHeight) * 100;
-    let next = Math.round(dragState.startOffset - deltaPercent);
-    next = Math.max(DRAG_MIN_OFFSET, Math.min(DRAG_MAX_OFFSET, next));
-    dragState.currentValue = next;
-    overlay.style.setProperty('--multisub-bottom', next + '%');
-  }
-
-  function onDragPointerUp(ev) {
-    if (!dragState || ev.pointerId !== dragState.pointerId) return;
-    const finalValue = dragState.currentValue;
-    dragState = null;
-    // Only touch storage once, on release — not on every pointermove.
-    if (finalValue !== settings.bottomOffset) {
-      settings = Object.assign({}, settings, { bottomOffset: finalValue });
-      api.storage.local.set({ settings: settings }).catch(() => {});
-    }
-  }
-
-  function applySettingsToOverlay() {
-    if (!overlay) return;
-    overlay.style.setProperty('--multisub-bottom', settings.bottomOffset + '%');
-    overlay.style.setProperty('--multisub-font-scale', String(settings.fontScale));
-    const st = Object.assign({}, DEFAULT_STYLES, settings.styles || {});
-    overlay.style.setProperty('--multisub-color', st.textColor);
-    overlay.style.setProperty('--multisub-bg', hexToRgba(st.backgroundColor, st.backgroundOpacity));
-    overlay.style.setProperty('--multisub-font', st.fontFamily);
-    overlay.style.setProperty('--multisub-line-height', String(st.lineHeight));
-    overlay.style.setProperty('--multisub-outline', outlineShadow(st.outlineEnabled, st.outlineColor));
-    overlay.style.setProperty('--multisub-font-weight', st.boldEnabled ? 'bold' : 'normal');
-    overlay.style.display = settings.enabled ? '' : 'none';
-    // D3: hide Netflix's own subtitle line only while the extension is on
-    // and merged mode is enabled — see overlay.css's html.multisub-native-hidden rule.
-    document.documentElement.classList.toggle('multisub-native-hidden', settings.enabled && !!settings.mergedMode);
-  }
-
-  function ensureOverlayAttached(video) {
-    if (!overlay) buildOverlay();
-    const container = video.closest('.watch-video') || video.parentElement;
-    if (!container) { dbg('ensureOverlayAttached: no container found for video'); return; }
-    if (overlay.parentElement !== container) {
-      const cs = getComputedStyle(container);
-      if (cs.position === 'static') container.style.position = 'relative';
-      container.appendChild(overlay);
-    }
-  }
-
-  // C6: renders each \n-separated line as its own '.ms-line' child instead of
-  // one text node relying on CSS white-space:pre-wrap — lets overlay.css keep
-  // the background box snug to the glyphs regardless of --multisub-line-height
-  // (see overlay.css's #multisub-text/#multisub-original comment).
-  function setOverlayLines(container, text) {
-    container.textContent = '';
-    if (!text) return;
-    for (const line of text.split('\n')) {
-      const div = document.createElement('div');
-      div.className = 'ms-line';
-      div.textContent = line;
-      container.appendChild(div);
-    }
-  }
-
-  function renderOverlay(text, hint, original) {
-    // D3: only show the original line in merged mode; otherwise Netflix's
-    // own native subtitle (not hidden in that case) already shows it.
-    const showOriginal = !!settings.mergedMode && !!original;
-    const key = text + ' ' + hint + ' ' + (showOriginal ? original : '');
-    if (state.lastRenderedKey === key) return;
-    state.lastRenderedKey = key;
-    setOverlayLines(overlayText, text);
-    // NB: the stylesheet sets #multisub-text{display:none}; clearing the inline
-    // style ('') would revert to that and stay hidden — must set 'flex'
-    // (C6: the box is now flex-column, see overlay.css).
-    overlayText.style.display = text ? 'flex' : 'none';
-    overlayHint.textContent = hint;
-    overlayHint.style.display = hint ? 'block' : 'none';
-    setOverlayLines(overlayOriginal, showOriginal ? original : '');
-    overlayOriginal.style.display = showOriginal ? 'flex' : 'none';
-  }
-
-  // ---------------------------------------------------------------------------
-  // Sync loop
-  // ---------------------------------------------------------------------------
-  function findCueIndex(t) {
-    const cues = state.cues;
-    let lo = 0, hi = cues.length - 1, ans = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (cues[mid].start <= t) { ans = mid; lo = mid + 1; } else { hi = mid - 1; }
-    }
-    // Keep the subtitle up a touch longer to bridge tiny gaps between cues.
-    if (ans >= 0 && t <= cues[ans].end + 0.15) return ans;
-    return -1;
-  }
-
-  function tick() {
-    checkUrl();
-    if (!state.urlMovieId) return; // not on a watch page
-    const video = document.querySelector('video');
-    if (!video) return;
-    ensureOverlayAttached(video);
-    debugProbe(video);
-    if (!settings.enabled) return;
-
-    let text = '';
-    let original = '';
-    if (!state.fallback && state.cues.length) {
-      const idx = findCueIndex(video.currentTime);
-      if (idx >= 0) {
-        const tr = state.translations[idx];
-        text = tr != null ? tr : '';
-        original = state.cues[idx].text || '';
-      }
-    } else if (state.fallback) {
-      original = readDomSubtitle();
-      state.fallbackCurrentText = original;
-      if (original) {
-        if (state.fallbackCache.has(original)) {
-          text = state.fallbackCache.get(original);
-        } else {
-          requestLineTranslation(original);
-        }
-      }
-    }
-    renderOverlay(text, state.errorHint, original);
-  }
-
-  // ---------------------------------------------------------------------------
-  // SPA navigation / episode change detection
-  // ---------------------------------------------------------------------------
-  function currentUrlMovieId() {
-    const m = location.pathname.match(/^\/watch\/(\d+)/);
-    return m ? m[1] : null;
-  }
-
-  function checkUrl() {
-    const id = currentUrlMovieId();
-    if (id === state.urlMovieId) return;
-    resetForMovie(id);
-  }
-
-  function resetForMovie(movieId) {
-    dbg('resetForMovie ->', movieId);
-    state.urlMovieId = movieId;
-    state.tracks = [];
-    state.activeTrackId = null;
-    state.netflixActiveBcp47 = null;
-    state.cues = [];
-    state.referenceTrackId = null;
-    state.referenceCues = null;
-    state.referenceLines = null;
-    if (state.referencePollTimer) { clearTimeout(state.referencePollTimer); state.referencePollTimer = null; }
-    state.translations = [];
-    state.translatedCount = 0;
-    state.status = movieId ? 'waiting-tracks' : 'idle';
-    state.errorHint = '';
-    state.fallback = false;
-    state.fallbackCache.clear();
-    state.fallbackInflight.clear();
-    state.lastRenderedKey = null;
-    if (overlay) renderOverlay('', '');
-    if (state.trackPollTimer) { clearInterval(state.trackPollTimer); state.trackPollTimer = null; }
-    if (!movieId) return;
-
-    // The manifest may already have been captured (or not arrived yet):
-    // poll the page script for tracks until they show up.
-    let attempts = 0;
-    state.trackPollTimer = setInterval(() => {
-      attempts++;
-      if (state.tracks.length || attempts > 15) {
-        clearInterval(state.trackPollTimer);
-        state.trackPollTimer = null;
-        if (!state.tracks.length && !state.cues.length) enableFallback('tracks-timeout');
-        return;
-      }
-      pageCommand({ type: 'get-tracks', movieId: movieId });
-    }, 2000);
-    pageCommand({ type: 'get-tracks', movieId: movieId });
-  }
-
-  setInterval(tick, 100);
-
-  // M2: the appex host's idle-unload check (Translator.checkIdleUnload)
-  // only runs when a native message wakes that process — it has no
-  // reliable internal timer of its own (the OS suspends the extension host
-  // between requests). Ping periodically whenever a Netflix watch page is
-  // open so a paused/idle session still gets checked even with the popup
-  // closed; background.js already forwards 'ping-native' to the native
-  // `ping` action, which triggers the check as a side effect.
-  setInterval(() => {
-    if (!state.urlMovieId) return;
-    // D1: also a low-frequency fallback style sync for when the popup isn't
-    // open (popup.js's own 2s poll is the primary, faster path — see D1).
-    api.runtime.sendMessage({ type: 'ping-native' }).then(mergeStylesFromNative).catch(() => {});
-  }, 60000);
-
-  // ---------------------------------------------------------------------------
-  // Popup messaging
-  // ---------------------------------------------------------------------------
-  api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg && msg.type === 'get-status') {
+  function onRuntimeMessage(msg, sender, sendResponse) {
+    if (torn || !msg) return false;
+    if (msg.type === 'get-status') {
       sendResponse({
         onWatchPage: !!state.urlMovieId,
         movieId: state.urlMovieId,
+        mode: settings.mode,
         tracks: state.tracks,
         activeTrackId: state.activeTrackId,
         sourceMode: state.sourceMode,
         status: state.status,
-        translatedCount: state.translatedCount,
+        translatedCount: state.readyCount,
         totalCues: state.cues.length,
+        partialMissing: state.partialMissing,
+        errorCode: state.errorCode,
         errorHint: state.errorHint,
+        fallback: state.fallback,
+        secondaryTrackFound: secondaryTrackFound(),
+        secondState: state.secondState,
+        engineActive: state.engine ? state.engine.active || null : null,
+        // A mode restored from state.kept has no job.
+        jobKind: state.job ? state.job.kind : state.itemsKind,
         dragMode: state.dragModeEnabled
       });
-    } else if (msg && msg.type === 'set-track') {
+    } else if (msg.type === 'set-track') {
       state.sourceMode = 'manual';
-      switchToTrack(msg.trackId);
+      state.manualTrackId = msg.trackId;
+      selectTracks();
       sendResponse({ ok: true });
-    } else if (msg && msg.type === 'set-track-auto') {
+    } else if (msg.type === 'set-track-auto') {
       state.sourceMode = 'auto';
-      let track = null;
-      if (state.netflixActiveBcp47) track = findTrackByBcp47(state.tracks, state.netflixActiveBcp47);
-      if (!track) track = chooseTrack(state.tracks);
-      if (track) switchToTrack(track.id);
+      state.manualTrackId = null;
+      selectTracks();
       sendResponse({ ok: true });
-    } else if (msg && msg.type === 'set-drag-mode') {
+    } else if (msg.type === 'preview-display') {
+      // A size or position slider moving in the popup: shown right away.
+      // The popup stores the value once the slider settles, and the
+      // storage.onChanged copy that follows changes nothing more.
+      const patch = {};
+      if (Number(msg.fontScale) > 0) patch.fontScale = Number(msg.fontScale);
+      if (msg.bottomOffset != null && Number.isFinite(Number(msg.bottomOffset))) patch.bottomOffset = Number(msg.bottomOffset);
+      settings = Object.assign({}, settings, patch);
+      applySettingsToOverlay();
+      sendResponse({ ok: true });
+    } else if (msg.type === 'set-drag-mode') {
       state.dragModeEnabled = !!msg.enabled;
       updateDragAffordance();
       sendResponse({ ok: true });
-    } else if (msg && msg.type === 'organize-vocab') {
+    } else if (msg.type === 'engine-changed') {
+      // The popup just saved and tested an engine: refresh our view of it and
+      // retry a job that failed for lack of one.
+      pingNative().then(() => {
+        if (state.status === 'error' && ENGINE_FIXABLE_CODES.has(state.errorCode)) startPipeline();
+      });
+      sendResponse({ ok: true });
+    } else if (msg.type === 'organize-vocab') {
       organizeVocab().then(sendResponse);
       return true; // async response
     }
     return false;
-  });
+  }
+  api.runtime.onMessage.addListener(onRuntimeMessage);
+
+  // ===========================================================================
+  // 12. Instances
+  // ===========================================================================
+  // When Safari reloads the extension (a new build installed, the extension
+  // turned off and on), it injects the new content scripts into the Netflix
+  // tabs already open, and the instance running there before keeps running
+  // in its own world: its timers, its overlay and its hold on Netflix's own
+  // subtitles all outlive its extension context. Two overlays then draw at
+  // the same spot until the tab is reloaded. So:
+  //  - Every element an instance puts on the page carries INSTANCE_ATTR, and
+  //    the instance keeps a style rule in the page that hides every MultiSub
+  //    element that isn't its own. Instances from versions already shipped
+  //    never step aside, and redraw what is removed, so hiding them is the
+  //    defence that holds; removing them when attaching just tidies up.
+  //  - Each instance announces itself (INSTANCE_MSG 'hello' with its id and
+  //    start time) and the newest one wins: an instance that hears a newer
+  //    one tears itself down, and one that hears an older one answers so the
+  //    older one hears it too, even if it started listening after the first
+  //    hello. Start time, then id, orders any two instances the same way on
+  //    both sides, so exactly one survives however close they started.
+  //  - An instance whose extension context is gone (the extension turned
+  //    off, or reloaded before the new instance has started) tears itself
+  //    down and gives Netflix's own subtitles back, unless a build from
+  //    before all this has taken the page over (nativeClassHeldByOlderBuild()).
+
+  // Ids of the elements any version of content.js attaches to the page
+  // itself (#multisub-original, #multisub-text and #multisub-hint live
+  // inside #multisub-overlay; #multisub-chooser is from an older version).
+  const TOP_LEVEL_IDS = ['multisub-overlay', 'multisub-toast', 'multisub-chooser'];
+  // overlay.css sets this custom property on the root element; see
+  // extensionGone().
+  const STYLESHEET_MARKER = '--multisub-stylesheet';
+  // How often extensionGone() looks at the stylesheet (on the first tick,
+  // then on the first tick after this long: WebKit may slow a page's timers
+  // down to one a second).
+  const STYLESHEET_CHECK_MS = 1000;
+  // The z-index every version of overlay.css gives #multisub-overlay; see
+  // nativeClassHeldByOlderBuild().
+  const OVERLAY_Z_INDEX = '2147483000';
+
+  let instanceStyle = null;
+  let stylesheetCheckedAt = -Infinity;
+  let stylesheetSeen = false;
+
+  // Letters and digits only: it goes into a CSS attribute selector as is.
+  function newInstanceId() {
+    try {
+      if (globalThis.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID().replace(/-/g, '');
+    } catch (e) { /* fall through */ }
+    return Date.now().toString(36) + Math.random().toString(36).slice(2);
+  }
+
+  // Milliseconds on a clock every world of this page shares (and that
+  // doesn't jump with the system clock), for ordering instances.
+  function pageClock() {
+    try {
+      if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+        return (performance.timeOrigin || 0) + performance.now();
+      }
+    } catch (e) { /* fall through */ }
+    return Date.now();
+  }
+
+  // Whether instance `a` is newer than instance `b`.
+  function newerThan(a, b) {
+    return a.startedAt !== b.startedAt ? a.startedAt > b.startedAt : a.id > b.id;
+  }
+
+  // `managesNative`: the sender keeps html.multisub-native-hidden up to date
+  // on its own (updateNativeHidden() on every tick), so an instance it
+  // replaces leaves the class to it rather than flash Netflix's subtitles.
+  function announce() {
+    try {
+      window.postMessage({ [INSTANCE_MSG]: true, type: 'hello', id: INSTANCE_ID, startedAt: STARTED_AT, managesNative: true }, '*');
+    } catch (e) { /* nobody to tell */ }
+  }
+
+  function onInstanceMessage(msg) {
+    if (msg.type !== 'hello' || typeof msg.id !== 'string' || msg.id === INSTANCE_ID) return;
+    if (typeof msg.startedAt !== 'number' || !isFinite(msg.startedAt)) return;
+    // A start time in the future can't come from an instance on this page.
+    if (msg.startedAt > pageClock() + 1000) return;
+    if (newerThan(msg, { id: INSTANCE_ID, startedAt: STARTED_AT })) teardown('replaced', msg);
+    else announce();
+  }
+
+  function instanceCss() {
+    const mine = '[' + INSTANCE_ATTR + '="' + INSTANCE_ID + '"]';
+    return '[id^="multisub-"]:not(' + mine + '):not(' + mine + ' *) { display: none !important; }';
+  }
+
+  // Puts the style rule that hides other instances' elements on the page,
+  // and puts it back if the page dropped it.
+  function keepInstanceStyle() {
+    if (!instanceStyle) {
+      instanceStyle = document.createElement('style');
+      instanceStyle.setAttribute(INSTANCE_ATTR, INSTANCE_ID);
+      instanceStyle.textContent = instanceCss();
+    }
+    if (instanceStyle.parentElement) return;
+    try { (document.head || document.documentElement).appendChild(instanceStyle); } catch (e) { /* no document yet */ }
+  }
+
+  function removeForeignElements() {
+    for (const id of TOP_LEVEL_IDS) {
+      for (const node of document.querySelectorAll('#' + id)) {
+        if (node.getAttribute(INSTANCE_ATTR) !== INSTANCE_ID) node.remove();
+      }
+    }
+  }
+
+  // Whether this instance's extension context is gone. Chrome-style engines
+  // clear runtime.id (and make runtime calls throw). WebKit (Safari) keeps
+  // both working in an unloaded context's content scripts, but removes the
+  // context's stylesheets from the page: overlay.css's marker disappears.
+  // It only counts once it has been seen, so a stylesheet that is applied a
+  // moment after this script starts (or never, on some engine) can't make
+  // a live instance give up. After a reload the new context's overlay.css
+  // carries the marker too; there the new instance's hello is what makes
+  // the old one step aside.
+  function extensionGone() {
+    try {
+      if (!api.runtime || !api.runtime.id) return true;
+      api.runtime.getURL('');
+    } catch (e) {
+      return true;
+    }
+    const now = Date.now();
+    if (Math.abs(now - stylesheetCheckedAt) < STYLESHEET_CHECK_MS) return false;
+    stylesheetCheckedAt = now;
+    const present = stylesheetPresent();
+    if (present === true) stylesheetSeen = true;
+    return stylesheetSeen && present === false;
+  }
+
+  // true / false, or null when it can't be told.
+  function stylesheetPresent() {
+    try {
+      const style = getComputedStyle(document.documentElement);
+      if (!style || typeof style.getPropertyValue !== 'function') return null;
+      return style.getPropertyValue(STYLESHEET_MARKER).trim() !== '';
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Whether html.multisub-native-hidden now belongs to an instance of an
+  // older build, which won't set it again if this one takes it off. That is
+  // a reload onto a build from before instances knew of each other: it never
+  // announces itself, so this instance sees its own stylesheet go and steps
+  // aside as if the extension were off, and those versions set the class
+  // only when their own idea of it changes. Told by the overlay.css styling
+  // the page: some version's still applies (every one gives
+  // #multisub-overlay OVERLAY_Z_INDEX), but not one with STYLESHEET_MARKER.
+  // Both instances read the same settings, so the class as this one leaves
+  // it is what that one wants. With no overlay.css left the class hides
+  // nothing (its only rule is there), and one with the marker is this
+  // build's (an engine that keeps a dead context's stylesheet) or a newer
+  // one's, which checks the class on every tick: then the class comes off.
+  // Read before this instance's overlay leaves the page.
+  function nativeClassHeldByOlderBuild() {
+    const probe = overlay && overlay.parentElement ? overlay : document.querySelector('#multisub-overlay');
+    if (!probe) return false;
+    let zIndex;
+    try { zIndex = getComputedStyle(probe).zIndex; } catch (e) { return false; }
+    return String(zIndex) === OVERLAY_Z_INDEX && stylesheetPresent() === false;
+  }
+
+  // Stops everything this instance does and takes what it put on the page
+  // off it. `reason` is 'replaced' (a newer instance, `by`, took over) or
+  // 'context' (the extension context is gone).
+  function teardown(reason, by) {
+    if (torn) return;
+    dbg('tearing down:', reason, by ? 'for ' + by.id : '');
+    torn = true;
+    for (const id of liveTimeouts) globalThis.clearTimeout(id);
+    for (const id of liveIntervals) globalThis.clearInterval(id);
+    liveTimeouts.clear();
+    liveIntervals.clear();
+    // Closing the port cancels this tab's job in background.js (when the
+    // context is still there to hear it).
+    try { stopJob(); } catch (e) { /* port already gone */ }
+    state.pendingTitleRequests.clear();
+    const keepNativeClass = by ? !!by.managesNative : nativeClassHeldByOlderBuild();
+    window.removeEventListener('message', onWindowMessage);
+    try { api.storage.onChanged.removeListener(onStorageChanged); } catch (e) { /* context gone */ }
+    try { api.runtime.onMessage.removeListener(onRuntimeMessage); } catch (e) { /* context gone */ }
+    removeToast();
+    if (overlay) overlay.remove();
+    if (instanceStyle) instanceStyle.remove();
+    // Netflix's own subtitles come back, unless a newer instance decides
+    // about them from now on, or an older build's does (see
+    // nativeClassHeldByOlderBuild()).
+    if (!keepNativeClass) document.documentElement.classList.remove('multisub-native-hidden');
+  }
+
+  keepInstanceStyle();
+  announce();
 })();

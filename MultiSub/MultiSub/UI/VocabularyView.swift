@@ -2,20 +2,22 @@
 //  VocabularyView.swift
 //  MultiSub
 //
-//  Style guide v2 §5.4. Behavior ported from ViewController.buildVocabTab()
-//  and its neighboring methods (reloadVocabEpisodes/applyVocabFilter/
-//  deleteSelectedWordsTapped/deleteEpisodeTapped/promptOrganizeVocab/
-//  runVocabExtraction) — see PLAN.md G5. CEFR-column sort is simplified to
+//  生詞本. Behavior ported from the old AppKit ViewController's vocabulary
+//  tab (reloadVocabEpisodes/applyVocabFilter/deleteSelectedWordsTapped/
+//  deleteEpisodeTapped). Organizing an episode is owned by
+//  `VocabExtractionManager`; this view only shows its jobs (rows at the top
+//  of the episode list, a progress view when one is selected) and follows
+//  its `focus` to select a job when it's handed off and the episode once
+//  its words are saved.
+//  CEFR-column sort is simplified to
 //  Table's native ascending/descending toggle (no third "unsorted" state —
 //  SwiftUI's Table header tap doesn't expose one without extra machinery);
 //  everything else is a straight port.
 //
-//  C4(b)/(c) (2026-07-05, corrected same day after user screenshot
-//  feedback — see PLAN.md for the full history):
-//  episode list gained its own search field + collapsible series/season
+//  The episode list has its own search field + collapsible series/season
 //  groups (default collapsed) + a sort control (最近整理新→舊/舊→新/劇名 A-Z).
-//  Word search stays on the window's native `.searchable()` (style guide v2
-//  §4), which is what gives it the Tahoe glass search-field look; the
+//  Word search stays on the window's native `.searchable()`, which is what
+//  gives it the Tahoe glass search-field look; the
 //  episode-sort control lives in `.toolbar` for the same reason — only real
 //  toolbar items get the native Liquid Glass button treatment, so it's a
 //  `Menu` in a `ToolbarItem`, not a view-content control. Under this window's
@@ -43,7 +45,7 @@ import SwiftUI
 
 extension VocabWord: Identifiable {
     /// `lemma` is unique within one episode's word list (extraction
-    /// de-duplicates by lemma — see vocab-design.md), so it doubles as a
+    /// de-duplicates by lemma), so it doubles as a
     /// stable row identity without touching the shared model type.
     var id: String { lemma }
 }
@@ -70,13 +72,20 @@ struct VocabularyView: View {
         case recentDesc, recentAsc, titleAZ
     }
 
+    /// A saved episode, or a job that is queued, running or failed. Kept
+    /// apart because re-organizing an episode shows both rows at once.
+    private enum ListSelection: Hashable {
+        case episode(String)
+        case job(String)
+    }
+
     private static let cefrLevels = ["A1", "A2", "B1", "B2", "C1", "C2"]
 
     @Environment(AppRouter.self) private var router
     @Environment(VocabExtractionManager.self) private var extractionManager
 
     @State private var episodes: [VocabFile] = []
-    @State private var selectedMovieId: String?
+    @State private var selection: ListSelection?
     @State private var cefrFilter: String?
     @State private var searchText = ""
     @State private var sortOrder: [KeyPathComparator<WordRow>] = []
@@ -84,24 +93,28 @@ struct VocabularyView: View {
     @State private var showDeleteWordsConfirm = false
     @State private var showDeleteEpisodeConfirm = false
 
-    // C4(b): episode list search/sort/collapse.
+    // Episode list search/sort/collapse.
     @State private var episodeSearchText = ""
     @State private var episodeSortOption: EpisodeSortOption = .recentDesc
     /// Group label -> expanded. Absent means collapsed (default-collapsed,
     /// per user's pick), so this only ever needs to record exceptions.
     @State private var expandedGroups = Set<String>()
 
-    // V4 trigger flow.
-    @State private var pendingTranscript: PendingTranscript?
-    @State private var showOrganizeConfirm = false
-    @State private var nonEnglishSourceLang: String?
-    @State private var showNonEnglishAlert = false
+    private var selectedMovieId: String? {
+        if case .episode(let movieId)? = selection { return movieId }
+        return nil
+    }
 
     private var selectedEpisode: VocabFile? {
         episodes.first { $0.movieId == selectedMovieId }
     }
 
-    /// C4(c): no episode selected means "search everything" rather than
+    private var selectedJob: VocabExtractionManager.Job? {
+        guard case .job(let movieId)? = selection else { return nil }
+        return extractionManager.jobs.first { $0.movieId == movieId }
+    }
+
+    /// No episode selected means "search everything" rather than
     /// "show nothing" — the old behavior required picking an episode first.
     private var filteredWordRows: [WordRow] {
         let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
@@ -129,16 +142,23 @@ struct VocabularyView: View {
 
     var body: some View {
         Group {
-            if episodes.isEmpty {
-                ContentUnavailableView("尚無生詞本，請到 Netflix 播放頁整理", systemImage: "book")
+            if episodes.isEmpty && extractionManager.jobs.isEmpty {
+                ContentUnavailableView("還沒有生詞本", systemImage: "book",
+                                       description: Text("看英文字幕的片時，在 Safari 工具列的 MultiSub 選單按「整理本集單字」。"))
             } else {
                 HSplitView {
                     episodeList
                         .padding(.trailing)
                         .frame(minWidth: 200, idealWidth: 240, maxWidth: 320)
-                    wordPane
-                        .padding(.leading)
-                        .frame(minWidth: 400)
+                    Group {
+                        if let selectedJob {
+                            jobDetail(selectedJob)
+                        } else {
+                            wordPane
+                        }
+                    }
+                    .padding(.leading)
+                    .frame(minWidth: 400)
                 }
             }
         }
@@ -158,30 +178,19 @@ struct VocabularyView: View {
         .padding()
         .onAppear {
             reloadEpisodes()
-            handlePendingVocabMovieId(router.pendingVocabMovieId)
+            applyFocus(extractionManager.focus, justAppeared: true)
         }
-        .onChange(of: router.pendingVocabMovieId) { _, newValue in
-            handlePendingVocabMovieId(newValue)
+        // Driven by the manager's state rather than a callback into this
+        // view, so a hand-off or a finished extraction is picked up whether
+        // or not this tab was on screen when it happened.
+        .onChange(of: extractionManager.focus) { _, newValue in
+            applyFocus(newValue, justAppeared: false)
         }
-        .onChange(of: selectedMovieId) { _, _ in selectedWordIDs.removeAll() }
-        .alert("僅支援英文字幕的生詞本整理", isPresented: $showNonEnglishAlert) {
-            Button("好", role: .cancel) {}
-        } message: {
-            Text("這集的來源字幕語言是「\(nonEnglishSourceLang ?? "")」，生詞本功能目前只支援英文字幕。")
-        }
-        .alert(
-            pendingTranscript.map { "發現尚未整理的《\($0.displayTitle)》，是否開始整理？" } ?? "",
-            isPresented: $showOrganizeConfirm
-        ) {
-            Button("開始整理") { if let pending = pendingTranscript { startOrganizing(pending) } }
-            Button("取消", role: .cancel) { pendingTranscript = nil }
-        } message: {
-            Text("這會用本地模型分析這一集的字幕、抽取值得學習的單字，可能需要幾分鐘。")
-        }
+        .onChange(of: selection) { _, _ in selectedWordIDs.removeAll() }
     }
 
-    // MARK: - Toolbar: episode sort menu (C4(b)), sits left of the native
-    // word search field .searchable() places in the same toolbar (C4(c)).
+    // MARK: - Toolbar: episode sort menu, sits left of the native
+    // word search field .searchable() places in the same toolbar.
 
     private var episodeSortMenu: some View {
         Menu("劇集排序", systemImage: "line.3.horizontal.decrease.circle") {
@@ -198,20 +207,11 @@ struct VocabularyView: View {
         VStack(spacing: 8) {
             MSInlineSearchField(prompt: "搜尋劇集", text: $episodeSearchText)
 
-            List(selection: $selectedMovieId) {
-                if !extractionManager.extractions.isEmpty {
+            List(selection: $selection) {
+                if !extractionManager.jobs.isEmpty {
                     Section {
-                        ForEach(Array(extractionManager.extractions.keys.sorted()), id: \.self) { movieId in
-                            if let state = extractionManager.extractions[movieId] {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    if !state.failed {
-                                        ProgressView(value: state.progress)
-                                    }
-                                    Text(state.statusText)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
+                        ForEach(extractionManager.jobs) { job in
+                            jobRow(job).tag(ListSelection.job(job.movieId))
                         }
                     }
                 }
@@ -220,15 +220,97 @@ struct VocabularyView: View {
                     case .grouped(let label, let rows):
                         DisclosureGroup(label, isExpanded: expandedBinding(for: label)) {
                             ForEach(rows) { row in
-                                Text("\(row.displayTitle)（\(row.file.words.count)）").tag(row.id)
+                                Text("\(row.displayTitle)（\(row.file.words.count)）").tag(ListSelection.episode(row.id))
                             }
                         }
                     case .flat(let row):
-                        Text("\(row.displayTitle)（\(row.file.words.count)）").tag(row.id)
+                        Text("\(row.displayTitle)（\(row.file.words.count)）").tag(ListSelection.episode(row.id))
                     }
                 }
             }
         }
+    }
+
+    /// A queued, running or failed episode at the top of the list.
+    private func jobRow(_ job: VocabExtractionManager.Job) -> some View {
+        HStack(spacing: 8) {
+            if job.isActive {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(job.displayTitle)
+                    .lineLimit(1)
+                Text(job.statusLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+            if job.canRetry {
+                Button("重試") { extractionManager.retry(movieId: job.movieId) }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+            }
+        }
+        .help(job.statusLine)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// What the right pane shows while a job row is selected.
+    private func jobDetail(_ job: VocabExtractionManager.Job) -> some View {
+        VStack(spacing: 14) {
+            switch job.phase {
+            case .queued, .running:
+                if job.phase == .running, job.total > 0 {
+                    ProgressView(value: Double(job.done), total: Double(job.total))
+                        .frame(maxWidth: 320)
+                } else {
+                    ProgressView()
+                }
+                Text(job.displayTitle)
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                Text(job.phase == .queued ? "排隊中，前一集整理完就開始" : job.statusLine)
+                    .font(.headline)
+                Text("從英文字幕挑出值得學的單字，附上翻譯和例句。約需幾分鐘，好了會出現在左邊。")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 400)
+                if !job.engineName.isEmpty {
+                    Text("AI 引擎：\(job.engineName)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            case .failed(_, let message):
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.largeTitle)
+                    .foregroundStyle(.orange)
+                Text(job.displayTitle)
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                Text(message)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 400)
+                HStack {
+                    if job.needsEngineSetup {
+                        Button("前往一般設定") { router.selection = .general }
+                    }
+                    if job.canRetry {
+                        Button("重試") { extractionManager.retry(movieId: job.movieId) }
+                    }
+                    Button("移除") {
+                        extractionManager.dismiss(movieId: job.movieId)
+                        reloadEpisodes()
+                    }
+                }
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func expandedBinding(for label: String) -> Binding<Bool> {
@@ -293,7 +375,7 @@ struct VocabularyView: View {
             .frame(maxWidth: .infinity, alignment: .center)
 
             if filteredWordRows.isEmpty {
-                // C4(a): give the empty state the same footprint the Table
+                // Give the empty state the same footprint the Table
                 // would occupy (rather than its own compact intrinsic size)
                 // so swapping between the two doesn't reflow the rest of the
                 // pane, and make it non-interactive — it's a status message,
@@ -307,7 +389,7 @@ struct VocabularyView: View {
                     TableColumn("CEFR", value: \.word.cefr) { row in CEFRBadge(level: row.word.cefr) }
                         .width(60)
                     TableColumn("翻譯", value: \.word.translation)
-                    // C4(c): only meaningful once results can span episodes.
+                    // Only meaningful once results can span episodes.
                     if selectedEpisode == nil {
                         TableColumn("集數", value: \.episodeDisplayTitle)
                     }
@@ -350,7 +432,7 @@ struct VocabularyView: View {
                 Text("\(word.word) · \(word.pos)")
                     .font(.headline)
             }
-            Text("definition：\(word.definitionEn)")
+            Text("英文解釋：\(word.definitionEn)")
             Text("翻譯：\(word.translation)")
             Text("例句：\(word.example)")
             Text("例句翻譯：\(word.exampleTranslation)")
@@ -367,13 +449,21 @@ struct VocabularyView: View {
     private func reloadEpisodes(selecting movieId: String? = nil) {
         episodes = VocabStore.loadAll().sorted { $0.createdAt > $1.createdAt }
         if let movieId, episodes.contains(where: { $0.movieId == movieId }) {
-            selectedMovieId = movieId
-        } else if selectedMovieId == nil || !episodes.contains(where: { $0.movieId == selectedMovieId }) {
-            selectedMovieId = episodes.first?.movieId
+            selection = .episode(movieId)
+            return
+        }
+        switch selection {
+        case .job(let id) where extractionManager.jobs.contains(where: { $0.movieId == id }):
+            break
+        case .episode(let id) where episodes.contains(where: { $0.movieId == id }):
+            break
+        default:
+            selection = episodes.first.map { .episode($0.movieId) }
+                ?? extractionManager.jobs.first.map { .job($0.movieId) }
         }
     }
 
-    /// C4(c): selection can now span multiple episodes (cross-episode search
+    /// Selection can span multiple episodes (cross-episode search
     /// with nothing selected in the left list), so removal has to be grouped
     /// by source episode rather than assuming everything selected belongs to
     /// `selectedEpisode`.
@@ -393,33 +483,30 @@ struct VocabularyView: View {
     private func deleteEpisode() {
         guard let movieId = selectedMovieId else { return }
         VocabStore.delete(movieId: movieId)
+        // Otherwise the popup keeps saying this episode is organized.
+        VocabStatusStore.forgetDone(movieId: movieId)
         reloadEpisodes()
     }
 
-    // MARK: - V4: multisub://vocab trigger flow
+    // MARK: - Following the extraction manager
 
-    private func handlePendingVocabMovieId(_ movieId: String?) {
-        guard let movieId, let pending = PendingTranscriptStore.load(movieId: movieId) else { return }
-        router.pendingVocabMovieId = nil
-
-        // vocab-design.md §4's second gate: content.js/popup.js already check
-        // this before the user ever gets here, but this App-side check is the
-        // actual line of defense against a stale popup button state or any
-        // future caller that bypasses popup entirely.
-        let primarySubtag = pending.sourceLang.split(separator: "-").first.map { $0.lowercased() } ?? ""
-        guard primarySubtag == "en" else {
-            nonEnglishSourceLang = pending.sourceLang
-            showNonEnglishAlert = true
-            return
-        }
-        pendingTranscript = pending
-        showOrganizeConfirm = true
-    }
-
-    private func startOrganizing(_ pending: PendingTranscript) {
-        pendingTranscript = nil
-        extractionManager.start(pending) { file in
-            reloadEpisodes(selecting: file.movieId)
+    /// A hand-off selects its job row. Saved words reload the list and
+    /// select the new episode, unless the user has moved on to another
+    /// row since (the job row it replaces, or nothing, counts as "still
+    /// watching"); a tab that just appeared has no earlier choice to keep.
+    private func applyFocus(_ focus: VocabExtractionManager.Focus?, justAppeared: Bool) {
+        guard let focus else { return }
+        extractionManager.clearFocus()
+        switch focus.target {
+        case .job(let movieId):
+            if extractionManager.jobs.contains(where: { $0.movieId == movieId }) {
+                selection = .job(movieId)
+            } else {
+                reloadEpisodes(selecting: movieId)
+            }
+        case .episode(let movieId):
+            let stillWatching = justAppeared || selection == nil || selection == .job(movieId)
+            reloadEpisodes(selecting: stillWatching ? movieId : nil)
         }
     }
 }
