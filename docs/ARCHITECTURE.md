@@ -355,9 +355,8 @@ null.
 
 Errors are `{ ok: false, error: <code>, detail?: <message> }`. Besides the
 codes above, unexpected failures (including a request cancelled while it
-waited for the local model to load) come back as `<action>-failed`, a key that
-could not be stored as `keychain-failed`, and a malformed request as
-`bad-request`. background.js folds `<action>-failed` and `bad-request` from
+waited for the local model to load) come back as `<action>-failed`, and a
+malformed request as `bad-request`. background.js folds `<action>-failed` and `bad-request` from
 job requests into `provider-error`, which it retries.
 
 The host app opens on `multisub://<destination>` URLs sent through

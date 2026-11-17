@@ -245,8 +245,9 @@ struct OnboardingView: View {
             }
         }
         .formStyle(.grouped)
-        // The popup's mode or engine changes arrive here through
-        // ConfigStore.reload() when the app becomes active.
+        // A mode change from the popup (picked up by ConfigStore.reload()
+        // when the app becomes active) or an engine saved in another window
+        // of the app lands here.
         .onChange(of: configStore.config) { _, _ in refreshEngineReady() }
         .task {
             refreshEngineReady()

@@ -22,7 +22,7 @@ final class ConfigStore {
     // `@State` in `MultiSubApp` that lives as long as the app.
     init() {
         // Coming back to the app is the moment a change made in Safari (the
-        // popup's mode / language / engine) should show up here.
+        // popup's mode / language) should show up here.
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
