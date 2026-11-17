@@ -12,7 +12,8 @@ for id in $ids; do for lang in $langs; do
   "$CHROME" --headless=new --disable-gpu --hide-scrollbars --allow-file-access-from-files \
     --force-device-scale-factor=2 --window-size=1440,900 --virtual-time-budget=1500 \
     --screenshot="$PWD/$out" "file://$PWD/shot.html?id=$id&lang=$lang" >/dev/null 2>&1
-  # App Store rejects images with an alpha channel.
-  sips -s format jpeg "$out" --out "${out%.png}.jpg" >/dev/null && sips -s format png "${out%.png}.jpg" --out "$out" >/dev/null && rm "${out%.png}.jpg"
+  # App Store rejects images with an alpha channel. Headless Chrome writes
+  # opaque PNGs, so check instead of re-encoding (a JPEG round trip blurs text).
+  sips -g hasAlpha "$out" | grep -q 'hasAlpha: no' || { echo "✗ $out has an alpha channel" >&2; exit 1; }
   echo "✓ $out"
 done; done

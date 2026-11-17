@@ -43,7 +43,7 @@
   .address svg { width: 11px; height: 11px; fill: #b8b8be; }
   .ext-btn { width: 30px; height: 30px; border-radius: 7px; display: grid; place-items: center; }
   .ext-btn.active { background: rgba(255,255,255,.14); }
-  .ext-btn svg { width: 20px; height: 20px; }
+  .ext-btn svg { width: 18px; height: 18px; }
   .viewport { position: absolute; top: 49px; left: 0; right: 0; bottom: 0; }
   /* overlay.css positions #multisub-overlay inside the player box */
   .player { position: absolute; inset: 0; }
@@ -75,7 +75,9 @@ const params = new URLSearchParams(location.search);
 const ID = params.get('id') || '1';
 const LANG = params.get('lang') || 'zh';
 
-const LOGO = '<svg viewBox="0 0 64 64"><rect x="6" y="22" width="52" height="15" rx="5" fill="#f5f5f7"/><rect x="14" y="41" width="36" height="13" rx="5" fill="#ff3b46"/></svg>';
+// The extension's real toolbar icon (extension/toolbar-icon.svg). Safari
+// draws it as a single-color template image, so it gets the toolbar's tint.
+const LOGO = '<svg viewBox="0 0 16 16" fill="#d6d6db"><rect x="1" y="3.5" width="14" height="4.25" rx="1.6"/><rect x="3.25" y="9.25" width="9.5" height="3.75" rx="1.5"/></svg>';
 const LOCK = '<svg viewBox="0 0 16 16"><path d="M4 7V5a4 4 0 1 1 8 0v2h1v8H3V7h1zm2 0h4V5a2 2 0 1 0-4 0v2z"/></svg>';
 
 const SCENES = {
@@ -122,7 +124,7 @@ const SHOTS = {
       translation: ['你是說整筆交易都告吹了？'] } }),
   },
   2: {
-    zh: ['只標<em>你不會的字</em>', '生字標註依你的程度挑字，意思貼合這一句劇情'],
+    zh: ['只標<em>你不會的字</em>', '生字標註依你的程度挑字，意思貼合這句台詞'],
     en: ['Notes on <em>only the words you need</em>', 'Word Notes picks words for your level, with meanings that fit the scene'],
     body: () => browserWindow({ scene: 'street', progress: '61%', subs: {
       annotated: LANG === 'zh'
@@ -141,8 +143,8 @@ const SHOTS = {
     body: () => `<div class="appshot"><img src="assets/app-engine.png"></div>`,
   },
   5: {
-    zh: ['看完一集，<em>生詞本</em>也整理好了', '從整集字幕挑出值得學的字，依 CEFR 分級，附解釋、翻譯和例句'],
-    en: ['Finish an episode, <em>keep the words</em>', 'The words worth learning, sorted by CEFR level, with meanings and examples'],
+    zh: ['看完一集，<em>生詞本</em>也整理好了', '從整集英文字幕挑出值得學的字，依 CEFR 分級，附英文解釋、翻譯和例句'],
+    en: ['Finish an episode, <em>keep the words</em>', 'English words worth learning from the episode, sorted by CEFR level, with English definitions, translations and examples'],
     body: () => `<div class="appshot"><img src="assets/app-vocab.png"></div>`,
   },
   6: {
@@ -151,8 +153,8 @@ const SHOTS = {
     body: () => `<div class="appshot"><img src="assets/app-onboarding.png"></div>`,
   },
   7: {
-    zh: ['字幕樣式，<em>隨你調整</em>', '字級、顏色、外框、位置，也能直接在影片上拖曳'],
-    en: ['Subtitles, <em>your way</em>', 'Size, color, outline and position — or just drag them'],
+    zh: ['字幕樣式，<em>隨你調整</em>', '顏色、字體、背景、描邊都能調，位置也能直接在影片上拖曳'],
+    en: ['Subtitles, <em>your way</em>', 'Color, font, background and outline, and drag the subtitle into place on the video'],
     body: () => `<div class="appshot"><img src="assets/app-styles.png"></div>`,
   },
 };
