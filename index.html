@@ -1,14 +1,16 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" class="no-js">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MultiSub — Netflix Bilingual Subtitles for Safari | 本地 AI 雙語字幕與英語學習工具</title>
-<meta name="description" content="MultiSub 是 macOS Safari 擴充功能，為 Netflix 加上雙語字幕，用完全在本機執行的 Gemma 模型翻譯。翻譯不經雲端，並內建 CEFR 字幕分級與劇集生詞本功能。">
-<link rel="preconnect" href="https://fonts.googleapis.com">
+<title>MultiSub — Netflix Bilingual Subtitles for Safari | Netflix 雙語字幕、AI 翻譯與生字標註</title>
+<meta name="description" content="MultiSub 是 Mac 上的 Safari 延伸功能，看 Netflix 時同時顯示兩種語言的字幕。可以疊上 Netflix 官方字幕、用 AI 翻譯，或只在難字後面標上意思，還能把整集單字依 CEFR 分級整理成生詞本。">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" type="image/png" sizes="512x512" href="assets/icon_512x512.png">
-<meta property="og:image" content="assets/icon_512x512.png" />
+<meta property="og:title" content="MultiSub：Safari 上的 Netflix 雙語字幕">
+<meta property="og:description" content="Netflix 官方字幕、AI 翻譯、生字標註三種模式，看劇順便學語言。">
+<meta property="og:image" content="https://snch1211.github.io/multisub/assets/icon_512x512.png" />
+<script>document.documentElement.classList.replace('no-js', 'js');</script>
 </head>
 <body>
 
@@ -19,7 +21,8 @@
       MultiSub
     </a>
     <nav class="nav-links">
-      <a href="#features">功能</a>
+      <a href="#features">模式</a>
+      <a href="#engine">AI 引擎</a>
       <a href="#install">安裝</a>
       <a href="#privacy">隱私</a>
       <a class="nav-gh" href="https://github.com/snch1211/multisub" target="_blank" rel="noopener">GitHub</a>
@@ -33,25 +36,26 @@
   <!-- Hero -->
   <section class="hero">
     <div class="container">
-      <p class="eyebrow">macOS · Safari 擴充功能</p>
+      <p class="eyebrow">macOS · Safari 延伸功能</p>
       <h1 class="hero-title">為 Netflix 加上<br><span class="accent">雙語字幕</span></h1>
-      <p class="hero-sub">擷取 Netflix 原生字幕，用<strong>完全在本機執行</strong>的 Gemma 模型翻譯成你設定的語言，以第二字幕疊加顯示。翻譯不經任何雲端 API。</p>
+      <p class="hero-sub">在 Mac 的 Safari 看 Netflix 時，同時顯示兩種語言的字幕。可以直接疊上 <strong>Netflix 官方字幕</strong>、用 <strong>AI 翻譯</strong>，或只在難字後面<strong>標上意思</strong>。</p>
       <div class="hero-cta">
-        <a class="btn btn-lg" href="https://github.com/snch1211/multisub/releases/latest" target="_blank" rel="noopener">下載 v1.0.0</a>
+        <a class="btn btn-lg" href="https://github.com/snch1211/multisub/releases/latest" target="_blank" rel="noopener">下載 DMG</a>
         <a class="btn btn-ghost btn-lg" href="https://github.com/snch1211/multisub" target="_blank" rel="noopener">在 GitHub 查看</a>
       </div>
-      <p class="hero-note">Apple Silicon · macOS 15+ · 免費開源（MIT）</p>
+      <p class="hero-note">Apple 晶片 · macOS 15 以上 · 免費開源（MIT）· Mac App Store 版審核中</p>
 
       <!-- MacBook Pro frame: Apple's official product bezel (docs/assets),
-           self-made screen content (no Netflix imagery or branding). -->
+           self-made screen content (no Netflix imagery or branding).
+           The subtitle styling mirrors extension/overlay.css. -->
       <div class="laptop" aria-label="MultiSub 在 Safari 上為 Netflix 顯示雙語字幕的示意畫面">
         <div class="screen-content">
           <div class="scene">
             <div class="scene-glow"></div>
             <div class="scene-silhouette" aria-hidden="true"></div>
-            <div class="subs">
-              <div class="sub-line sub-en">You don't have to carry this alone.</div>
-              <div class="sub-line sub-zh">你不必獨自承擔這一切。</div>
+            <div class="subs" id="demo-subs">
+              <div class="sub-line sub-orig" id="demo-orig">We need to come up with a plan before dawn.</div>
+              <div class="sub-line sub-second" id="demo-second">我們得在天亮前想出辦法。</div>
             </div>
             <div class="player" aria-hidden="true">
               <span class="pl-play"></span>
@@ -62,128 +66,149 @@
         </div>
         <img class="bezel" src="assets/macbook-pro.png" alt="" aria-hidden="true">
       </div>
+
+      <div class="mode-demo">
+        <div class="seg" role="group" aria-label="切換示意畫面的字幕模式">
+          <button type="button" class="seg-btn" data-mode="netflix" aria-pressed="true">Netflix 雙語字幕</button>
+          <button type="button" class="seg-btn" data-mode="ai" aria-pressed="false">AI 翻譯</button>
+          <button type="button" class="seg-btn" data-mode="annotate" aria-pressed="false">生字標註</button>
+        </div>
+        <p class="mode-caption" id="mode-caption">Netflix 官方的第二語言字幕，不用設定 AI。</p>
+      </div>
     </div>
   </section>
 
-  <!-- Features -->
+  <!-- Modes -->
   <section id="features" class="section">
     <div class="container">
-      <h2 class="section-title">重點功能</h2>
+      <h2 class="section-title">三種字幕模式</h2>
+      <p class="section-lead">預設是 Netflix 雙語字幕，打開 Netflix 播放就有。想換模式，點 Safari 工具列的 MultiSub 圖示切換，選過就會記住。</p>
       <div class="grid">
         <article class="card">
           <div class="card-ico" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 8l-2 4 2 4"/><path d="M19 8l2 4-2 4"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg>
           </div>
-          <h3>完全可自訂</h3>
-          <p>第二字幕的字級、垂直位置、顏色、外框、字型、行高都能調；可直接在影片上拖曳定位，或切換雙語合併顯示。</p>
+          <h3>Netflix 雙語字幕</h3>
+          <span class="tag">不用 AI</span>
+          <p>直接疊上 Netflix 官方提供的第二語言字幕。兩種語言各照各的時間軸顯示，不會因為斷句不同而對不齊。Netflix 沒有你要的語言時，選單會建議改用 AI 翻譯。</p>
         </article>
         <article class="card">
           <div class="card-ico" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h8"/><path d="M8 3v2"/><path d="M10.5 5c-.8 3.6-3 6.4-6.5 8"/><path d="M5.5 8.5c1 2 2.6 3.6 4.5 4.5"/><path d="M12 21l4.5-10 4.5 10"/><path d="M13.6 17.5h5.8"/></svg>
           </div>
-          <h3>完全本地推論</h3>
-          <p>翻譯在你的 Apple Silicon 上以 MLX 執行，字幕與觀看內容不外傳，不需要任何雲端 API 或帳號。</p>
+          <h3>AI 翻譯雙語字幕</h3>
+          <span class="tag tag-ai">需要 AI 引擎</span>
+          <p>由 AI 翻譯原文字幕，支援 12 種語言。人名和專有名詞會參考 Netflix 官方字幕，譯名跟官方一致，其他部分照口語重新翻。</p>
         </article>
         <article class="card">
           <div class="card-ico" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><line x1="8" y1="7" x2="15" y2="7"/><line x1="8" y1="11" x2="15" y2="11"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18h9"/><path d="M3 18c0-1.5.5-3 2-4"/><path d="M16 3l5 5-9 9-5 1 1-5z"/><line x1="14" y1="5" x2="19" y2="10"/></svg>
           </div>
-          <h3>生詞本</h3>
-          <p>把整集字幕中的單字依 CEFR 等級整理成可複習的生詞表，依劇集分組，是內建的英文學習工具。</p>
+          <h3>生字標註</h3>
+          <span class="tag tag-ai">需要 AI 引擎</span>
+          <p>只留原文字幕，依你設定的程度（A2 到 C1）在較難的單字和片語後面加上幾個字的意思。意思對照這一句的官方翻譯，同一個字一集最多標三次。</p>
         </article>
       </div>
 
-      <!-- Showcase: the popup control panel, reproduced from the real extension CSS -->
+      <!-- Showcase: the toolbar popup (real screenshot of extension/popup.html) -->
       <div class="showcase">
         <div class="showcase-text">
-          <span class="pill">工具列控制面板</span>
-          <h3 class="showcase-h">一鍵開關，不打斷看劇</h3>
-          <p>點一下 Safari 工具列的 MultiSub 圖示，就能開關、挑翻譯語言、即時調整第二字幕的大小與位置，或開啟拖曳定位與雙語合併模式——全部在一個小面板裡完成。</p>
+          <span class="pill">Safari 工具列選單</span>
+          <h3 class="showcase-h">看到一半也能換模式</h3>
+          <p>點 Safari 工具列的 MultiSub 圖示，就能切換模式、選第二語言和生字程度。字幕大小和位置在「顯示設定」裡調，畫面馬上更新。模式和語言在 App 和選單都能改，兩邊共用同一份設定。</p>
           <ul class="mini-list">
-            <li>12 種翻譯語言</li>
-            <li>字級、垂直位置即時預覽</li>
-            <li>拖曳定位 · 雙語合併模式</li>
+            <li>三種模式一鍵切換</li>
+            <li>12 種第二語言，生字程度 A2 到 C1</li>
+            <li>字幕大小、位置、拖曳定位、雙語合併</li>
             <li>一鍵「整理本集單字」進生詞本</li>
           </ul>
         </div>
         <div class="showcase-visual">
-          <!-- Faithful static reproduction of extension/popup.html (dark theme) -->
-          <div class="popup" aria-label="MultiSub Safari 擴充功能的彈出式控制面板">
-            <header class="pp-header">
-              <div class="pp-brand">
-                <svg class="pp-logo" viewBox="0 0 64 64" aria-hidden="true"><rect x="6" y="24" width="52" height="14" rx="5" class="pp-lb-a"/><rect x="14" y="40" width="36" height="12" rx="5" class="pp-lb-b"/></svg>
-                <span class="pp-title">MultiSub</span>
-              </div>
-              <span class="pp-switch pp-on" aria-hidden="true"><span class="pp-knob"></span></span>
-            </header>
-            <section class="pp-card">
-              <div class="pp-label">翻譯成</div>
-              <div class="pp-select">繁體中文<span class="pp-caret">▾</span></div>
-            </section>
-            <section class="pp-card">
-              <div class="pp-label">第二字幕大小 <span class="pp-dim">1.15×</span></div>
-              <div class="pp-range"><span class="pp-fill" style="width:46%"></span><span class="pp-thumb" style="left:46%"></span></div>
-              <div class="pp-label pp-mt">垂直位置（距底部）<span class="pp-dim">12%</span></div>
-              <div class="pp-range"><span class="pp-fill" style="width:30%"></span><span class="pp-thumb" style="left:30%"></span></div>
-              <label class="pp-toggle"><span class="pp-box"></span>在 Netflix 影片上拖曳定位</label>
-              <label class="pp-toggle"><span class="pp-box pp-checked"></span>隱藏原生字幕，顯示雙語合併</label>
-            </section>
-            <section class="pp-card">
-              <div class="pp-btn">進階樣式設定…</div>
-              <div class="pp-btn pp-mt2">整理本集單字</div>
-            </section>
-            <section class="pp-status">
-              <div>目前播放：S1E4 · 英文字幕</div>
-              <div class="pp-ok">主程式已連線 · 模型已就緒</div>
-            </section>
-          </div>
+          <img class="popup-shot" src="assets/popup.png" alt="MultiSub 的 Safari 工具列選單：切換 Netflix 字幕、AI 翻譯、生字標註三種模式，設定第二語言與程度" loading="lazy" width="680" height="888">
         </div>
       </div>
 
       <!-- Showcase: vocabulary notebook (real app screenshot) -->
       <div class="showcase showcase-reverse">
         <div class="showcase-visual showcase-visual-wide">
-          <img class="app-shot" src="assets/app-vocab.png" alt="MultiSub 生詞本：整集單字依 CEFR 分級、依劇集分組，附定義、翻譯與例句" loading="lazy" width="1944" height="1368">
+          <img class="app-shot" src="assets/app-vocab.png" alt="MultiSub 生詞本：整集單字依 CEFR 分級、依劇集分組，附英文解釋、翻譯與例句" loading="lazy" width="1940" height="1208">
         </div>
         <div class="showcase-text">
           <span class="pill">生詞本</span>
-          <h3 class="showcase-h">看完一集，順便學會整集單字</h3>
-          <p>一鍵把整集字幕裡的單字整理成生詞表——自動標上 CEFR 等級、依劇集分組，每個字附定義、翻譯與例句，隨時回來複習。</p>
+          <h3 class="showcase-h">看完一集，生詞本也整理好了</h3>
+          <p>在選單按「整理本集單字」，App 會在背景讀整集的英文字幕，挑出值得學的單字和片語，依 CEFR 分級整理。可以邊整理邊看，之後隨時回來複習。</p>
           <ul class="mini-list">
-            <li>CEFR A1–C2 自動分級</li>
-            <li>依劇集分組管理</li>
-            <li>每個字附定義、翻譯與例句</li>
+            <li>CEFR A1–C2 分級</li>
+            <li>依劇集分組，可以搜尋</li>
+            <li>每個字附英文解釋、翻譯和例句</li>
           </ul>
+        </div>
+      </div>
+
+      <div class="extras">
+        <div class="extra">
+          <h4>字幕樣式隨你調</h4>
+          <p>字級、位置、顏色、外框、字型都能調，也能直接在影片上拖曳位置。</p>
+        </div>
+        <div class="extra">
+          <h4>從正在看的地方開始</h4>
+          <p>跳到後面時，AI 會先處理你正在看的段落。</p>
+        </div>
+        <div class="extra">
+          <h4>重看不用再等</h4>
+          <p>處理過的集數會保存在 Mac 上，同一集再看一次直接顯示。</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Requirements -->
-  <section class="section section-alt">
+  <!-- AI engine -->
+  <section id="engine" class="section section-alt">
+    <div class="container">
+      <h2 class="section-title">AI 引擎</h2>
+      <p class="section-lead">AI 翻譯、生字標註和整理生詞本需要一個 AI 引擎，在 MultiSub App 裡設定一次就好，兩種擇一。只用 Netflix 雙語字幕的話不用設定。</p>
+      <div class="grid grid-2">
+        <article class="card">
+          <h3>自己的 API Key <span class="tag tag-rec">推薦</span></h3>
+          <p>不用下載模型，速度最快。支援 Anthropic、OpenAI、OpenRouter 和 Google Gemini，也可以填任何 OpenAI 相容的網址，例如本機的 LM Studio 或 Ollama。預設用各家最快、最便宜的模型，想要更好的翻譯可以換成較大的模型。API Key 存在 macOS 鑰匙圈。</p>
+        </article>
+        <article class="card">
+          <h3>本機模型 <span class="tag">離線</span></h3>
+          <p>免費、完全離線，字幕不會離開你的 Mac。第一次使用要在 App 裡下載 Gemma 模型（約 3–5 GB），透過 Apple 的 MLX 在 Apple 晶片上執行，建議 16 GB 以上記憶體。</p>
+        </article>
+      </div>
+      <div class="engine-shot">
+        <img class="app-shot" src="assets/app-engine.png" alt="MultiSub App 的一般設定：AI 引擎可選 API Key 或本機模型，選擇 AI 服務、API Key 與模型" loading="lazy" width="1940" height="1208">
+      </div>
+    </div>
+  </section>
+
+  <!-- Requirements + install -->
+  <section class="section">
     <div class="container two-col">
       <div>
         <h2 class="section-title">系統需求</h2>
         <ul class="reqs">
-          <li><strong>Apple Silicon</strong> Mac（M 系列）</li>
-          <li><strong>macOS 15</strong> 或以上</li>
-          <li>建議 <strong>16GB</strong> 以上記憶體</li>
-          <li>模型檔約 <strong>5GB</strong> 磁碟空間（首次於 App 內下載）</li>
+          <li>搭載 <strong>Apple 晶片</strong>的 Mac</li>
+          <li><strong>macOS 15</strong> 以上</li>
+          <li><strong>Safari</strong> 與 Netflix 訂閱</li>
+          <li>本機模型（選用）：建議 <strong>16 GB</strong> 以上記憶體、約 <strong>3–5 GB</strong> 磁碟空間</li>
         </ul>
       </div>
       <div id="install">
         <h2 class="section-title">安裝步驟</h2>
         <ol class="steps">
-          <li>下載 <a href="https://github.com/snch1211/multisub/releases/latest" target="_blank" rel="noopener">最新版 DMG</a>，開啟後把 <strong>MultiSub</strong> 拖進 <strong>Applications</strong>。</li>
-          <li><strong>首次開啟</strong>：本 App 以免費 Apple 憑證簽署、未經 Apple 公證，macOS 會先擋下。請對圖示按 <strong>右鍵 → 打開</strong>，或到 <strong>系統設定 → 隱私權與安全性</strong> 按 <strong>「仍要打開」</strong>。只需一次。</li>
-          <li>開啟 <strong>Safari → 設定 → 擴充功能</strong>，勾選 MultiSub 並允許存取 Netflix 網站。</li>
+          <li><strong>下載</strong>：在 Mac App Store 搜尋「MultiSub」（審核中），或從 GitHub 下載 <a href="https://github.com/snch1211/multisub/releases/latest" target="_blank" rel="noopener">最新版 DMG</a>，把 MultiSub 拖進「應用程式」。</li>
+          <li><strong>GitHub 版第一次開啟</strong>：這個版本沒有經過 Apple 公證，macOS 會先擋下。請對 App 按右鍵 →「打開」，或到「系統設定 › 隱私權與安全性」按「仍要打開」。只需要一次。</li>
+          <li><strong>啟用 Safari 延伸功能</strong>：在 App 的「開始使用」頁按「打開 Safari 設定」，勾選 MultiSub。第一次在 netflix.com 使用時，Safari 會詢問網站權限，請選「永遠允許」。</li>
+          <li><strong>打開 Netflix</strong>：播放任何影片就會出現 Netflix 雙語字幕，第二語言預設跟著系統語言。想用 AI 翻譯或生字標註，再到 App 設定 AI 引擎。</li>
         </ol>
       </div>
     </div>
     <div class="container narrow center-col" style="margin-top: 60px;">
       <span class="pill">為什麼在 Safari 看 Netflix</span>
       <h2 class="section-title">最高畫質，本來就在 Safari</h2>
-      <p class="lead-muted">在 Mac 上，<strong>只有 Safari 能播放 Netflix 的最高畫質</strong>（最高 4K HDR）；Chrome 與 Firefox 受播放保護機制限制，畫質最高只到 720p。既然最好的畫質在 Safari，最好的雙語學習體驗也該在這裡——所以 MultiSub 只為 Safari 打造。</p>
+      <p class="lead-muted">在 Mac 上，<strong>只有 Safari 能播放 Netflix 的最高畫質</strong>（最高 4K HDR）。Chrome 與 Firefox 受播放保護機制限制，畫質最高只到 720p。既然最好的畫質在 Safari，最好的雙語學習體驗也該在這裡，所以 MultiSub 只為 Safari 打造。</p>
       <div class="compare">
         <div class="compare-item compare-win">
           <div class="ci-name">Safari<span>on Mac</span></div>
@@ -201,18 +226,19 @@
   </section>
 
   <!-- Privacy -->
-  <section id="privacy" class="section">
+  <section id="privacy" class="section section-alt">
     <div class="container narrow">
       <h2 class="section-title">隱私</h2>
-      <p class="lead">翻譯完全在本機執行，字幕與觀看資料不外傳。</p>
+      <p class="lead">沒有帳號、不收集使用資料，開發者收不到你的任何資料。</p>
       <ul class="privacy-list">
-        <li><strong>無帳號、無追蹤。</strong>不需註冊或登入，不收集任何使用資料、行為分析或遙測。</li>
-        <li><strong>字幕只在本機處理。</strong>從 Netflix 擷取的字幕只在你的裝置上解析與翻譯，不上傳任何伺服器。</li>
-        <li><strong>模型在裝置上推論。</strong>Gemma 模型透過 Apple 的 MLX 在你的 Apple Silicon 上執行，翻譯過程不經雲端。</li>
-        <li><strong>資料留在你的 Mac。</strong>翻譯快取、生詞本與設定都存放在 App 與擴充功能共用的本機容器裡。</li>
-        <li><strong>開源可稽核。</strong>全部原始碼公開於 GitHub，任何人都能檢視 MultiSub 實際做了什麼。</li>
+        <li><strong>無帳號、無追蹤。</strong>不用註冊或登入，不收集使用統計、當機報告或任何追蹤資料，也沒有廣告或分析工具。</li>
+        <li><strong>Netflix 雙語字幕只連到 Netflix。</strong>這個模式只向 Netflix 取得這一集的字幕檔，不送出其他資料。按「整理本集單字」時，才會把這一集的英文字幕交給你設定的 AI 引擎。</li>
+        <li><strong>本機模型不送出字幕。</strong>AI 引擎選本機模型時，翻譯、標註和整理生詞本都在你的 Mac 上完成。</li>
+        <li><strong>雲端 AI 由你決定。</strong>選了雲端 AI，字幕會從你的 Mac 直接送到你選的服務，不經過開發者。第一次使用前，App 會寫明字幕會送到哪裡，你同意後才開始。</li>
+        <li><strong>資料留在你的 Mac。</strong>翻譯快取、生詞本和設定都存在本機，隨時可以在 App 裡刪除。API Key 存在 macOS 鑰匙圈。</li>
+        <li><strong>開源可檢查。</strong>原始碼都在 GitHub，任何人都能看 MultiSub 實際做了什麼。</li>
       </ul>
-      <p class="muted privacy-net">如實揭露唯二的對外連線：首次使用會從 <strong>Hugging Face</strong> 下載模型權重（一次性）；App 的「檢查更新」會連線 <strong>GitHub Releases 公開 API</strong> 比對版本。除這兩者外，MultiSub 不進行任何其他網路連線。</p>
+      <p class="muted privacy-net">其他連線：在 App 查看或下載本機模型時會連到 <strong>Hugging Face</strong>。從 GitHub 下載的版本會用 <strong>GitHub Releases 公開 API</strong> 檢查更新，App Store 版沒有這項連線。完整內容請看<a href="https://github.com/snch1211/multisub/blob/main/PRIVACY.md" target="_blank" rel="noopener">隱私權政策</a>。</p>
     </div>
   </section>
 
@@ -231,10 +257,72 @@
       <span>·</span>
       <a href="https://github.com/snch1211/multisub/releases/latest" target="_blank" rel="noopener">下載</a>
       <span>·</span>
+      <a href="https://github.com/snch1211/multisub/blob/main/PRIVACY.md" target="_blank" rel="noopener">隱私權政策</a>
+      <span>·</span>
       <a href="https://github.com/snch1211/multisub/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
     </p>
   </div>
 </footer>
+
+<script>
+// Hero mode demo: swaps the subtitle lines on the laptop screen to show what
+// each of the three modes looks like. Cycles on its own until the visitor
+// picks a mode (never for prefers-reduced-motion).
+(function () {
+  var MODES = {
+    netflix: {
+      orig: 'We need to come up with a plan before dawn.',
+      second: '我們得在天亮前想出辦法。',
+      caption: 'Netflix 官方的第二語言字幕，不用設定 AI。'
+    },
+    ai: {
+      orig: 'We need to come up with a plan before dawn.',
+      second: '夜明けまでに作戦を立てないと。',
+      caption: 'Netflix 沒有你要的語言時，改由 AI 翻譯，支援 12 種語言。'
+    },
+    annotate: {
+      orig: 'We need to <span class="ms-term">come up with</span><span class="ms-gloss">想出</span> a plan before dawn.',
+      second: '',
+      caption: '只留原文，在你可能不懂的字後面標上意思。'
+    }
+  };
+  var ORDER = ['netflix', 'ai', 'annotate'];
+  var subs = document.getElementById('demo-subs');
+  var orig = document.getElementById('demo-orig');
+  var second = document.getElementById('demo-second');
+  var caption = document.getElementById('mode-caption');
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.seg-btn'));
+  if (!subs || !buttons.length) return;
+  var current = 'netflix';
+  var timer = null;
+
+  function show(mode) {
+    var m = MODES[mode];
+    current = mode;
+    buttons.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.mode === mode)); });
+    caption.textContent = m.caption;
+    subs.classList.add('is-swapping');
+    setTimeout(function () {
+      orig.innerHTML = m.orig;
+      second.textContent = m.second;
+      second.hidden = !m.second;
+      subs.classList.remove('is-swapping');
+    }, 160);
+  }
+
+  function stopCycling() { if (timer) { clearInterval(timer); timer = null; } }
+
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () { stopCycling(); show(b.dataset.mode); });
+  });
+
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    timer = setInterval(function () {
+      show(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    }, 4000);
+  }
+})();
+</script>
 
 </body>
 </html>
