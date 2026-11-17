@@ -113,7 +113,7 @@
   // from Netflix gets this many more tries at the full track.
   const FALLBACK_RECOVERY_MAX = 2;
   // Errors that a different engine setup can fix: retry when it changes.
-  const ENGINE_FIXABLE_CODES = new Set(['engine-not-ready', 'model-not-ready', 'auth-failed', 'consent-required', 'native-unavailable']);
+  const ENGINE_FIXABLE_CODES = new Set(['engine-not-ready', 'model-not-ready', 'auth-failed', 'native-unavailable']);
   // Errors that may clear up by themselves: retry after a pause.
   const AUTO_RETRY_CODES = new Set(['rate-limited', 'network', 'provider-error', 'native-unavailable']);
 

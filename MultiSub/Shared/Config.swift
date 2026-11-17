@@ -295,9 +295,8 @@ struct MultiSubConfig: Codable, Equatable {
     /// ready. Keyed by `consentKey(for:baseURL:)`: a provider's rawValue,
     /// except that a custom server's consent belongs to its address, so
     /// agreeing to one server says nothing about the next one typed in.
-    /// Recorded by the app's confirmation alert or by `set-engine` with
-    /// `consent: true`; never removed by switching away, so switching back
-    /// doesn't ask again.
+    /// Recorded only by the app's confirmation alert; never removed by
+    /// switching away, so switching back doesn't ask again.
     var cloudConsent: [String: Double] = [:]
 
     static let defaultModelID = "mlx-community/gemma-4-e4b-it-4bit"
@@ -330,14 +329,6 @@ struct MultiSubConfig: Codable, Equatable {
                                      at timestamp: Double = SharedPrefs.nowMs) {
         guard let key = Self.consentKey(for: provider, baseURL: baseURL) else { return }
         cloudConsent[key] = timestamp
-    }
-
-    /// The custom server addresses the user has agreed to, normalized.
-    var consentedCustomBaseURLs: [String] {
-        cloudConsent.keys
-            .filter { $0.hasPrefix(Self.customConsentPrefix) }
-            .map { String($0.dropFirst(Self.customConsentPrefix.count)) }
-            .sorted()
     }
 
     // Custom decode so config.json files written before a key existed still

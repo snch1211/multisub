@@ -306,7 +306,7 @@ function renderStatus() {
       return;
     case 'error':
       // The overlay's wording points at this popup; here, point at the card.
-      setStatus(st.errorCode === 'engine-not-ready' || st.errorCode === 'consent-required'
+      setStatus(st.errorCode === 'engine-not-ready'
         ? '先在下面設定 AI 引擎' : MS.errorText(st.errorCode), 'err');
       return;
     default:

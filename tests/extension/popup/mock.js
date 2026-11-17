@@ -14,7 +14,6 @@
   const ev = () => ({ addListener() {} });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const copy = (x) => JSON.parse(JSON.stringify(x));
-  const cloud = { configured: 'cloud', active: 'cloud', provider: 'openai', providerName: 'OpenAI', model: 'gpt-6-luna', hasKey: true };
   // vocab-status: cfg.vocabInitial until 整理本集單字 is pressed, then the
   // replies in cfg.vocabAfter one per call (the last one repeats).
   let organized = false;
@@ -31,13 +30,6 @@
         window.__log.push(copy(m));
         const r = (cfg.replies || {})[m.type];
         if (m.type === 'ping-native') { await sleep(cfg.pingDelay || 0); return { ok: true, engine: cfg.engine, prefs: cfg.prefs || { updatedAt: 0 } }; }
-        if (m.type === 'get-engine-options') return { ok: true, providers: cfg.providers, engine: cfg.engine };
-        if (m.type === 'test-engine') { await sleep(20); return r || { ok: true, latencyMs: 912, sample: '你好' }; }
-        if (m.type === 'set-engine') {
-          if (m.engine === 'cloud' && cfg.requireConsent && !m.consent) return { ok: false, error: 'consent-required' };
-          return r || { ok: true, engine: m.engine === 'local' ? Object.assign({}, cfg.engine, { configured: 'local', active: 'local' }) : cloud };
-        }
-        if (m.type === 'list-models') return r || { ok: true, models: ['gpt-x', 'gpt-y'] };
         if (m.type === 'vocab-status') { await sleep(10); return copy(Object.assign({ movieId: m.movieId }, vocabStatus())); }
         if (m.type === 'open-app') return r || { ok: true };
         return { ok: true };

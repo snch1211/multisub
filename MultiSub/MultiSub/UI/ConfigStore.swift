@@ -5,9 +5,9 @@
 //  UI-side single source of truth for config.json. Views read `config` and
 //  change it only through `update`, which goes through
 //  `MultiSubConfig.update` (load fresh → mutate → coordinated write). The
-//  Safari extension writes the same file (prefs from the popup, engine
-//  settings from `set-engine`), so saving a whole copy held here since
-//  launch would silently undo whatever it wrote in between.
+//  Safari extension writes the same file (prefs from the popup's
+//  `set-prefs`), so saving a whole copy held here since launch would
+//  silently undo whatever it wrote in between.
 //
 
 import AppKit

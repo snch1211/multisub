@@ -98,7 +98,7 @@ const TRANSIENT_CODES = new Set(['rate-limited', 'network', 'provider-error']);
 // whole job stops. Anything else only costs the chunk that hit it: one batch
 // that keeps failing (say, a local server whose context window is a little
 // too small for it) must not keep every later line untranslated.
-const FATAL_CODES = new Set(['auth-failed', 'engine-not-ready', 'model-not-ready', 'consent-required', 'native-unavailable']);
+const FATAL_CODES = new Set(['auth-failed', 'engine-not-ready', 'model-not-ready', 'native-unavailable']);
 // ...unless chunks keep failing one after another, which means the service
 // is down rather than one batch being odd.
 const MAX_CONSECUTIVE_CHUNK_FAILURES = 3;
@@ -113,7 +113,7 @@ const runningJobs = new Set();
 // for) a second one; see startJob.
 const jobsByKey = new Map();
 
-// Last engine object from a native `ping` / `set-engine`, see ARCHITECTURE §5.2.
+// Last engine object from a native `ping`, see ARCHITECTURE §5.2.
 let engineInfo = { engine: null, at: 0 };
 
 // Small LRU for the DOM-fallback line path.
@@ -1001,17 +1001,10 @@ async function organizeVocab(payload) {
 // ---------------------------------------------------------------------------
 
 // Forwarded to the native action of the same name, with only these fields.
-// An API key passes through here once and is never stored or sent back to
-// JavaScript (see ARCHITECTURE §3): 'set-engine' saves it natively, while
-// 'test-engine' (a candidate setup, tested before anything is saved) and
-// 'list-models' only use it for that one request. 'consent' records the
-// user's confirmation that subtitles may go to that provider. 'vocab-status'
-// is where 整理本集單字 stands for one episode, as the app reports it.
+// 'vocab-status' is where 整理本集單字 stands for one episode, as the app
+// reports it. Nothing here sets up the AI engine: that happens in the app
+// only (see ARCHITECTURE §3), and the native side has no action for it.
 const NATIVE_FORWARD = {
-  'get-engine-options': [],
-  'set-engine': ['engine', 'provider', 'model', 'baseURL', 'apiKey', 'consent'],
-  'test-engine': ['provider', 'model', 'baseURL', 'apiKey'],
-  'list-models': ['provider', 'baseURL', 'apiKey'],
   'set-prefs': ['prefs'],
   'vocab-status': ['movieId']
 };
@@ -1039,10 +1032,7 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     for (const field of NATIVE_FORWARD[msg.type]) {
       if (msg[field] !== undefined) req[field] = msg[field];
     }
-    return reply(sendResponse, sendNative(req).then((res) => {
-      if (res && res.ok && res.engine) rememberEngine(res.engine);
-      return res;
-    }));
+    return reply(sendResponse, sendNative(req));
   }
   return false;
 });
