@@ -432,7 +432,7 @@ struct VocabularyView: View {
                 Text("\(word.word) · \(word.pos)")
                     .font(.headline)
             }
-            Text("definition：\(word.definitionEn)")
+            Text("英文解釋：\(word.definitionEn)")
             Text("翻譯：\(word.translation)")
             Text("例句：\(word.example)")
             Text("例句翻譯：\(word.exampleTranslation)")

@@ -292,7 +292,7 @@ struct OnboardingView: View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 Text("允許在 netflix.com 上執行")
-                Text("Safari 詢問時選「一律允許」，選「允許一天」隔天就會失效。")
+                Text("Safari 詢問時選「永遠允許」，選「允許一天」隔天就會失效。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -70,7 +70,7 @@ AI 翻譯和生字標註需要一個 AI 引擎，兩種擇一：
 
 打開 MultiSub，「開始使用」頁面只有兩個步驟：
 
-1. **啟用 Safari 延伸功能**：按「打開 Safari 設定」，勾選 MultiSub。第一次在 netflix.com 用的時候，Safari 會詢問網站權限，選「一律允許」（選「允許一天」隔天就會失效）。
+1. **啟用 Safari 延伸功能**：按「打開 Safari 設定」，勾選 MultiSub。第一次在 netflix.com 用的時候，Safari 會詢問網站權限，選「永遠允許」（選「允許一天」隔天就會失效）。
 2. **打開 Netflix**：按「在 Safari 打開 Netflix」，播放任何影片就會出現 Netflix 雙語字幕。第二語言預設跟著系統語言。
 
 想用 AI 翻譯或生字標註，展開同一頁的「字幕模式與語言」選模式，再貼上 API Key 或下載本機模型。在 Safari 工具列的選單切換模式也可以，還沒設定 AI 引擎的話，選單會帶你回 App 設定。

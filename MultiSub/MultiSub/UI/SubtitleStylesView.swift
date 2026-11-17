@@ -90,47 +90,49 @@ struct SubtitleStylesView: View {
 
     // MARK: - Live preview
 
-    /// Fake player frame (hardcoded-color exception #2) with a
-    /// fake original-language line (mimics Netflix's own non-configurable
-    /// native subtitle for contrast reference) and a fake translated line
-    /// that applies every current adjustment. Both are two-line text so the
-    /// 行高 slider has something to visibly
-    /// demonstrate — a single-line preview made that control a no-op visually.
+    /// Fake player frame (hardcoded-color exception #2) with the two lines
+    /// the extension draws in its default merged layout (overlay.css): the
+    /// original line on top at full size and the second-language line under
+    /// it at 80% (`--multisub-second-scale`), each in its own box and both
+    /// using every style setting. Both are two-line text so the 行高 slider
+    /// has something to visibly demonstrate — a single-line preview made
+    /// that control a no-op visually.
     private var preview: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(DesignSystem.previewPlayerBackground)
-            VStack(spacing: 6) {
-                Text("I never thought I'd see you\nagain after everything that happened.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white)
-                previewSubtitleLine
+            VStack(spacing: 4) {
+                previewSubtitleLine("I never thought I'd see you\nagain after everything that happened.", size: Self.previewOriginalSize)
+                previewSubtitleLine("沒想到經歷了那些事之後\n我還能再次見到你。", size: Self.previewOriginalSize * 0.8)
             }
             .padding(.bottom, 16)
         }
         .frame(height: 140)
     }
 
-    private var previewSubtitleLine: some View {
-        outlinedPreviewText("沒想到經歷了那些事之後\n我還能再次見到你。")
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(color(fromHex: styles.backgroundColor).opacity(styles.backgroundOpacity), in: RoundedRectangle(cornerRadius: 4))
+    /// Point size of the preview's original line; the second line is 80% of it.
+    private static let previewOriginalSize: CGFloat = 15
+
+    private func previewSubtitleLine(_ text: String, size: CGFloat) -> some View {
+        outlinedPreviewText(text, size: size)
+            .padding(.horizontal, size * 0.45)
+            .padding(.vertical, size * 0.08)
+            .background(color(fromHex: styles.backgroundColor).opacity(styles.backgroundOpacity), in: RoundedRectangle(cornerRadius: size * 0.15))
     }
 
     /// Multi-directional offset-stack outline — same technique
     /// `overlay.css`'s text-shadow outline uses, so the preview matches what
     /// actually renders on Netflix rather than a different-looking stroke API.
-    private func outlinedPreviewText(_ text: String) -> some View {
+    private func outlinedPreviewText(_ text: String, size: CGFloat) -> some View {
         ZStack {
             if styles.outlineEnabled {
                 ForEach(Array(Self.outlineOffsets.enumerated()), id: \.offset) { _, offset in
-                    previewTextBase(text)
+                    previewTextBase(text, size: size)
                         .foregroundStyle(color(fromHex: styles.outlineColor))
                         .offset(offset)
                 }
             }
-            previewTextBase(text)
+            previewTextBase(text, size: size)
                 .foregroundStyle(color(fromHex: styles.textColor))
         }
         .multilineTextAlignment(.center)
@@ -140,14 +142,14 @@ struct SubtitleStylesView: View {
     /// unlike CSS line-height which also pads above/below each line) mirrors
     /// how the extension's overlay now turns 行高 into a gap between lines
     /// rather than inflating the background box (see overlay.css).
-    private var previewLineSpacing: CGFloat {
-        CGFloat((styles.lineHeight - 1) * 15)
+    private func previewLineSpacing(size: CGFloat) -> CGFloat {
+        CGFloat(styles.lineHeight - 1) * size
     }
 
-    private func previewTextBase(_ text: String) -> some View {
+    private func previewTextBase(_ text: String, size: CGFloat) -> some View {
         Text(text)
-            .font(.system(size: 15, weight: styles.boldEnabled ? .bold : .regular))
-            .lineSpacing(previewLineSpacing)
+            .font(.system(size: size, weight: styles.boldEnabled ? .bold : .regular))
+            .lineSpacing(previewLineSpacing(size: size))
     }
 
     // MARK: - Bindings (hex↔Color conversion at the model boundary)
