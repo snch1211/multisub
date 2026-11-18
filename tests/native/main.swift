@@ -511,7 +511,8 @@ test("agreeing to one custom address covers it typed differently, not another se
     try expect(config.cloudConsent, ["custom:http://localhost:1234/v1": 1], "no address records nothing")
     config.recordCloudConsent(for: .custom, baseURL: "https://llm.example.com/v1", at: 3)
     config.recordCloudConsent(for: .openai, baseURL: "http://ignored.example", at: 4)
-    try expect(config.consentedCustomBaseURLs, ["http://localhost:1234/v1", "https://llm.example.com/v1"])
+    try expect(config.cloudConsent, ["custom:http://localhost:1234/v1": 1,
+                                     "custom:https://llm.example.com/v1": 3, "openai": 4])
     try expect(config.hasCloudConsent(for: .openai, baseURL: ""), true)
 }
 

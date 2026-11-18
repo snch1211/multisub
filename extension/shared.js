@@ -158,11 +158,7 @@
     'auth-failed': 'API Key 無效或已過期，請到 MultiSub App 重新貼上',
     'rate-limited': 'AI 服務的額度用完或請求太頻繁，請稍後再試',
     'network': '連不上 AI 服務，請檢查網路',
-    'provider-error': 'AI 服務暫時出錯，請稍後再試',
-    // set-engine refuses a cloud provider the user hasn't agreed to send
-    // subtitles to yet (App Review 5.1.2(i)); the popup turns this into its
-    // confirmation step, so the text mostly shows up in the overlay.
-    'consent-required': '還沒同意把字幕送到這個 AI 服務，請到 MultiSub App 的 AI 引擎設定確認'
+    'provider-error': 'AI 服務暫時出錯，請稍後再試'
   });
 
   const NETFLIX_ORIGINS = Object.freeze(['*://*.netflix.com/*']);

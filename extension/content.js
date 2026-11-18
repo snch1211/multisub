@@ -113,7 +113,7 @@
   // from Netflix gets this many more tries at the full track.
   const FALLBACK_RECOVERY_MAX = 2;
   // Errors that a different engine setup can fix: retry when it changes.
-  const ENGINE_FIXABLE_CODES = new Set(['engine-not-ready', 'model-not-ready', 'auth-failed', 'consent-required', 'native-unavailable']);
+  const ENGINE_FIXABLE_CODES = new Set(['engine-not-ready', 'model-not-ready', 'auth-failed', 'native-unavailable']);
   // Errors that may clear up by themselves: retry after a pause.
   const AUTO_RETRY_CODES = new Set(['rate-limited', 'network', 'provider-error', 'native-unavailable']);
 
@@ -1843,8 +1843,8 @@
       updateDragAffordance();
       sendResponse({ ok: true });
     } else if (msg.type === 'engine-changed') {
-      // The popup just saved and tested an engine: refresh our view of it and
-      // retry a job that failed for lack of one.
+      // The popup saw the engine change (it is set up in the app): refresh
+      // our view of it and retry a job that failed for lack of one.
       pingNative().then(() => {
         if (state.status === 'error' && ENGINE_FIXABLE_CODES.has(state.errorCode)) startPipeline();
       });

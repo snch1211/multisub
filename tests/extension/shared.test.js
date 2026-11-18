@@ -27,7 +27,7 @@ test('MS is frozen and has the documented surface', () => {
   assert.deepEqual(j(MS.MODES.map((m) => [m.id, m.needsEngine])), [['netflix', false], ['translate', true], ['annotate', true]]);
   assert.deepEqual(j(MS.LEVELS.map((l) => l.id)), ['A2', 'B1', 'B2', 'C1']);
   assert.deepEqual(j(MS.LEVELS.map((l) => l.label)), ['A2 初級', 'B1 中級', 'B2 中高級', 'C1 高級']);
-  for (const code of ['native-unavailable', 'engine-not-ready', 'model-not-ready', 'auth-failed', 'rate-limited', 'network', 'provider-error', 'consent-required']) {
+  for (const code of ['native-unavailable', 'engine-not-ready', 'model-not-ready', 'auth-failed', 'rate-limited', 'network', 'provider-error']) {
     assert.ok(MS.ERROR_TEXT[code], code);
   }
   assert.match(MS.errorText('weird-code'), /weird-code/);
