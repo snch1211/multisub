@@ -15,22 +15,11 @@
     'netflix-none': { onWatchPage: true, status: 'ready', secondState: 'none', secondaryTrackFound: false, tracks, activeTrackId: 'en' },
     perm: null, reload: null, chooser: { onWatchPage: true, status: 'no-mode', tracks }
   }[s];
-  const providers = [
-    { id: 'anthropic', name: 'Anthropic Claude', defaultModel: 'claude-haiku-5-5', keyPlaceholder: 'sk-ant-…', keyURL: 'https://console.anthropic.com/settings/keys', needsBaseURL: false,
-      recommended: [{ id: 'claude-haiku-5-5', label: '最快（推薦）' }, { id: 'claude-sonnet-5-5', label: '平衡' }, { id: 'claude-opus-5-5', label: '最高品質' }] },
-    { id: 'openai', name: 'OpenAI', defaultModel: 'gpt-6-luna', keyPlaceholder: 'sk-…', keyURL: 'https://platform.openai.com/api-keys', needsBaseURL: false,
-      recommended: [{ id: 'gpt-6-luna', label: '最快（推薦）' }] },
-    { id: 'custom', name: '自訂（OpenAI 相容）', defaultModel: '', keyPlaceholder: '選填', keyURL: '', needsBaseURL: true, recommended: [] }
-  ];
-  let saved = false;
   window.browser = {
     runtime: {
       onMessage: ev(),
       async sendMessage(m) {
-        if (m.type === 'ping-native') { await new Promise((r) => setTimeout(r, 400)); return { ok: true, engine: (!saved && (s === 'setup' || s === 'chooser')) ? engineNone : engineCloud, prefs: { updatedAt: 0 } }; }
-        if (m.type === 'get-engine-options') return { ok: true, providers, engine: engineNone };
-        if (m.type === 'set-engine') { saved = true; return { ok: true, engine: engineCloud }; }
-        if (m.type === 'test-engine') return { ok: true, latencyMs: 912 };
+        if (m.type === 'ping-native') { await new Promise((r) => setTimeout(r, 400)); return { ok: true, engine: (s === 'setup' || s === 'chooser') ? engineNone : engineCloud, prefs: { updatedAt: 0 } }; }
         return { ok: true };
       }
     },

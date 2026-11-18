@@ -173,11 +173,10 @@ onboarding and 一般設定), which is also the only place that picks the
 provider and model, tests a setup and asks for consent. The toolbar popup
 only shows the engine in use (from `ping`) or, when there is none, a button
 that opens the app's settings (`open-app {destination: "general"}`). The
-native actions `set-engine`, `test-engine`, `list-models` and
-`get-engine-options`, and background.js's relay for them (`NATIVE_FORWARD`),
-are still there (§5.2), but nothing in the shipped popup calls them. A key
-sent to them passes through background.js once: `set-engine` stores it,
-while `test-engine` and `list-models` use it for that one request only.
+engine is configured in the app only, and the extension cannot change it:
+the native handler has no action that sets the engine, provider, model, key
+or consent, or that tests a setup or lists models (§5.2), so no extension
+context can save a key or record consent without the app's UI.
 
 **Consent (App Review 5.1.2(i)).** `config.cloudConsent` maps a provider id to
 when (ms) the user agreed that subtitle text may be sent there directly from
@@ -191,8 +190,8 @@ ready (`engine-not-ready`; `auto` falls through to the local model), so no
 subtitle text leaves the Mac before the user has agreed. Consent is recorded
 by the app's confirmation alert, which asks again for every custom address
 not agreed to yet (`EngineSetupView` keys it with
-`MultiSubConfig.consentKey`), or by `set-engine` with `consent: true`, which
-the shipped popup no longer sends; it is never removed by switching away.
+`MultiSubConfig.consentKey`), and nothing else records it; it is never
+removed by switching away.
 The alert names the provider, or 「你填的 API 網址」 plus the address as typed
 for `custom`. Swift records the consent and sends with Foundation, while a
 person reading the address, or a WHATWG parser like the one the popup used
@@ -203,16 +202,14 @@ ASCII letters, digits, `.`, `-`, `_` (a numeric one as plain dotted IPv4) or
 a bracketed IPv6 address, an optional port, and no credentials, percent
 escapes, backslash, whitespace or control characters anywhere
 (`http://localhost:1234\@evil.example/v1` is localhost to WHATWG and
-evil.example to Foundation). `set-engine`, `test-engine`, `list-models` and
-the app refuse any other address with `bad-request` and a zh-TW `detail`,
-and `CloudLLMClient` sends nothing to one saved by an older build.
+evil.example to Foundation). The app refuses any other address with a zh-TW
+message, and `CloudLLMClient` sends nothing to one saved by an older build.
 tests/native checks that WHATWG and Foundation find the same host and port
 for the addresses it accepts, and how consent is keyed per address,
 including a legacy `custom` record moving to the saved base URL.
 
 **Test before save.** The app tests what was typed before saving anything
-(`Translator.testEngine(client:)`; native `test-engine` with candidate
-fields also tests without saving). Only a passing test saves the key,
+(`Translator.testEngine(client:)`). Only a passing test saves the key,
 engine and cloud settings (and consent), so a typo never replaces a working
 engine. The test sends one fixed English sentence, never subtitle text,
 which is why it needs no consent; the app asks for consent before its test.
@@ -260,8 +257,8 @@ works. Recommended picks shown in the UI: fastest (default above), balanced
 | mode, targetLang, annotateLevel        | both: `storage.local.settings` and `config.prefs` | newest `updatedAt` wins, exchanged on `ping` and `set-prefs` |
 | fontScale, bottomOffset, mergedMode, enabled | extension `storage.local.settings`          | —                                             |
 | subtitle styles                        | app → `config.styles`                             | delivered in every `ping` reply               |
-| engine, cloud provider/model/base URL  | `config.json` (written by app or `set-engine`)    | read fresh by `Translator` on every request   |
-| cloud consent per provider (custom: per base URL) | `config.cloudConsent` (app alert or `set-engine` `consent: true`) | read fresh by `Translator` on every request |
+| engine, cloud provider/model/base URL  | `config.json` (written by the app only)           | read fresh by `Translator` on every request   |
+| cloud consent per provider (custom: per base URL) | `config.cloudConsent` (the app's alert only) | read fresh by `Translator` on every request |
 | API keys                               | shared keychain, entered in the app only          | —                                             |
 | local models                           | app download → `models/models--<org>--<name>/` (plus `.download-tmp/<org>--<name>/` until it's complete, §3) | read from disk by `Translator` in both processes |
 | translation / annotation caches        | extension `storage.local` (`ms:` keys)            | index mirrored to the app on `ping`           |
@@ -317,8 +314,8 @@ meanwhile), so a job that failed with `engine-not-ready` retries immediately.
 A chunk that fails with `rate-limited`, `network` or `provider-error` is
 retried twice (2 s, 6 s). If it still fails, only that chunk is skipped: its
 lines stay null in memory and in the cache, and the workers move on. The whole
-job fails (`error`) on `auth-failed`, `engine-not-ready`, `model-not-ready`,
-`consent-required` or `native-unavailable`, after 3 chunk failures in a row,
+job fails (`error`) on `auth-failed`, `engine-not-ready`, `model-not-ready`
+or `native-unavailable`, after 3 chunk failures in a row,
 or when no line at all came back. A job that skipped chunks ends with
 `done {partial: true}`; content.js shows a short notice and retries it
 quietly, and the retry redoes only the missing lines. A failed job is retried
@@ -327,8 +324,8 @@ per episode (reset by a complete `done`). A line the provider refused also stays
 the job partial: asking again right away would most likely be refused again.
 
 Error codes shown to the user: `native-unavailable`, `engine-not-ready`,
-`model-not-ready`, `auth-failed`, `rate-limited`, `network`, `provider-error`,
-`consent-required`.
+`model-not-ready`, `auth-failed`, `rate-limited`, `network`, `provider-error`.
+(A cloud provider without consent is `engine-not-ready`.)
 
 ### 5.2 background.js → native (`runtime.sendNativeMessage`)
 
@@ -339,55 +336,27 @@ Error codes shown to the user: `native-unavailable`, `engine-not-ready`,
 | `extract-glossary` | `pairs[{source, reference}]`, `targetLang`                              | `glossary{}`                                           |
 | `annotate`         | `lines[]`, `context[]`, `reference[]`, `sourceLang`, `targetLang`, `level` | `annotations[[{term, gloss}]]`                      |
 | `set-prefs`        | `prefs{mode, targetLang, annotateLevel, updatedAt}`                     | —                                                      |
-| `set-engine`       | every field optional: `engine`, `provider`, `model`, `baseURL`, `apiKey` (empty string deletes), `consent` (`true` records consent for the provider, or custom base URL, this write leaves selected) | `engine`                    |
-| `test-engine`      | — (tests the saved engine), or a candidate: `provider`, `model?`, `baseURL?`, `apiKey?` | `latencyMs`, `sample`                  |
-| `get-engine-options` | —                                                                     | `providers[{id, name, defaultModel, recommended[{id, label}], keyPlaceholder, keyURL?, needsBaseURL, keyRequired, hasKey, hasConsent, consentedBaseURLs? (custom only)}]`, `engine` |
-| `list-models`      | `provider`, `baseURL?`, `apiKey?`                                       | `models[]`                                             |
 | `unload`, `open-app` | unchanged                                                             |                                                        |
 | `save-transcript`  | `movieId`, `seriesTitle`, `episodeTitle?`, `seasonNumber?`, `sourceLang`, `targetLang`, `lines[]` | — (stages the transcript, marks the episode handed off; §5.3) |
 | `vocab-status`     | `movieId`                                                               | `movieId`, `state` (below; `none` when nothing recent), `accepted`, `done`, `total`, `wordCount?`, `code?`, `message?`, `title?`, `updatedAt` (ms) |
 
-`set-engine`, `test-engine`, `get-engine-options` and `list-models` still
-exist, and background.js still relays them, but nothing in the shipped popup
-calls them (§3): it reads the engine from `ping` and opens the app to set
-one up.
+Any other action gets `unknown-action`. None of them sets up the AI engine
+(§3): background.js and the popup read it from `ping`, and the popup opens
+the app to set one up.
 
-`engine` (as returned by `ping`/`set-engine`):
+`engine` (as returned by `ping`):
 `{ configured: "auto"|"local"|"cloud", active: "local"|"cloud"|null, provider, providerName, model, hasKey, localModelId, localModelDownloaded, localModelLoaded }`.
 `active` is null (or `"local"` under `auto`) while the selected cloud
 provider has a key but no recorded consent.
 
-`set-engine` replies `consent-required` and writes nothing, the key included,
-when the resulting engine is `cloud`, its provider (for `custom`, the
-resulting base URL) has no recorded consent,
-the request has no `consent: true`, and it sets the engine, provider, model,
-base URL or a non-empty key (a request that only deletes the key goes
-through). `auto` is never refused here: `resolveEngine` just skips an
-unconsented provider. A caller is meant to ask the user, naming the
-recipient, and send the same request again with `consent: true`; the
-shipped popup sends no `set-engine` at all, and the app writes `config.json`
-itself.
-`get-engine-options` reports `hasConsent` for the saved address and, for
-`custom`, every agreed address in `consentedBaseURLs`, so such a caller can
-tell whether the address in its form needs that step.
-
-`test-engine` with `provider` tests those settings with a client of its own
-and saves nothing. A missing or empty `apiKey` uses the key saved for that
-provider; a missing `model` / `baseURL` falls back to the saved one when the
-provider is the saved provider. Missing pieces fail before any request:
-`bad-request` (base URL, model ID) or `engine-not-ready` (no key), each with a
-zh-TW `detail`. `list-models` likewise uses a non-empty `apiKey` for that one
-request only and otherwise the saved key; it never saves anything.
-
 `engine.baseURL` is present only for the custom provider. Optional fields
-with no value (`active`, `prefs`, `keyURL`) are omitted rather than sent as
+with no value (`active`, `prefs`) are omitted rather than sent as
 null.
 
 Errors are `{ ok: false, error: <code>, detail?: <message> }`. Besides the
 codes above, unexpected failures (including a request cancelled while it
-waited for the local model to load) come back as `<action>-failed`, a key that
-could not be stored as `keychain-failed`, and a malformed request as
-`bad-request`. background.js folds `<action>-failed` and `bad-request` from
+waited for the local model to load) come back as `<action>-failed`, and a
+malformed request as `bad-request`. background.js folds `<action>-failed` and `bad-request` from
 job requests into `provider-error`, which it retries.
 
 The host app opens on `multisub://<destination>` URLs sent through

@@ -12,7 +12,7 @@
   const type = (id, v) => { $(id).value = v; fire($(id), 'input'); };
   const choose = (id, v) => { $(id).value = v; fire($(id), 'change'); };
   const visible = (id) => { const el = $(id); return !!el && !el.closest('[hidden]'); };
-  const QUIET = ['ping-native', 'get-engine-options', 'storage.set', 'storage.remove', 'set-prefs'];
+  const QUIET = ['ping-native', 'storage.set', 'storage.remove', 'set-prefs'];
   const log = () => window.__log.filter((m) => !QUIET.includes(m.type));
   // Every distinct state of the 整理本集單字 status block, in order.
   function watchVocab() {

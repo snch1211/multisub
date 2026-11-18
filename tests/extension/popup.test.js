@@ -11,18 +11,11 @@ function run(cfg) {
   return runner.run(cfg, { ext: EXT });
 }
 
-const providers = (extra = {}) => [
-  Object.assign({ id: 'anthropic', name: 'Anthropic Claude', defaultModel: 'claude-haiku-5-5', keyPlaceholder: 'sk-ant-…', keyURL: 'https://console.anthropic.com/settings/keys', needsBaseURL: false, keyRequired: true, hasKey: false,
-    recommended: [{ id: 'claude-haiku-5-5', label: '最快（推薦）' }] }, extra.anthropic),
-  Object.assign({ id: 'openai', name: 'OpenAI', defaultModel: 'gpt-6-luna', keyPlaceholder: 'sk-…', keyURL: 'https://platform.openai.com/api-keys', needsBaseURL: false, keyRequired: true, hasKey: false,
-    recommended: [{ id: 'gpt-6-luna', label: '最快（推薦）' }, { id: 'gpt-6.1-terra', label: '平衡' }] }, extra.openai),
-  Object.assign({ id: 'custom', name: '自訂（OpenAI 相容）', defaultModel: '', keyPlaceholder: '選填', needsBaseURL: true, keyRequired: false, hasKey: false, recommended: [] }, extra.custom)
-];
 const engineNone = { configured: 'auto', active: null, provider: 'anthropic', providerName: 'Anthropic Claude', model: 'claude-haiku-5-5', hasKey: false,
   localModelId: 'mlx-community/gemma-4-e4b-it-4bit', localModelDownloaded: false, localModelLoaded: false };
 const engineCloud = Object.assign({}, engineNone, { configured: 'cloud', active: 'cloud', hasKey: true });
 const translateSettings = { settings: { enabled: true, mode: 'translate', targetLang: 'zh-TW', annotateLevel: 'B1', fontScale: 1, bottomOffset: 10, mergedMode: true, prefsUpdatedAt: 5 } };
-const base = (scenario, extra) => Object.assign({ scenario, engine: engineNone, providers: providers(), store: translateSettings,
+const base = (scenario, extra) => Object.assign({ scenario, engine: engineNone, store: translateSettings,
   tabUrl: 'https://www.netflix.com/watch/81', status: { onWatchPage: true, status: 'error', errorCode: 'engine-not-ready', tracks: [], totalCues: 10, translatedCount: 0 } }, extra || {});
 
 let passed = 0;

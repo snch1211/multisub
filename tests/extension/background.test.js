@@ -345,29 +345,17 @@ async function test(name, fn) {
 
   await test('popup/content requests are forwarded to native with only their fields', async () => {
     const bg = boot(async (msg) => {
-      if (msg.action === 'set-engine') return { ok: true, engine: engine('cloud') };
-      if (msg.action === 'test-engine') return { ok: true, latencyMs: 912, sample: '你好' };
-      if (msg.action === 'get-engine-options') return { ok: true, providers: [{ id: 'anthropic' }], engine: engine(null) };
-      if (msg.action === 'list-models') return { ok: true, models: ['a', 'b'] };
       if (msg.action === 'set-prefs') return { ok: true };
       if (msg.action === 'open-app') return { ok: true };
       return { ok: false, error: 'unknown-action' };
     });
-    const r1 = await bg.request({ type: 'set-engine', engine: 'cloud', provider: 'anthropic', model: 'claude-haiku-5-5', apiKey: 'sk-test', junk: 1 });
-    assert.equal(r1.ok, true);
-    assert.deepEqual(bg.calls[0], { action: 'set-engine', engine: 'cloud', provider: 'anthropic', model: 'claude-haiku-5-5', apiKey: 'sk-test' });
-    assert.equal((await bg.request({ type: 'test-engine' })).latencyMs, 912);
-    assert.deepEqual(bg.calls[1], { action: 'test-engine' });
-    await bg.request({ type: 'list-models', provider: 'openai' });
-    assert.deepEqual(bg.calls[2], { action: 'list-models', provider: 'openai' });
-    await bg.request({ type: 'get-engine-options' });
     const prefs = { mode: 'annotate', targetLang: 'zh-TW', annotateLevel: 'B1', updatedAt: 5 };
-    await bg.request({ type: 'set-prefs', prefs });
-    assert.deepEqual(bg.calls[4], { action: 'set-prefs', prefs });
+    assert.equal((await bg.request({ type: 'set-prefs', prefs, junk: 1 })).ok, true);
+    assert.deepEqual(bg.calls[0], { action: 'set-prefs', prefs });
     await bg.request({ type: 'open-app', destination: 'engine' });
-    assert.deepEqual(bg.calls[5], { action: 'open-app', destination: 'engine' });
+    assert.deepEqual(bg.calls[1], { action: 'open-app', destination: 'engine' });
     await bg.request({ type: 'open-app' });
-    assert.deepEqual(bg.calls[6], { action: 'open-app' });
+    assert.deepEqual(bg.calls[2], { action: 'open-app' });
     assert.equal(await bg.request({ type: 'nope' }), undefined);
   });
 
@@ -477,8 +465,8 @@ async function test(name, fn) {
     assert.ok(!c.posted.some((m) => m.type === 'done'));
   });
 
-  await test('fatal codes (consent-required, engine-not-ready, auth-failed …) stop at once, no retries', async () => {
-    for (const code of ['consent-required', 'engine-not-ready', 'model-not-ready', 'auth-failed']) {
+  await test('fatal codes (engine-not-ready, auth-failed …) stop at once, no retries', async () => {
+    for (const code of ['engine-not-ready', 'model-not-ready', 'auth-failed']) {
       const bg = boot(async (msg) => (msg.action === 'ping' ? { ok: true, engine: engine('local') } : { ok: false, error: code }));
       const c = bg.connect();
       c.send(job('94', 60));
@@ -664,23 +652,13 @@ async function test(name, fn) {
     assert.equal(e2.code, 'auth-failed');
   });
 
-  await test('engine requests: transient key for list-models/test-engine, consent for set-engine', async () => {
-    const bg = boot(async (msg) => {
-      if (msg.action === 'list-models') return { ok: true, models: ['m1'] };
-      if (msg.action === 'test-engine') return { ok: true, latencyMs: 500, sample: '你好' };
-      if (msg.action === 'set-engine') return msg.consent ? { ok: true, engine: engine('cloud') } : { ok: false, error: 'consent-required' };
-      return { ok: false };
-    });
-    await bg.request({ type: 'list-models', provider: 'openai', apiKey: 'sk-typed', junk: 1 });
-    assert.deepEqual(bg.calls[0], { action: 'list-models', provider: 'openai', apiKey: 'sk-typed' });
-    const t = await bg.request({ type: 'test-engine', provider: 'custom', model: 'qwen', baseURL: 'http://localhost:1234/v1', apiKey: 'k', engine: 'cloud' });
-    assert.equal(t.latencyMs, 500);
-    assert.deepEqual(bg.calls[1], { action: 'test-engine', provider: 'custom', model: 'qwen', baseURL: 'http://localhost:1234/v1', apiKey: 'k' });
-    const r1 = await bg.request({ type: 'set-engine', engine: 'cloud', provider: 'openai', model: 'gpt-6-luna' });
-    assert.deepEqual(r1, { ok: false, error: 'consent-required' });
-    const r2 = await bg.request({ type: 'set-engine', engine: 'cloud', provider: 'openai', model: 'gpt-6-luna', consent: true });
-    assert.equal(r2.ok, true);
-    assert.deepEqual(bg.calls[3], { action: 'set-engine', engine: 'cloud', provider: 'openai', model: 'gpt-6-luna', consent: true });
+  await test('the extension cannot set up the AI engine: engine requests never reach native', async () => {
+    const bg = boot(async () => ({ ok: true, engine: engine('cloud') }));
+    for (const type of ['set-engine', 'test-engine', 'list-models', 'get-engine-options']) {
+      const r = await bg.request({ type, engine: 'cloud', provider: 'openai', model: 'gpt-6-luna', apiKey: 'sk-typed', consent: true });
+      assert.equal(r, undefined, type);
+    }
+    assert.deepEqual(bg.calls, []);
   });
 
   await test('refused lines (empty translation) stay null in memory and cache; not a partial job; asked again later', async () => {

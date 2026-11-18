@@ -65,10 +65,6 @@ final class NativeStub {
       return ["ok": true, "glossary": [String: String]()]
     case "set-prefs", "unload", "open-app", "save-transcript":
       return ["ok": true]
-    case "get-engine-options":
-      return ["ok": true, "providers": [Any](), "engine": engine]
-    case "set-engine", "test-engine", "list-models":
-      return ["ok": false, "error": "bad-request", "detail": "not supported by the harness stub"]
     default:
       return ["ok": false, "error": "unknown-action"]
     }
