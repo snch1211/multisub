@@ -11,9 +11,10 @@
 #
 # Usage:
 #   ./deploy.sh            dev install: Debug build → /Applications (default)
-#   ./deploy.sh --release  packaging: Release build → build/MultiSub.app
-#                          (does NOT install to /Applications or touch Safari;
-#                           feed the result to scripts/make-dmg.sh)
+#   ./deploy.sh --release  packaging: Developer ID–signed Release build →
+#                          build/MultiSub.app (does NOT install to
+#                          /Applications or touch Safari; feed the result to
+#                          scripts/make-dmg.sh, which notarizes it)
 #
 set -euo pipefail
 
@@ -32,34 +33,83 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchS
 BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M.%-S)}"
 
 # ── Release build for DMG packaging ──────────────────────────────────────────
-# Uses the same mandatory flags as the Debug path below, only with
-# -configuration Release. Free signing — no hardened runtime / no
-# notarization. Stages a clean copy at build/MultiSub.app and stops there.
+# Archives a Release build and exports it with the "developer-id" method:
+# signed with the team's Developer ID Application certificate, hardened
+# runtime on (set in the project), secure timestamp — everything notarization
+# needs. Signing assets come from the team in MultiSub/Local.xcconfig and are
+# created automatically (-allowProvisioningUpdates), the same way
+# scripts/archive-appstore.sh does it for the App Store build.
+# Stages build/MultiSub.app and stops there; scripts/make-dmg.sh packages,
+# notarizes and staples it.
 if [ "${1:-}" = "--release" ]; then
   OUT_DIR="$REPO_DIR/build"
-  echo "▶︎ (1/3) 建置 App（Release，第一次或大改動可能要幾分鐘）…"
+  WORK_DIR="$OUT_DIR/direct"
+  ARCHIVE="$WORK_DIR/MultiSub.xcarchive"
+  LOG="$WORK_DIR/archive.log"
+  mkdir -p "$WORK_DIR"
   cd "$PROJECT_DIR"
-  xcodebuild -project MultiSub.xcodeproj -scheme MultiSub -configuration Release \
-    ENABLE_DEBUG_DYLIB=NO CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-    -skipPackagePluginValidation -skipMacroValidation \
-    -allowProvisioningUpdates build >/tmp/multisub-build.log 2>&1 \
-    || { echo "✗ 建置失敗，詳見 /tmp/multisub-build.log"; tail -20 /tmp/multisub-build.log; exit 1; }
-  echo "  ✓ BUILD SUCCEEDED (build $BUILD_NUMBER)"
 
-  BUILT_APP="$(ls -td ~/Library/Developer/Xcode/DerivedData/MultiSub-*/Build/Products/Release/MultiSub.app 2>/dev/null | head -1)"
-  if [ -z "$BUILT_APP" ] || [ ! -d "$BUILT_APP" ]; then
-    echo "✗ 找不到剛建好的 Release App，中止"; exit 1
+  TEAM_ID="$(xcodebuild -project MultiSub.xcodeproj -scheme MultiSub -configuration Release \
+    -showBuildSettings 2>/dev/null | awk -F' = ' '/ DEVELOPMENT_TEAM = /{print $2; exit}')"
+  if [ -z "$TEAM_ID" ]; then
+    echo "✗ DEVELOPMENT_TEAM 是空的，請在 MultiSub/Local.xcconfig 設定（參考 Local.xcconfig.example）"
+    exit 1
   fi
 
-  echo "▶︎ (2/3) 複製到 build/MultiSub.app…"
-  mkdir -p "$OUT_DIR"
+  echo "▶︎ (1/4) Archive（Release，team $TEAM_ID，第一次或大改動可能要幾分鐘）…"
+  rm -rf "$ARCHIVE"
+  xcodebuild -project MultiSub.xcodeproj -scheme MultiSub -configuration Release \
+    -archivePath "$ARCHIVE" ENABLE_DEBUG_DYLIB=NO CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+    MULTISUB_DISTRIBUTION=direct \
+    -skipPackagePluginValidation -skipMacroValidation \
+    -allowProvisioningUpdates archive >"$LOG" 2>&1 \
+    || { echo "✗ Archive 失敗，詳見 $LOG"; tail -20 "$LOG"; exit 1; }
+  echo "  ✓ ARCHIVE SUCCEEDED (build $BUILD_NUMBER)"
+
+  # Same reason as scripts/archive-appstore.sh: the archive and DerivedData
+  # copies get registered with LaunchServices, and Safari may then launch the
+  # extension's native handler from one of them. Keep only /Applications.
+  for app in "$ARCHIVE/Products/Applications/MultiSub.app" \
+             "$(ls -d ~/Library/Developer/Xcode/DerivedData/MultiSub-*/Build/Intermediates.noindex/ArchiveIntermediates/MultiSub/InstallationBuildProductsLocation/Applications/MultiSub.app 2>/dev/null | head -1)"; do
+    [ -d "$app" ] || continue
+    "$LSREGISTER" -u "$app" >/dev/null 2>&1 || true
+    pluginkit -r "$app/Contents/PlugIns/MultiSub Extension.appex" >/dev/null 2>&1 || true
+  done
+  [ -d /Applications/MultiSub.app ] && "$LSREGISTER" -f /Applications/MultiSub.app >/dev/null 2>&1 || true
+
+  echo "▶︎ (2/4) 以 Developer ID 匯出…"
+  cat >"$WORK_DIR/ExportOptions.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key><string>developer-id</string>
+  <key>teamID</key><string>$TEAM_ID</string>
+  <key>signingStyle</key><string>automatic</string>
+</dict>
+</plist>
+EOF
+  rm -rf "$WORK_DIR/export"
+  xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportPath "$WORK_DIR/export" \
+    -exportOptionsPlist "$WORK_DIR/ExportOptions.plist" -allowProvisioningUpdates \
+    >>"$LOG" 2>&1 \
+    || { echo "✗ 匯出失敗，詳見 $LOG"; tail -20 "$LOG"; exit 1; }
+
+  echo "▶︎ (3/4) 複製到 build/MultiSub.app…"
   rm -rf "$OUT_DIR/MultiSub.app"
-  cp -R "$BUILT_APP" "$OUT_DIR/MultiSub.app"
+  cp -R "$WORK_DIR/export/MultiSub.app" "$OUT_DIR/MultiSub.app"
   echo "  ✓ $OUT_DIR/MultiSub.app"
 
-  echo "▶︎ (3/3) 驗證簽章…"
+  echo "▶︎ (4/4) 驗證簽章…"
   codesign --verify --deep --strict "$OUT_DIR/MultiSub.app" \
-    && echo "  ✓ 簽章有效" || { echo "✗ 簽章驗證失敗"; exit 1; }
+    || { echo "✗ 簽章驗證失敗"; exit 1; }
+  SIGNER="$(codesign -dvv "$OUT_DIR/MultiSub.app" 2>&1 | awk -F= '/^Authority=/{print $2; exit}')"
+  case "$SIGNER" in
+    "Developer ID Application:"*) echo "  ✓ 簽章有效（$SIGNER）" ;;
+    *) echo "✗ 不是 Developer ID 簽章（$SIGNER），無法公證"; exit 1 ;;
+  esac
+  codesign -dvv "$OUT_DIR/MultiSub.app" 2>&1 | grep -q 'flags=.*runtime' \
+    || { echo "✗ 沒有開 Hardened Runtime，無法公證"; exit 1; }
 
   VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
     "$OUT_DIR/MultiSub.app/Contents/Info.plist" 2>/dev/null || echo '?')"
