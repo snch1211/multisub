@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/macOS-15%2B-000000?logo=apple" alt="macOS 15+">
   <img src="https://img.shields.io/badge/Safari-Web%20Extension-006CFF?logo=safari&logoColor=white" alt="Safari Web Extension">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
-  <a href="https://deepwiki.com/snch1211/multisub"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  <a href="https://deepwiki.com/snch1211/multisub"><img src="https://img.shields.io/badge/DeepWiki-Ask_AI-2563eb" alt="Ask DeepWiki"></a>
 </p>
 
 <p align="center">
