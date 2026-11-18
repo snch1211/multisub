@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/snch1211/multisub/releases"><img src="https://img.shields.io/github/v/release/snch1211/multisub?label=release" alt="Release"></a>
+  <a href="https://github.com/ncchen99/Multisub/releases/latest"><img src="https://img.shields.io/github/v/release/ncchen99/Multisub?label=release" alt="Release"></a>
   <img src="https://img.shields.io/badge/macOS-15%2B-000000?logo=apple" alt="macOS 15+">
   <img src="https://img.shields.io/badge/Safari-Web%20Extension-006CFF?logo=safari&logoColor=white" alt="Safari Web Extension">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
@@ -19,7 +19,7 @@
 
 <p align="center">
   <a href="https://snch1211.github.io/multisub/">官方網站</a> ·
-  <a href="https://github.com/snch1211/multisub/releases">下載 DMG</a> ·
+  <a href="https://github.com/ncchen99/Multisub/releases/latest">下載 DMG</a> ·
   <a href="PRIVACY.md">隱私權政策</a>
 </p>
 
@@ -57,8 +57,13 @@
 ## 安裝
 
 - **Mac App Store**：審核中，通過後會放上連結。
-- **GitHub Releases**：下載 [`MultiSub-<版本>.dmg`](https://github.com/snch1211/multisub/releases)，把 MultiSub 拖進「應用程式」。這個版本沒有經過 Apple 公證，第一次開啟請對 App 按右鍵 →「打開」。
-- **Homebrew**：準備中。
+- **Homebrew**：
+
+  ```bash
+  brew install --cask ncchen99/multisub/multisub
+  ```
+
+- **GitHub Releases**：下載 [`MultiSub-<版本>.dmg`](https://github.com/ncchen99/Multisub/releases/latest)，把 MultiSub 拖進「應用程式」。DMG 已經過 Apple 公證，直接打開就好。
 
 ### 系統需求
 
@@ -99,8 +104,8 @@
 需要 Xcode 27 以上。延伸功能是純 JavaScript，不需要 npm，主程式是 SwiftUI。
 
 ```bash
-git clone https://github.com/snch1211/multisub.git
-cd multisub/MultiSub
+git clone https://github.com/ncchen99/Multisub.git
+cd Multisub/MultiSub
 cp Local.xcconfig.example Local.xcconfig
 ```
 

@@ -29,11 +29,12 @@ final class UpdateChecker {
 
     let currentVersion: String
 
-    // The public repo's coordinates. While it has no release yet, `check`
-    // gets a 404, which is exactly the "查無 release" path that needs
-    // verifying before shipping, so this stays the real constant rather than
-    // a dev stub.
-    private static let repoPath = "snch1211/multisub"
+    // The repo the notarized DMG releases are published from (the Homebrew
+    // cask downloads from the same releases; see scripts/make-cask.sh).
+    // While it has no release yet, `check` gets a 404, which is exactly the
+    // "查無 release" path that needs verifying before shipping, so this stays
+    // the real constant rather than a dev stub.
+    private static let repoPath = "ncchen99/Multisub"
     private static let lastCheckedDefaultsKey = "UpdateChecker.lastCheckedAt"
     private static let autoCheckInterval: TimeInterval = 24 * 60 * 60
 
