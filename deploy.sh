@@ -103,13 +103,17 @@ EOF
   echo "▶︎ (4/4) 驗證簽章…"
   codesign --verify --deep --strict "$OUT_DIR/MultiSub.app" \
     || { echo "✗ 簽章驗證失敗"; exit 1; }
-  SIGNER="$(codesign -dvv "$OUT_DIR/MultiSub.app" 2>&1 | awk -F= '/^Authority=/{print $2; exit}')"
+  # Read codesign's output once, then parse it: piping it straight into a
+  # filter that stops early (awk exit / grep -q) trips pipefail and set -e.
+  SIGN_INFO="$(codesign -dvv "$OUT_DIR/MultiSub.app" 2>&1)"
+  SIGNER="$(awk -F= '/^Authority=/{print $2; exit}' <<<"$SIGN_INFO")"
   case "$SIGNER" in
     "Developer ID Application:"*) echo "  ✓ 簽章有效（$SIGNER）" ;;
-    *) echo "✗ 不是 Developer ID 簽章（$SIGNER），無法公證"; exit 1 ;;
+    *) echo "✗ 不是 Developer ID 簽章（${SIGNER:-未簽章}），無法公證"; exit 1 ;;
   esac
-  codesign -dvv "$OUT_DIR/MultiSub.app" 2>&1 | grep -q 'flags=.*runtime' \
+  grep -q 'flags=.*runtime' <<<"$SIGN_INFO" \
     || { echo "✗ 沒有開 Hardened Runtime，無法公證"; exit 1; }
+  echo "  ✓ Hardened Runtime 已開啟"
 
   VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
     "$OUT_DIR/MultiSub.app/Contents/Info.plist" 2>/dev/null || echo '?')"

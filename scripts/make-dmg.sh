@@ -41,7 +41,8 @@ fi
 
 # The DMG is signed with the identity that signed the app, so both carry the
 # same Developer ID. Checked before any packaging work.
-SIGN_IDENTITY="$(codesign -dvv "$APP" 2>&1 | awk -F= '/^Authority=/{print $2; exit}')"
+SIGN_INFO="$(codesign -dvv "$APP" 2>&1 || true)"   # parsed separately: see deploy.sh
+SIGN_IDENTITY="$(awk -F= '/^Authority=/{print $2; exit}' <<<"$SIGN_INFO")"
 case "$SIGN_IDENTITY" in
   "Developer ID Application:"*) ;;
   *) echo "✗ $APP 不是 Developer ID 簽章（${SIGN_IDENTITY:-未簽章}）"
