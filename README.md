@@ -121,7 +121,7 @@ cp Local.xcconfig.example Local.xcconfig
 ./tests/run.sh
 ```
 
-程式怎麼分工，寫在 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+程式怎麼分工，寫在 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。發版（DMG 公證、Homebrew、App Store）的步驟寫在 [docs/RELEASING.md](docs/RELEASING.md)。
 
 ## 隱私
 
