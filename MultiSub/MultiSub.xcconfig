@@ -36,7 +36,7 @@ MULTISUB_APP_ICON_appstore = AppIconStore
 // the privacy policy inside the app). `/$()/` keeps xcconfig from reading
 // "//" as a comment.
 MULTISUB_PRIVACY_URL = https:/$()/github.com/ncchen99/Multisub/blob/main/PRIVACY.md
-MULTISUB_SOURCE_URL = https:/$()/github.com/snch1211/multisub
+MULTISUB_SOURCE_URL = https:/$()/github.com/ncchen99/Multisub
 
 // Only the OS's own TLS (URLSession) is used, which is exempt from export
 // documentation; this skips the encryption questionnaire on every upload.
