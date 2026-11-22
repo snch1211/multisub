@@ -39,6 +39,9 @@
 //  The "must select an episode first" restriction on word search is gone —
 //  no selection now searches every episode's words, with a 集數 column
 //  identifying the source.
+//  Every word row and the detail card's word and example sentence have a
+//  speaker button (`PronunciationPlayer`: the system voices, on-device).
+//  The accent (美式/英式) is a toolbar menu, next to the sort menu.
 //
 
 import SwiftUI
@@ -65,6 +68,9 @@ struct VocabularyView: View {
         let word: VocabWord
         let episodeMovieId: String
         let episodeDisplayTitle: String
+        /// The subtitle language the word came from, as Netflix reported
+        /// it ("en", "en-US"…); picks the voice it is read in.
+        let episodeSourceLang: String
         var id: String { "\(episodeMovieId)#\(word.lemma)" }
     }
 
@@ -100,6 +106,9 @@ struct VocabularyView: View {
     /// per user's pick), so this only ever needs to record exceptions.
     @State private var expandedGroups = Set<String>()
 
+    @State private var pronunciation = PronunciationPlayer()
+    @AppStorage(PronunciationPlayer.accentDefaultsKey) private var accent = PronunciationPlayer.Accent.american
+
     private var selectedMovieId: String? {
         if case .episode(let movieId)? = selection { return movieId }
         return nil
@@ -128,7 +137,8 @@ struct VocabularyView: View {
                         || word.translation.lowercased().contains(query)
                     guard matches else { return nil }
                 }
-                return WordRow(word: word, episodeMovieId: episode.movieId, episodeDisplayTitle: episode.displayTitle)
+                return WordRow(word: word, episodeMovieId: episode.movieId,
+                               episodeDisplayTitle: episode.displayTitle, episodeSourceLang: episode.sourceLang)
             }
         }
         if !sortOrder.isEmpty { rows.sort(using: sortOrder) }
@@ -172,6 +182,9 @@ struct VocabularyView: View {
                 Spacer()
             }
             ToolbarItem(placement: .primaryAction) {
+                accentMenu
+            }
+            ToolbarItem(placement: .primaryAction) {
                 episodeSortMenu
             }
         }
@@ -187,6 +200,31 @@ struct VocabularyView: View {
             applyFocus(newValue, justAppeared: false)
         }
         .onChange(of: selection) { _, _ in selectedWordIDs.removeAll() }
+        // Switching accent mid-word would finish in the old voice.
+        .onChange(of: accent) { _, _ in pronunciation.stop() }
+        .onDisappear { pronunciation.stop() }
+    }
+
+    // MARK: - Toolbar: pronunciation accent
+
+    private var accentMenu: some View {
+        Menu("發音", systemImage: "speaker.wave.2") {
+            Picker("發音", selection: $accent) {
+                ForEach(PronunciationPlayer.Accent.allCases) { accent in
+                    Text(accent.label).tag(accent)
+                }
+            }
+            .pickerStyle(.inline)
+            Section("想要更自然的聲音，可以在「系統設定 > 輔助使用 > 朗讀內容 > 系統聲音」下載英文的「高品質」或「優質」聲音。") {}
+        }
+        .help("發音")
+    }
+
+    /// The voice language for a word: the user's accent for English (the
+    /// only language 整理本集單字 accepts today), otherwise the episode's own.
+    private func voiceLanguage(for row: WordRow) -> String {
+        let source = row.episodeSourceLang.trimmingCharacters(in: .whitespaces)
+        return source.isEmpty || LanguageNames.isEnglish(source) ? accent.rawValue : source
     }
 
     // MARK: - Toolbar: episode sort menu, sits left of the native
@@ -385,7 +423,18 @@ struct VocabularyView: View {
                     .allowsHitTesting(false)
             } else {
                 Table(filteredWordRows, selection: $selectedWordIDs, sortOrder: $sortOrder) {
-                    TableColumn("單字", value: \.word.word)
+                    TableColumn("單字", value: \.word.word) { row in
+                        // The word keeps the column's leading edge, under
+                        // its header; the speakers line up at the trailing
+                        // edge instead of sitting in front of every word.
+                        HStack(spacing: 4) {
+                            Text(row.word.word)
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            PronounceButton(text: row.word.word, id: "\(row.id)#word",
+                                            language: voiceLanguage(for: row), player: pronunciation)
+                        }
+                    }
                     TableColumn("CEFR", value: \.word.cefr) { row in CEFRBadge(level: row.word.cefr) }
                         .width(60)
                     TableColumn("翻譯", value: \.word.translation)
@@ -397,7 +446,7 @@ struct VocabularyView: View {
             }
 
             if let selectedWordRow {
-                wordDetailCard(selectedWordRow.word)
+                wordDetailCard(selectedWordRow)
             }
 
             HStack {
@@ -425,16 +474,24 @@ struct VocabularyView: View {
         }
     }
 
-    private func wordDetailCard(_ word: VocabWord) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+    private func wordDetailCard(_ row: WordRow) -> some View {
+        let word = row.word
+        let language = voiceLanguage(for: row)
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 CEFRBadge(level: word.cefr)
                 Text("\(word.word) · \(word.pos)")
                     .font(.headline)
+                // Same id as the row's button: they read the same thing,
+                // so both show it playing.
+                PronounceButton(text: word.word, id: "\(row.id)#word", language: language, player: pronunciation)
             }
             Text("英文解釋：\(word.definitionEn)")
             Text("翻譯：\(word.translation)")
-            Text("例句：\(word.example)")
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("例句：\(word.example)")
+                PronounceButton(text: word.example, id: "\(row.id)#example", language: language, player: pronunciation)
+            }
             Text("例句翻譯：\(word.exampleTranslation)")
         }
         .font(.callout)

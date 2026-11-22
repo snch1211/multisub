@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MultiSub",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Netflix 雙語字幕：疊上 Netflix 官方字幕、用 AI 翻譯，或在難字旁標上意思。",
   "icons": {
     "48": "icon-48.png",

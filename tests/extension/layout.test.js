@@ -6,7 +6,7 @@ const assert = require('assert/strict');
 const EXT = process.env.EXT || path.resolve(__dirname, '../../extension');
 
 const manifest = JSON.parse(fs.readFileSync(EXT + '/manifest.json', 'utf8'));
-assert.equal(manifest.version, '1.1.0');
+assert.equal(manifest.version, '1.2.0');
 // The background must be an HTML page that pins UTF-8: with background.scripts
 // Safari decodes the scripts in the system's legacy encoding (Big5, GBK,
 // Shift_JIS…) and shared.js stops parsing.
