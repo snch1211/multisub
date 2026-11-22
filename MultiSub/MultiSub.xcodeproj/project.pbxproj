@@ -57,6 +57,7 @@
 		4D580000000000000000AD08 /* VocabExtractionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AD07 /* VocabExtractionManager.swift */; };
 		4D580000000000000000AD0A /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AD09 /* UpdateChecker.swift */; };
 		4D580000000000000000AD0C /* UpdateDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AD0B /* UpdateDownloadManager.swift */; };
+		4D580000000000000000AD0E /* PronunciationPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AD0D /* PronunciationPlayer.swift */; };
 		4D580000000000000000AF02 /* HubBridges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AF01 /* HubBridges.swift */; };
 		4D580000000000000000AF03 /* HubBridges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D580000000000000000AF01 /* HubBridges.swift */; };
 		4D58000000000000000B0102 /* AppIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58000000000000000B0101 /* AppIdentity.swift */; };
@@ -162,6 +163,7 @@
 		4D580000000000000000AD07 /* VocabExtractionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VocabExtractionManager.swift; sourceTree = "<group>"; };
 		4D580000000000000000AD09 /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
 		4D580000000000000000AD0B /* UpdateDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateDownloadManager.swift; sourceTree = "<group>"; };
+		4D580000000000000000AD0D /* PronunciationPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PronunciationPlayer.swift; sourceTree = "<group>"; };
 		4D580000000000000000AF01 /* HubBridges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubBridges.swift; sourceTree = "<group>"; };
 		4D58000000000000000B0101 /* AppIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIdentity.swift; sourceTree = "<group>"; };
 		4D58000000000000000B0201 /* Paths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Paths.swift; sourceTree = "<group>"; };
@@ -281,6 +283,7 @@
 				4D580000000000000000AD07 /* VocabExtractionManager.swift */,
 				4D580000000000000000AD09 /* UpdateChecker.swift */,
 				4D580000000000000000AD0B /* UpdateDownloadManager.swift */,
+				4D580000000000000000AD0D /* PronunciationPlayer.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -524,6 +527,7 @@
 				4D580000000000000000AD08 /* VocabExtractionManager.swift in Sources */,
 				4D580000000000000000AD0A /* UpdateChecker.swift in Sources */,
 				4D580000000000000000AD0C /* UpdateDownloadManager.swift in Sources */,
+				4D580000000000000000AD0E /* PronunciationPlayer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
